@@ -12,7 +12,7 @@ import {
   TextField,
 } from "@mui/material";
 import { invoke, type UserInfo } from "./api";
-import { useAction } from "./ui";
+import { ErrorAlert, useAction } from "./ui";
 
 const empty = { uid: "", displayName: "", email: "", accessKey: "", secretKey: "" };
 
@@ -72,7 +72,7 @@ export default function CreateUserDialog({ clusterId, open, onClose, onCreated }
             {!autoKey && field("accessKey", "Access key", { required: true, autoComplete: "off" })}
             {!autoKey &&
               field("secretKey", "Secret key", { required: true, type: "password", autoComplete: "off" })}
-            {error && <Alert severity="error">{error}</Alert>}
+            <ErrorAlert error={error} />
           </Stack>
         </DialogContent>
         <DialogActions>

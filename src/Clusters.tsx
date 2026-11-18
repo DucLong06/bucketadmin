@@ -2,8 +2,12 @@ import { type FormEvent, useState } from "react";
 import { Alert, Button, Paper, Stack, TextField, Typography } from "@mui/material";
 import { invoke, maskKey, type ClusterInfo, type Profile } from "./api";
 import { endpointError } from "./endpoint";
+import { ErrorAlert } from "./ui";
 
 type Outcome = { severity: "success" | "error"; text: string };
+
+const outcomeAlert = (o: Outcome, sx?: object) =>
+  o.severity === "error" ? <ErrorAlert error={o.text} sx={sx} /> : <Alert severity="success" sx={sx}>{o.text}</Alert>;
 
 const emptyForm = { label: "", endpoint: "", accessKey: "", secretKey: "" };
 
@@ -97,7 +101,7 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
               Lưu
             </Button>
           </Stack>
-          {formOutcome && <Alert severity={formOutcome.severity}>{formOutcome.text}</Alert>}
+          {formOutcome && outcomeAlert(formOutcome)}
         </Stack>
       </Paper>
 
@@ -126,11 +130,7 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
                 Xoá
               </Button>
             </Stack>
-            {rowOutcome[p.id] && (
-              <Alert severity={rowOutcome[p.id].severity} sx={{ mt: 1 }}>
-                {rowOutcome[p.id].text}
-              </Alert>
-            )}
+            {rowOutcome[p.id] && outcomeAlert(rowOutcome[p.id], { mt: 1 })}
           </Paper>
         ))}
       </Stack>

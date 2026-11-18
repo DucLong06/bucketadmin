@@ -229,6 +229,20 @@ impl<H: HttpClient> RgwAdmin<H> {
         self.json("GET", "metadata/user", &[]).await
     }
 
+    /// One page of user ids. RGW has no offset: pass the previous page's `marker` to continue.
+    pub async fn list_users_page(
+        &self,
+        marker: Option<&str>,
+        max_entries: usize,
+    ) -> Result<UserIdPage, RgwError> {
+        let max = max_entries.to_string();
+        let mut params = vec![("max-entries", max.as_str())];
+        if let Some(marker) = marker {
+            params.push(("marker", marker));
+        }
+        self.json("GET", "metadata/user", &params).await
+    }
+
     pub async fn get_user(&self, uid: &str) -> Result<UserInfo, RgwError> {
         self.json("GET", "user", &[("uid", uid)]).await
     }
@@ -269,6 +283,25 @@ impl<H: HttpClient> RgwAdmin<H> {
     /// `DELETE /admin/user?key`. Squid answers 403 InvalidAccessKeyId for an unknown key.
     pub async fn remove_key(&self, uid: &str, access_key: &str) -> Result<(), RgwError> {
         let params = [("key", ""), ("uid", uid), ("access-key", access_key)];
+        self.send("DELETE", "user", &params).await.map(|_| ())
+    }
+
+    /// `PUT /admin/user?subuser=<name>`: creates a Swift subuser (RGW generates its secret)
+    /// and returns every subuser of the user. `access`: read | write | readwrite | full.
+    pub async fn create_subuser(
+        &self,
+        uid: &str,
+        subuser: &str,
+        access: &str,
+    ) -> Result<Vec<Subuser>, RgwError> {
+        let params = [("uid", uid), ("subuser", subuser), ("access", access)];
+        self.json("PUT", "user", &params).await
+    }
+
+    /// `DELETE /admin/user?subuser=<name>`; its Swift key is removed with it.
+    /// Squid answers 404 NoSuchSubUser for an unknown subuser.
+    pub async fn remove_subuser(&self, uid: &str, subuser: &str) -> Result<(), RgwError> {
+        let params = [("uid", uid), ("subuser", subuser), ("purge-keys", "true")];
         self.send("DELETE", "user", &params).await.map(|_| ())
     }
 
@@ -354,10 +387,96 @@ impl<H: HttpClient> RgwAdmin<H> {
         self.send("PUT", "user", &params).await.map(|_| ())
     }
 
+    /// All buckets with their stats (`uid`: only that user's). Caps: buckets=read.
+    // shortcut: one unpaged request, fine for hundreds of buckets; page with max-entries/marker
+    // once a cluster with many thousands of buckets makes this slow.
+    pub async fn list_buckets(&self, uid: Option<&str>) -> Result<Vec<BucketInfo>, RgwError> {
+        let mut params = vec![("stats", "true")];
+        if let Some(uid) = uid {
+            params.push(("uid", uid));
+        }
+        self.json("GET", "bucket", &params).await
+    }
+
+    pub async fn get_bucket(&self, bucket: &str) -> Result<BucketInfo, RgwError> {
+        self.json("GET", "bucket", &[("bucket", bucket)]).await
+    }
+
+    /// Never purges objects: RGW answers 409 BucketNotEmpty while the bucket holds any.
+    pub async fn delete_bucket(&self, bucket: &str) -> Result<(), RgwError> {
+        self.send("DELETE", "bucket", &[("bucket", bucket)])
+            .await
+            .map(|_| ())
+    }
+
+    /// `PUT /admin/bucket?quota`: the quota of this one bucket (caps: buckets=write).
+    /// `owner` must be the bucket's owner. Negative `max_size_kb` / `max_objects` mean "unlimited".
+    pub async fn set_bucket_quota(
+        &self,
+        owner: &str,
+        bucket: &str,
+        enabled: bool,
+        max_size_kb: i64,
+        max_objects: i64,
+    ) -> Result<(), RgwError> {
+        let (size, objects) = (max_size_kb.to_string(), max_objects.to_string());
+        let params = [
+            ("quota", ""),
+            ("uid", owner),
+            ("bucket", bucket),
+            ("enabled", if enabled { "true" } else { "false" }),
+            ("max-size-kb", &size),
+            ("max-objects", &objects),
+        ];
+        self.send("PUT", "bucket", &params).await.map(|_| ())
+    }
+
+    /// The S3 bucket policy (IAM JSON text), `None` when the bucket has none.
+    /// `GET /admin/bucket?policy` returns the ACL, not this document, so it is read from the
+    /// bucket instance metadata (attr `user.rgw.iam-policy`, base64). Caps: metadata=read.
+    pub async fn get_bucket_policy(&self, info: &BucketInfo) -> Result<Option<String>, RgwError> {
+        use base64::Engine;
+        let key = format!("{}:{}", info.key(), info.id);
+        let meta: serde_json::Value = self
+            .json("GET", "metadata/bucket.instance", &[("key", &key)])
+            .await?;
+        let attrs = meta.pointer("/data/attrs").and_then(|a| a.as_array());
+        let encoded = attrs
+            .into_iter()
+            .flatten()
+            .find(|a| a["key"] == "user.rgw.iam-policy")
+            .and_then(|a| a["val"].as_str());
+        let Some(encoded) = encoded else {
+            return Ok(None);
+        };
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|e| RgwError::Decode(format!("bucket policy attr is not base64: {e}")))?;
+        Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
     /// `GET /admin/usage` (caps: usage=read); `uid = None` covers all users.
-    pub async fn get_usage(&self, uid: Option<&str>) -> Result<Usage, RgwError> {
-        let params: Vec<(&str, &str)> = uid.map(|u| ("uid", u)).into_iter().collect();
+    /// `start` / `end` are `YYYY-MM-DD[ HH:MM:SS]` in UTC, `end` exclusive. RGW answers an empty
+    /// result, not an error, when its usage log is switched off (`rgw_enable_usage_log`).
+    pub async fn get_usage(
+        &self,
+        uid: Option<&str>,
+        start: Option<&str>,
+        end: Option<&str>,
+    ) -> Result<Usage, RgwError> {
+        let optional = [("uid", uid), ("start", start), ("end", end)];
+        let params: Vec<(&str, &str)> = optional
+            .iter()
+            .filter_map(|(k, v)| v.map(|v| (*k, v)))
+            .collect();
         self.json("GET", "usage", &params).await
+    }
+
+    /// `DELETE /admin/usage` (caps: usage=write) for one user and an explicit range.
+    /// The all-users form (`remove-all`) is deliberately not offered.
+    pub async fn trim_usage(&self, uid: &str, start: &str, end: &str) -> Result<(), RgwError> {
+        let params = [("uid", uid), ("start", start), ("end", end)];
+        self.send("DELETE", "usage", &params).await.map(|_| ())
     }
 }
 
@@ -580,7 +699,11 @@ mod tests {
                  "categories":[{"category":"put_obj","bytes_sent":0,"bytes_received":10,"ops":2,"successful_ops":1}]}]}],
                 "summary":[{"user":"u1","categories":[],"total":{"bytes_sent":0,"bytes_received":10,"ops":2,"successful_ops":1}}]}"#,
         );
-        let usage = mock.client().get_usage(Some("u1")).await.unwrap();
+        let usage = mock
+            .client()
+            .get_usage(Some("u1"), None, None)
+            .await
+            .unwrap();
         assert_eq!(
             usage.entries[0].buckets[0].categories[0].category,
             "put_obj"
@@ -708,6 +831,119 @@ mod tests {
         assert_eq!(
             mock.client().remove_key("u1", "NOPE").await.unwrap_err(),
             RgwError::InvalidAccessKeyId
+        );
+    }
+
+    #[tokio::test]
+    async fn subuser_calls() {
+        let mock = Mock::reply(200, r#"[{"id":"u1:swift","permissions":"full-control"}]"#);
+        let subusers = mock
+            .client()
+            .create_subuser("u1", "swift", "full")
+            .await
+            .unwrap();
+        assert_eq!(subusers[0].id, "u1:swift");
+        assert_eq!(subusers[0].permissions, "full-control");
+        assert_eq!(
+            mock.calls(),
+            ["PUT /admin/user?access=full&format=json&subuser=swift&uid=u1"]
+        );
+
+        let mock = Mock::reply(200, "");
+        mock.client().remove_subuser("u1", "swift").await.unwrap();
+        assert_eq!(
+            mock.calls(),
+            ["DELETE /admin/user?format=json&purge-keys=true&subuser=swift&uid=u1"]
+        );
+
+        let mock = Mock::reply(404, r#"{"Code":"NoSuchSubUser"}"#);
+        let err = mock
+            .client()
+            .remove_subuser("u1", "nope")
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "RGW returned HTTP 404 NoSuchSubUser ");
+    }
+
+    const BUCKET_JSON: &str = r#"{"bucket":"photos","tenant":"","id":"abc.1","owner":"alice","versioning":"off",
+        "placement_rule":"default-placement","creation_time":"2026-11-18T13:44:41.971458Z","object_lock_enabled":false,
+        "usage":{"rgw.main":{"size":11,"size_actual":4096,"num_objects":1}},
+        "bucket_quota":{"enabled":true,"check_on_raw":false,"max_size":2097152,"max_size_kb":2048,"max_objects":50}}"#;
+
+    #[tokio::test]
+    async fn bucket_list_get_delete() {
+        let mock = Mock::reply(200, &format!("[{BUCKET_JSON}]"));
+        let buckets = mock.client().list_buckets(Some("alice")).await.unwrap();
+        assert_eq!(buckets[0].owner, "alice");
+        assert_eq!(buckets[0].usage["rgw.main"].num_objects, 1);
+        assert!(buckets[0].bucket_quota.enabled);
+        assert_eq!(
+            mock.calls(),
+            ["GET /admin/bucket?format=json&stats=true&uid=alice"]
+        );
+
+        let mock = Mock::reply(200, r#"{"bucket":"empty","owner":"alice","usage":{}}"#);
+        let empty = mock.client().get_bucket("empty").await.unwrap();
+        assert!(empty.usage.is_empty());
+        assert_eq!(mock.calls(), ["GET /admin/bucket?bucket=empty&format=json"]);
+
+        let mock = Mock::reply(409, r#"{"Code":"BucketNotEmpty"}"#);
+        let err = mock.client().delete_bucket("photos").await.unwrap_err();
+        assert_eq!(err.to_string(), "RGW returned HTTP 409 BucketNotEmpty ");
+        assert_eq!(
+            mock.calls(),
+            ["DELETE /admin/bucket?bucket=photos&format=json"]
+        );
+    }
+
+    #[tokio::test]
+    async fn bucket_policy_comes_from_instance_metadata() {
+        let info: BucketInfo = serde_json::from_str(BUCKET_JSON).unwrap();
+        // "eyJWZXJzaW9uIjoiMjAxMi0xMC0xNyJ9" = {"Version":"2012-10-17"}
+        let meta = r#"{"key":"bucket.instance:photos:abc.1","data":{"attrs":[
+            {"key":"user.rgw.acl","val":"AgI="},
+            {"key":"user.rgw.iam-policy","val":"eyJWZXJzaW9uIjoiMjAxMi0xMC0xNyJ9"}]}}"#;
+        let mock = Mock::reply(200, meta);
+        let policy = mock.client().get_bucket_policy(&info).await.unwrap();
+        assert_eq!(policy.as_deref(), Some(r#"{"Version":"2012-10-17"}"#));
+        assert_eq!(
+            mock.calls(),
+            ["GET /admin/metadata/bucket.instance?format=json&key=photos%3Aabc.1"]
+        );
+
+        let mock = Mock::reply(
+            200,
+            r#"{"data":{"attrs":[{"key":"user.rgw.acl","val":"AgI="}]}}"#,
+        );
+        assert_eq!(mock.client().get_bucket_policy(&info).await.unwrap(), None);
+
+        let tenanted = BucketInfo {
+            tenant: "acme".into(),
+            ..info
+        };
+        assert_eq!(tenanted.key(), "acme/photos");
+    }
+
+    #[tokio::test]
+    async fn usage_range_and_trim() {
+        let mock = Mock::reply(200, r#"{"entries":[],"summary":[]}"#);
+        mock.client()
+            .get_usage(Some("u1"), Some("2026-11-01"), Some("2026-11-19"))
+            .await
+            .unwrap();
+        assert_eq!(
+            mock.calls(),
+            ["GET /admin/usage?end=2026-11-19&format=json&start=2026-11-01&uid=u1"]
+        );
+
+        let mock = Mock::reply(200, "");
+        mock.client()
+            .trim_usage("u1", "2026-11-01", "2026-11-19")
+            .await
+            .unwrap();
+        assert_eq!(
+            mock.calls(),
+            ["DELETE /admin/usage?end=2026-11-19&format=json&start=2026-11-01&uid=u1"]
         );
     }
 }

@@ -17,7 +17,8 @@ import {
   Typography,
 } from "@mui/material";
 import { invoke, type AuditEntry, type Profile } from "./api";
-import { useAction } from "./ui";
+import { explain } from "./errors";
+import { ErrorAlert, useAction } from "./ui";
 
 // Action names written by src-tauri/src/ops.rs.
 const ACTIONS = [
@@ -28,9 +29,14 @@ const ACTIONS = [
   "user.delete",
   "key.create",
   "key.remove",
+  "subuser.create",
+  "subuser.remove",
   "caps.add",
   "caps.remove",
   "quota.set",
+  "bucket.quota.set",
+  "bucket.delete",
+  "usage.trim",
 ];
 
 const native = { select: { native: true } };
@@ -94,7 +100,7 @@ export default function Audit({ profiles }: { profiles: Profile[] }) {
         </Button>
       </Stack>
       {busy && <LinearProgress aria-label="Đang tải audit log" />}
-      {error && <Alert severity="error">{error}</Alert>}
+      <ErrorAlert error={error} />
       <TableContainer component={Paper} variant="outlined">
         <Table size="small" aria-label="Audit log">
           <TableHead>
@@ -121,7 +127,9 @@ export default function Audit({ profiles }: { profiles: Profile[] }) {
                   ) : (
                     <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
                       <Chip size="small" color="error" label="Lỗi" />
-                      <Typography variant="body2">{e.message}</Typography>
+                      <Typography variant="body2" title={e.message}>
+                        {explain(e.message).message}
+                      </Typography>
                     </Stack>
                   )}
                 </TableCell>

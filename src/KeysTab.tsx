@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { Alert, Box, Button, Paper, Stack, Typography } from "@mui/material";
+import { Button, Paper, Stack, Typography } from "@mui/material";
+import AddKeyDialog from "./AddKeyDialog";
 import { invoke, type KeyPair } from "./api";
-import { ConfirmDialog, CopyButton, SecretDialog, useAction } from "./ui";
+import { ConfirmDialog, CopyButton, ErrorAlert, SecretDialog, useAction } from "./ui";
+import { explain } from "./errors";
 import type { UserTabProps } from "./UserDrawer";
 
 type Rotated = { key: KeyPair; remove_error: string | null };
@@ -10,6 +12,7 @@ type Pending = { kind: "rotate" | "remove"; accessKey: string };
 export default function KeysTab({ clusterId, uid, user, refresh }: UserTabProps) {
   const [fresh, setFresh] = useState<{ keys: KeyPair[]; warning: string | null } | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  const [adding, setAdding] = useState(false);
   const { busy, error, run, setError } = useAction();
 
   async function create() {
@@ -30,7 +33,7 @@ export default function KeysTab({ clusterId, uid, user, refresh }: UserTabProps)
       const rotated = await run(() => invoke<Rotated>("key_rotate", { clusterId, uid, accessKey }));
       if (!rotated) return;
       const warning = rotated.remove_error
-        ? `Key mới đã được tạo nhưng chưa xoá được key cũ ${accessKey}: ${rotated.remove_error}`
+        ? `Key mới đã được tạo nhưng chưa xoá được key cũ ${accessKey}: ${explain(rotated.remove_error).message}`
         : null;
       setFresh({ keys: [rotated.key], warning });
     }
@@ -71,12 +74,15 @@ export default function KeysTab({ clusterId, uid, user, refresh }: UserTabProps)
           </Paper>
         ))}
       </Stack>
-      <Box>
+      <Stack direction="row" spacing={1}>
         <Button variant="contained" onClick={create} disabled={busy}>
           Tạo key mới
         </Button>
-      </Box>
-      {error && pending === null && <Alert severity="error">{error}</Alert>}
+        <Button variant="outlined" onClick={() => setAdding(true)}>
+          Thêm key có sẵn
+        </Button>
+      </Stack>
+      {pending === null && <ErrorAlert error={error} />}
 
       <ConfirmDialog
         open={pending?.kind === "rotate"}
@@ -97,6 +103,14 @@ export default function KeysTab({ clusterId, uid, user, refresh }: UserTabProps)
         error={error}
         onConfirm={confirmed}
         onClose={closeConfirm}
+      />
+      <AddKeyDialog
+        clusterId={clusterId}
+        uid={uid}
+        existing={user.keys.map((k) => k.access_key)}
+        open={adding}
+        onClose={() => setAdding(false)}
+        onAdded={refresh}
       />
       <SecretDialog keys={fresh?.keys ?? null} warning={fresh?.warning} onClose={() => setFresh(null)} />
     </Stack>

@@ -1,14 +1,17 @@
 pub mod audit;
 pub mod clusters;
+pub mod export;
 pub mod ops;
 pub mod rgw_admin;
 
 use audit::{Audit, AuditEntry};
 use clusters::{ClusterProfile, ProfileStore};
-use ops::{Ops, Quotas, RotatedKey};
+use ops::{
+    BucketDetail, NewSubuser, Ops, Quotas, RotatedKey, TrimmedUsage, UsageSupport, UsersPage,
+};
 use rgw_admin::{
-    Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin, Usage,
-    UserInfo,
+    BucketInfo, Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin,
+    Usage, UserInfo,
 };
 use tauri::{Manager, State};
 
@@ -97,8 +100,14 @@ async fn test_profile(state: St<'_>, id: String) -> Cmd<'_, ClusterInfo> {
 // ---- users ----------------------------------------------------------------
 
 #[tauri::command]
-async fn users_list(state: St<'_>, cluster_id: String) -> Cmd<'_, Vec<UserInfo>> {
-    state.ops(&cluster_id)?.list_users().await
+async fn users_list(
+    state: St<'_>,
+    cluster_id: String,
+    marker: Option<String>,
+    limit: usize,
+) -> Cmd<'_, UsersPage> {
+    let ops = state.ops(&cluster_id)?;
+    ops.list_users_page(marker.as_deref(), limit).await
 }
 
 #[tauri::command]
@@ -144,8 +153,13 @@ async fn user_set_suspended(
 }
 
 #[tauri::command]
-async fn user_delete(state: St<'_>, cluster_id: String, uid: String) -> Cmd<'_, ()> {
-    state.ops(&cluster_id)?.delete_user(&uid).await
+async fn user_delete(
+    state: St<'_>,
+    cluster_id: String,
+    uid: String,
+    purge_data: bool,
+) -> Cmd<'_, ()> {
+    state.ops(&cluster_id)?.delete_user(&uid, purge_data).await
 }
 
 // ---- keys -----------------------------------------------------------------
@@ -166,6 +180,18 @@ async fn key_remove(
 }
 
 #[tauri::command]
+async fn key_add(
+    state: St<'_>,
+    cluster_id: String,
+    uid: String,
+    access_key: String,
+    secret_key: String,
+) -> Cmd<'_, ()> {
+    let ops = state.ops(&cluster_id)?;
+    ops.add_key(&uid, &access_key, &secret_key).await
+}
+
+#[tauri::command]
 async fn key_rotate(
     state: St<'_>,
     cluster_id: String,
@@ -173,6 +199,28 @@ async fn key_rotate(
     access_key: String,
 ) -> Cmd<'_, RotatedKey> {
     state.ops(&cluster_id)?.rotate_key(&uid, &access_key).await
+}
+
+#[tauri::command]
+async fn subuser_create(
+    state: St<'_>,
+    cluster_id: String,
+    uid: String,
+    subuser: String,
+    access: String,
+) -> Cmd<'_, NewSubuser> {
+    let ops = state.ops(&cluster_id)?;
+    ops.create_subuser(&uid, &subuser, &access).await
+}
+
+#[tauri::command]
+async fn subuser_remove(
+    state: St<'_>,
+    cluster_id: String,
+    uid: String,
+    subuser: String,
+) -> Cmd<'_, ()> {
+    state.ops(&cluster_id)?.remove_subuser(&uid, &subuser).await
 }
 
 // ---- caps, quota, usage -----------------------------------------------------
@@ -218,8 +266,73 @@ async fn quota_set(
 }
 
 #[tauri::command]
-async fn usage_get(state: St<'_>, cluster_id: String, uid: String) -> Cmd<'_, Usage> {
-    state.ops(&cluster_id)?.get_usage(&uid).await
+async fn usage_get(
+    state: St<'_>,
+    cluster_id: String,
+    uid: String,
+    start: Option<String>,
+    end: Option<String>,
+) -> Cmd<'_, Usage> {
+    let ops = state.ops(&cluster_id)?;
+    ops.get_usage(&uid, start.as_deref(), end.as_deref()).await
+}
+
+#[tauri::command]
+async fn usage_trim(
+    state: St<'_>,
+    cluster_id: String,
+    uid: String,
+    start: String,
+    end: String,
+) -> Cmd<'_, TrimmedUsage> {
+    state.ops(&cluster_id)?.trim_usage(&uid, &start, &end).await
+}
+
+#[tauri::command]
+async fn usage_support(state: St<'_>, cluster_id: String) -> Cmd<'_, UsageSupport> {
+    state.ops(&cluster_id)?.usage_support().await
+}
+
+/// Writes an export next to the user's downloads and returns where it went.
+#[tauri::command(async)]
+fn export_save(file_name: String, content: String) -> Cmd<'static, String> {
+    let path = export::save(&export::export_dir()?, &file_name, &content)?;
+    Ok(path.display().to_string())
+}
+
+// ---- buckets --------------------------------------------------------------
+
+#[tauri::command]
+async fn buckets_list(
+    state: St<'_>,
+    cluster_id: String,
+    uid: Option<String>,
+) -> Cmd<'_, Vec<BucketInfo>> {
+    state.ops(&cluster_id)?.list_buckets(uid.as_deref()).await
+}
+
+#[tauri::command]
+async fn bucket_get(state: St<'_>, cluster_id: String, bucket: String) -> Cmd<'_, BucketDetail> {
+    state.ops(&cluster_id)?.get_bucket(&bucket).await
+}
+
+#[tauri::command]
+async fn bucket_delete(state: St<'_>, cluster_id: String, bucket: String) -> Cmd<'_, ()> {
+    state.ops(&cluster_id)?.delete_bucket(&bucket).await
+}
+
+#[tauri::command]
+async fn bucket_quota_set(
+    state: St<'_>,
+    cluster_id: String,
+    bucket: String,
+    enabled: bool,
+    max_size_kb: i64,
+    max_objects: i64,
+) -> Cmd<'_, ()> {
+    let ops = state.ops(&cluster_id)?;
+    ops.set_bucket_quota(&bucket, enabled, max_size_kb, max_objects)
+        .await
 }
 
 // ---- audit ----------------------------------------------------------------
@@ -273,12 +386,22 @@ pub fn run() {
             user_delete,
             key_create,
             key_remove,
+            key_add,
             key_rotate,
+            subuser_create,
+            subuser_remove,
             caps_add,
             caps_remove,
             quota_get,
             quota_set,
             usage_get,
+            usage_trim,
+            usage_support,
+            export_save,
+            buckets_list,
+            bucket_get,
+            bucket_delete,
+            bucket_quota_set,
             audit_recent
         ])
         .run(tauri::generate_context!())

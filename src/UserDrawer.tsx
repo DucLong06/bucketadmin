@@ -2,10 +2,14 @@ import { type ComponentType, useEffect, useState } from "react";
 import { Alert, Box, Button, Chip, Drawer, Stack, Tab, Tabs, Typography } from "@mui/material";
 import { invoke, uidOf, type UserInfo } from "./api";
 import InfoTab from "./InfoTab";
+import { explain } from "./errors";
+import { ErrorAlert } from "./ui";
 import UsageTab from "./UsageTab";
 import QuotaTab from "./QuotaTab";
 import CapsTab from "./CapsTab";
 import KeysTab from "./KeysTab";
+import UserBucketsTab from "./UserBucketsTab";
+import SubusersTab from "./SubusersTab";
 
 export type UserTabProps = {
   clusterId: string;
@@ -17,11 +21,13 @@ export type UserTabProps = {
   onDeleted: () => void;
 };
 
-const tabs: { label: string; Panel: ComponentType<UserTabProps> }[] = [
+const allTabs: { label: string; Panel: ComponentType<UserTabProps> }[] = [
   { label: "Thông tin", Panel: InfoTab },
   { label: "Keys", Panel: KeysTab },
+  { label: "Subusers", Panel: SubusersTab },
   { label: "Caps", Panel: CapsTab },
   { label: "Quota", Panel: QuotaTab },
+  { label: "Buckets", Panel: UserBucketsTab },
   { label: "Usage", Panel: UsageTab },
 ];
 
@@ -36,17 +42,28 @@ type Props = {
 export default function UserDrawer({ clusterId, user, onUser, onDeleted, onClose }: Props) {
   const [tab, setTab] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Why the Usage tab is hidden, when the cluster refuses usage queries.
+  const [usageOff, setUsageOff] = useState<string | null>(null);
   const uid = user ? uidOf(user) : "";
   useEffect(() => {
     setTab(0);
     setError(null);
   }, [uid]);
 
+  useEffect(() => {
+    setUsageOff(null);
+    if (!clusterId) return;
+    invoke<{ supported: boolean; reason: string | null }>("usage_support", { clusterId })
+      .then((s) => setUsageOff(s.supported ? null : (s.reason ?? "")))
+      .catch(() => {}); // unreachable cluster: keep the tab, it reports the error itself
+  }, [clusterId]);
+  const tabs = usageOff === null ? allTabs : allTabs.filter((t) => t.Panel !== UsageTab);
+
   const refresh = () =>
     invoke<UserInfo>("user_get", { clusterId, uid })
       .then(onUser)
       .catch((e) => setError(String(e)));
-  const Panel = tabs[tab].Panel;
+  const Panel = (tabs[tab] ?? tabs[0]).Panel;
 
   return (
     <Drawer anchor="right" open={user !== null} onClose={onClose}>
@@ -59,16 +76,25 @@ export default function UserDrawer({ clusterId, user, onUser, onDeleted, onClose
             {!!user.suspended && <Chip size="small" color="warning" label="Suspended" />}
             <Button onClick={onClose}>Đóng</Button>
           </Stack>
-          <Tabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Chi tiết user">
+          <Tabs
+            value={tab}
+            onChange={(_, value) => setTab(value)}
+            aria-label="Chi tiết user"
+            // Seven tabs: narrower than the default so they fit the drawer, scrollable if they still do not.
+            variant="scrollable"
+            scrollButtons="auto"
+            sx={{ "& .MuiTab-root": { minWidth: 0, px: 1.75 } }}
+          >
             {tabs.map((t, i) => (
               <Tab key={t.label} value={i} label={t.label} />
             ))}
           </Tabs>
-          {error && (
-            <Alert severity="error" sx={{ mt: 1 }}>
-              {error}
-            </Alert>
+          {usageOff !== null && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }} title={usageOff}>
+              Tab Usage bị ẩn: cluster này không cho truy vấn usage ({explain(usageOff).message})
+            </Typography>
           )}
+          <ErrorAlert error={error} sx={{ mt: 1 }} />
           <Box sx={{ pt: 2 }}>
             <Panel
               key={uid}
