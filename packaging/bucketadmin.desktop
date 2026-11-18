@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=BucketAdmin
+GenericName=Ceph RGW Admin
+Comment=Manage Ceph RGW users, keys, caps and quotas
+Comment[vi]=Quản trị user, key, caps và quota của Ceph RGW
+Exec=bucketadmin
+Icon=bucketadmin
+Terminal=false
+Categories=Utility;
+StartupWMClass=bucketadmin
