@@ -317,6 +317,9 @@ impl<H: HttpClient> RgwAdmin<H> {
         if let Some(v) = &max_buckets {
             params.push(("max-buckets", v));
         }
+        if let Some(v) = &changes.op_mask {
+            params.push(("op-mask", v));
+        }
         if let Some(v) = changes.suspended {
             params.push(("suspended", if v { "true" } else { "false" }));
         }

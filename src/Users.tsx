@@ -22,14 +22,20 @@ import CreateUserDialog from "./CreateUserDialog";
 import { ClusterSelect, ErrorAlert, SecretDialog, useAction } from "./ui";
 import UserDrawer from "./UserDrawer";
 
-type Props = { profiles: Profile[]; clusterId: string; onClusterChange: (id: string) => void };
+type Props = {
+  profiles: Profile[];
+  clusterId: string;
+  onClusterChange: (id: string) => void;
+  /** Opens the Browse page working as that user. */
+  onBrowse: (uid: string) => void;
+};
 type UsersPage = { users: UserInfo[]; next_marker: string | null };
 
 const PAGE_SIZE = 25;
 
 const byUid = (a: UserInfo, b: UserInfo) => uidOf(a).localeCompare(uidOf(b));
 
-export default function Users({ profiles, clusterId, onClusterChange }: Props) {
+export default function Users({ profiles, clusterId, onClusterChange, onBrowse }: Props) {
   const [users, setUsers] = useState<UserInfo[] | null>(null);
   const [filter, setFilter] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -174,6 +180,7 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
         user={(users ?? []).find((u) => uidOf(u) === selected) ?? null}
         onUser={replaceUser}
         onDeleted={onDeleted}
+        onBrowse={onBrowse}
         onClose={() => setSelected(null)}
       />
     </>

@@ -36,10 +36,11 @@ type Props = {
   user: UserInfo | null;
   onUser: (user: UserInfo) => void;
   onDeleted: (uid: string) => void;
+  onBrowse: (uid: string) => void;
   onClose: () => void;
 };
 
-export default function UserDrawer({ clusterId, user, onUser, onDeleted, onClose }: Props) {
+export default function UserDrawer({ clusterId, user, onUser, onDeleted, onBrowse, onClose }: Props) {
   const [tab, setTab] = useState(0);
   const [error, setError] = useState<string | null>(null);
   // Why the Usage tab is hidden, when the cluster refuses usage queries.
@@ -74,6 +75,9 @@ export default function UserDrawer({ clusterId, user, onUser, onDeleted, onClose
               {uid}
             </Typography>
             {!!user.suspended && <Chip size="small" color="warning" label="Suspended" />}
+            <Button variant="outlined" size="small" onClick={() => onBrowse(uid)} aria-label={`Browse với user ${uid}`}>
+              Browse
+            </Button>
             <Button onClick={onClose}>Đóng</Button>
           </Stack>
           <Tabs

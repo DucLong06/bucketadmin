@@ -1,8 +1,10 @@
 pub mod audit;
+mod browse;
 pub mod clusters;
 pub mod export;
 pub mod ops;
 pub mod rgw_admin;
+pub mod s3;
 
 use audit::{Audit, AuditEntry};
 use clusters::{ClusterProfile, ProfileStore};
@@ -17,10 +19,11 @@ use tauri::{Manager, State};
 
 // Errors cross the IPC boundary as display strings; the UI shows them verbatim.
 
-struct AppState {
-    profiles: ProfileStore,
-    audit: Audit,
-    http: ReqwestClient,
+pub(crate) struct AppState {
+    pub(crate) profiles: ProfileStore,
+    pub(crate) audit: Audit,
+    pub(crate) http: ReqwestClient,
+    pub(crate) browse: browse::Sessions,
 }
 
 impl AppState {
@@ -369,6 +372,7 @@ pub fn run() {
                 profiles: ProfileStore::open_default()?,
                 audit: Audit::open(&clusters::data_dir()?.join("audit.db"))?,
                 http: ReqwestClient::new().map_err(|e| e.to_string())?,
+                browse: browse::Sessions::default(),
             });
             Ok(())
         })
@@ -402,7 +406,9 @@ pub fn run() {
             bucket_get,
             bucket_delete,
             bucket_quota_set,
-            audit_recent
+            audit_recent,
+            browse::browse_open,
+            browse::browse_list
         ])
         .run(tauri::generate_context!())
         .expect("error while running BucketAdmin");

@@ -112,6 +112,8 @@ pub struct UserModify {
     pub email: Option<String>,
     pub max_buckets: Option<i64>,
     pub suspended: Option<bool>,
+    /// S3 operations the user may perform at all, e.g. `read` or `read, write, delete`.
+    pub op_mask: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
