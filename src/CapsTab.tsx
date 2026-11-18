@@ -2,7 +2,7 @@ import { type FormEvent, useState } from "react";
 import { Alert, Button, Chip, Stack, TextField, Typography } from "@mui/material";
 import { invoke, type Capability } from "./api";
 import { CAP_PERMS, CAP_TYPES } from "./caps";
-import { useAction } from "./ui";
+import { ErrorAlert, useAction } from "./ui";
 import type { UserTabProps } from "./UserDrawer";
 
 const native = { select: { native: true } };
@@ -97,7 +97,7 @@ export default function CapsTab({ clusterId, uid, user, refresh }: UserTabProps)
           </Button>
         </Stack>
       </Stack>
-      {error && <Alert severity="error">{error}</Alert>}
+      <ErrorAlert error={error} />
     </Stack>
   );
 }

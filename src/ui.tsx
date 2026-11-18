@@ -11,6 +11,7 @@ import {
   Typography,
 } from "@mui/material";
 import type { KeyPair } from "./api";
+import { explain } from "./errors";
 
 /** Runs backend calls with shared busy/error state; resolves to undefined when the call failed. */
 export function useAction() {
@@ -29,6 +30,23 @@ export function useAction() {
     }
   }
   return { busy, error, run, setError };
+}
+
+/** Backend error in Vietnamese, with the error code and the original text one click away. */
+export function ErrorAlert({ error, sx }: { error: string | null | undefined; sx?: object }) {
+  if (!error) return null;
+  const { message, code, detail } = explain(error);
+  return (
+    <Alert severity="error" sx={sx}>
+      {message}
+      {message !== detail && (
+        <details style={{ marginTop: 4 }}>
+          <summary>Chi tiết kỹ thuật{code ? ` (${code})` : ""}</summary>
+          <code style={{ wordBreak: "break-word" }}>{detail}</code>
+        </details>
+      )}
+    </Alert>
+  );
 }
 
 export function CopyButton({ value, label }: { value: string; label: string }) {
@@ -73,7 +91,7 @@ export function SecretDialog(props: { keys: KeyPair[] | null; warning?: string |
           <Alert severity="warning">
             Secret key chỉ hiển thị một lần duy nhất. Sau khi đóng hộp thoại này sẽ không xem lại được.
           </Alert>
-          {props.warning && <Alert severity="error">{props.warning}</Alert>}
+          <ErrorAlert error={props.warning} />
           {keys.length === 0 && <Typography>User được tạo không kèm key nào.</Typography>}
           {keys.map((k) => (
             <Stack key={k.access_key} spacing={1}>
@@ -144,7 +162,7 @@ export function ConfirmDialog(props: ConfirmProps) {
               fullWidth
             />
           )}
-          {props.error && <Alert severity="error">{props.error}</Alert>}
+          <ErrorAlert error={props.error} />
         </Stack>
       </DialogContent>
       <DialogActions>

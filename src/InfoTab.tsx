@@ -1,7 +1,7 @@
 import { type FormEvent, useState } from "react";
 import { Alert, Box, Button, Divider, FormControlLabel, Stack, Switch, TextField } from "@mui/material";
 import { invoke, type UserInfo } from "./api";
-import { ConfirmDialog, useAction } from "./ui";
+import { ConfirmDialog, ErrorAlert, useAction } from "./ui";
 import type { UserTabProps } from "./UserDrawer";
 
 export default function InfoTab({ clusterId, uid, user, onUser, onDeleted }: UserTabProps) {
@@ -81,7 +81,7 @@ export default function InfoTab({ clusterId, uid, user, onUser, onDeleted }: Use
           Xoá user
         </Button>
       </Box>
-      {error && confirm === null && <Alert severity="error">{error}</Alert>}
+      {confirm === null && <ErrorAlert error={error} />}
 
       <ConfirmDialog
         open={confirm === "suspend"}

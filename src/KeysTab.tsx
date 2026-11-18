@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Alert, Box, Button, Paper, Stack, Typography } from "@mui/material";
 import { invoke, type KeyPair } from "./api";
-import { ConfirmDialog, CopyButton, SecretDialog, useAction } from "./ui";
+import { ConfirmDialog, CopyButton, ErrorAlert, SecretDialog, useAction } from "./ui";
+import { explain } from "./errors";
 import type { UserTabProps } from "./UserDrawer";
 
 type Rotated = { key: KeyPair; remove_error: string | null };
@@ -30,7 +31,7 @@ export default function KeysTab({ clusterId, uid, user, refresh }: UserTabProps)
       const rotated = await run(() => invoke<Rotated>("key_rotate", { clusterId, uid, accessKey }));
       if (!rotated) return;
       const warning = rotated.remove_error
-        ? `Key mới đã được tạo nhưng chưa xoá được key cũ ${accessKey}: ${rotated.remove_error}`
+        ? `Key mới đã được tạo nhưng chưa xoá được key cũ ${accessKey}: ${explain(rotated.remove_error).message}`
         : null;
       setFresh({ keys: [rotated.key], warning });
     }
@@ -76,7 +77,7 @@ export default function KeysTab({ clusterId, uid, user, refresh }: UserTabProps)
           Tạo key mới
         </Button>
       </Box>
-      {error && pending === null && <Alert severity="error">{error}</Alert>}
+      {pending === null && <ErrorAlert error={error} />}
 
       <ConfirmDialog
         open={pending?.kind === "rotate"}

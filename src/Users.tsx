@@ -19,7 +19,7 @@ import {
 } from "@mui/material";
 import { invoke, uidOf, type KeyPair, type Profile, type UserInfo } from "./api";
 import CreateUserDialog from "./CreateUserDialog";
-import { SecretDialog, useAction } from "./ui";
+import { ErrorAlert, SecretDialog, useAction } from "./ui";
 import UserDrawer from "./UserDrawer";
 
 type Props = { profiles: Profile[]; clusterId: string; onClusterChange: (id: string) => void };
@@ -98,11 +98,7 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
         </Button>
       </Stack>
       {busy && <LinearProgress aria-label="Đang tải danh sách user" />}
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
+      <ErrorAlert error={error} sx={{ mb: 2 }} />
       <TableContainer component={Paper} variant="outlined">
         <Table size="small" aria-label="Danh sách user">
           <TableHead>

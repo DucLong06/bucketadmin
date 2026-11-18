@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Alert, Box, Button, FormControlLabel, LinearProgress, Paper, Stack, Switch, TextField, Typography } from "@mui/material";
 import { invoke, type Quota } from "./api";
-import { useAction } from "./ui";
+import { ErrorAlert, useAction } from "./ui";
 import type { UserTabProps } from "./UserDrawer";
 
 type QuotaType = "user" | "bucket";
@@ -118,7 +118,7 @@ export default function QuotaTab({ clusterId, uid }: UserTabProps) {
   return (
     <Stack spacing={2}>
       {busy && <LinearProgress aria-label="Đang tải quota" />}
-      {error && <Alert severity="error">{error}</Alert>}
+      <ErrorAlert error={error} />
       {form("user", "User quota", "Giới hạn tổng cho toàn bộ dữ liệu của user.")}
       {form("bucket", "Bucket quota", "Giới hạn áp cho từng bucket do user sở hữu.")}
     </Stack>

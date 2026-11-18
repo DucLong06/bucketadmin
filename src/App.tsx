@@ -14,6 +14,7 @@ import {
 import { invoke, type Profile } from "./api";
 import Audit from "./Audit";
 import Clusters from "./Clusters";
+import { ErrorAlert } from "./ui";
 import Users from "./Users";
 
 const theme = createTheme({ palette: { mode: "dark" } });
@@ -52,7 +53,7 @@ export default function App() {
         </Toolbar>
       </AppBar>
       <Container maxWidth="lg" sx={{ py: 3 }}>
-        {error && <Alert severity="error">{error}</Alert>}
+        <ErrorAlert error={error} />
         {page === "users" && <Users profiles={profiles} clusterId={clusterId} onClusterChange={setClusterId} />}
         {page === "clusters" && <Clusters profiles={profiles} onChanged={reload} />}
         {page === "audit" && <Audit profiles={profiles} />}

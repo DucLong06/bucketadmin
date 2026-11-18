@@ -12,7 +12,7 @@ import {
   TableRow,
 } from "@mui/material";
 import { invoke, type Usage } from "./api";
-import { useAction } from "./ui";
+import { ErrorAlert, useAction } from "./ui";
 import type { UserTabProps } from "./UserDrawer";
 
 export default function UsageTab({ clusterId, uid }: UserTabProps) {
@@ -41,7 +41,7 @@ export default function UsageTab({ clusterId, uid }: UserTabProps) {
         </Button>
       </Box>
       {busy && <LinearProgress aria-label="Đang tải usage" />}
-      {error && <Alert severity="error">{error}</Alert>}
+      <ErrorAlert error={error} />
       {noData && (
         <Alert severity="info">
           Chưa có dữ liệu usage cho user này. RGW chỉ ghi usage khi bật tuỳ chọn rgw_enable_usage_log.

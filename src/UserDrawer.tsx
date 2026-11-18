@@ -2,6 +2,7 @@ import { type ComponentType, useEffect, useState } from "react";
 import { Alert, Box, Button, Chip, Drawer, Stack, Tab, Tabs, Typography } from "@mui/material";
 import { invoke, uidOf, type UserInfo } from "./api";
 import InfoTab from "./InfoTab";
+import { ErrorAlert } from "./ui";
 import UsageTab from "./UsageTab";
 import QuotaTab from "./QuotaTab";
 import CapsTab from "./CapsTab";
@@ -64,11 +65,7 @@ export default function UserDrawer({ clusterId, user, onUser, onDeleted, onClose
               <Tab key={t.label} value={i} label={t.label} />
             ))}
           </Tabs>
-          {error && (
-            <Alert severity="error" sx={{ mt: 1 }}>
-              {error}
-            </Alert>
-          )}
+          <ErrorAlert error={error} sx={{ mt: 1 }} />
           <Box sx={{ pt: 2 }}>
             <Panel
               key={uid}
