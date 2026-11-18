@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds bucketadmin_<version>_amd64.deb in the repo root.
 #   scripts/build-deb.sh 0.1.0~preview1
-# Needs: node_modules (npm ci), Rust, the Tauri system libraries, dpkg-deb.
+# Needs: node_modules (npm ci), Rust, the Tauri system libraries, dpkg-deb, objdump (binutils).
 # Verify the result with scripts/render-gate.sh before shipping it.
 set -euo pipefail
 
@@ -30,6 +30,10 @@ if ! npx tauri build --no-bundle; then
 fi
 BIN="$ROOT/src-tauri/target/release/bucketadmin"
 [ -x "$BIN" ] || { echo "release binary not found: $BIN" >&2; exit 1; }
+# The binary needs a glibc at least as new as the build host's (2.39 when built on Ubuntu 24.04).
+# Declaring it makes dpkg refuse older systems instead of installing an app that cannot start.
+GLIBC="$(objdump -T "$BIN" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1 | cut -d_ -f2)"
+[ -n "$GLIBC" ] || { echo "cannot read the glibc requirement of $BIN (is binutils installed?)" >&2; exit 1; }
 
 # 2. Package tree.
 NAME="bucketadmin_${VERSION}_${ARCH}"
@@ -46,7 +50,7 @@ Version: $VERSION
 Section: utils
 Priority: optional
 Architecture: $ARCH
-Depends: libwebkit2gtk-4.1-0, libgtk-3-0
+Depends: libc6 (>= $GLIBC), libwebkit2gtk-4.1-0, libgtk-3-0
 Installed-Size: $(du -sk --exclude=DEBIAN "$STAGE" | cut -f1)
 Maintainer: BucketAdmin maintainers <bucketadmin@localhost>
 Description: Ceph RGW admin desktop (users, keys, caps, quotas, audit)

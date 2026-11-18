@@ -5,11 +5,48 @@
 //!   RGW_ACCESS_KEY=... RGW_SECRET_KEY=... cargo test --test rgw_lab -- --nocapture
 
 use bucketadmin_lib::rgw_admin::{
-    Credentials, QuotaType, ReqwestClient, RgwAdmin, RgwError, UserModify,
+    Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin, RgwError, UserModify,
 };
 
 fn endpoint() -> String {
     std::env::var("RGW_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:7480".into())
+}
+
+/// Path-style S3 request signed with a user's own key. Test traffic only: bucket and object
+/// setup, and the S3 calls whose usage the admin API should report.
+async fn s3(key: &KeyPair, method: &'static str, path: &str, query: &str, body: &[u8]) -> u16 {
+    use bucketadmin_lib::rgw_admin::{sigv4, HttpClient, HttpRequest};
+    let endpoint = endpoint();
+    let host = endpoint.split("://").nth(1).unwrap().trim_end_matches('/');
+    let creds = Credentials {
+        access_key: key.access_key.clone(),
+        secret_key: key.secret_key.clone(),
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let headers = sigv4::sign(
+        method,
+        host,
+        path,
+        query,
+        body,
+        &creds,
+        &sigv4::amz_date(now),
+    );
+    let url = match query {
+        "" => format!("{endpoint}{path}"),
+        _ => format!("{endpoint}{path}?{query}"),
+    };
+    let request = HttpRequest {
+        method,
+        url,
+        headers,
+        body: body.to_vec(),
+    };
+    let http = ReqwestClient::new().unwrap();
+    http.send(request).await.expect("S3 request").status
 }
 
 fn lab() -> Option<RgwAdmin> {
@@ -112,7 +149,10 @@ async fn user_lifecycle() {
     assert_eq!(fetched.display_name, "renamed");
     assert_eq!(fetched.caps.len(), 1);
 
-    let usage = admin.get_usage(Some(uid)).await.expect("get_usage");
+    let usage = admin
+        .get_usage(Some(uid), None, None)
+        .await
+        .expect("get_usage");
     println!("get_usage -> {usage:?}");
 
     let caps = admin
@@ -146,7 +186,11 @@ async fn m1_flow_through_ops_is_audited() {
         .expect("create_user");
     let first = created.keys[0].clone();
     assert!(!first.secret_key.is_empty(), "secret is returned on create");
-    let listed = ops.list_users().await.expect("list_users");
+    let listed = ops
+        .list_users_page(None, 1000)
+        .await
+        .expect("list_users")
+        .users;
     let row = listed
         .iter()
         .find(|u| u.user_id == uid)
@@ -193,7 +237,7 @@ async fn m1_flow_through_ops_is_audited() {
     );
     assert!(quotas.bucket.enabled && quotas.bucket.max_size < 0 && quotas.bucket.max_objects == 5);
 
-    let usage = ops.get_usage(uid).await.expect("get_usage");
+    let usage = ops.get_usage(uid, None, None).await.expect("get_usage");
     println!("get_usage -> {usage:?}");
 
     let second = ops.create_key(uid).await.expect("create_key");
@@ -236,7 +280,7 @@ async fn m1_flow_through_ops_is_audited() {
             .suspended,
         0
     );
-    ops.delete_user(uid).await.expect("delete_user");
+    ops.delete_user(uid, false).await.expect("delete_user");
     assert!(ops
         .get_user(uid)
         .await
@@ -281,4 +325,599 @@ async fn m1_flow_through_ops_is_audited() {
             "a secret key reached the audit log"
         );
     }
+}
+
+/// M3.3: attach an existing key pair to a user.
+#[tokio::test]
+async fn m3_manual_key_entry() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let uid = "ba-m3-key";
+    let _ = admin.delete_user(uid, true).await;
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+    ops.create_user(uid, "M3 manual key", &None, &None, &None)
+        .await
+        .expect("create_user");
+
+    let (access, secret) = (
+        "BAM3MANUALKEY0000001",
+        "bam3ManualSecret/0123456789+abcdefghijk=",
+    );
+    ops.add_key(uid, access, secret).await.expect("add_key");
+    let user = ops.get_user(uid).await.expect("get_user");
+    println!("add_key -> user now has {} keys", user.keys.len());
+    assert_eq!(user.keys.len(), 2);
+    assert!(user.keys.iter().any(|k| k.access_key == access));
+
+    let duplicate = ops.add_key(uid, access, secret).await.unwrap_err();
+    println!("add_key (same access key again) -> {duplicate}");
+    assert!(duplicate.contains("already has this access key"));
+    assert!(ops.add_key(uid, "bad key", secret).await.is_err());
+
+    ops.remove_key(uid, access).await.expect("remove_key");
+    ops.delete_user(uid, false).await.expect("delete_user");
+    let log = audit.recent(Some("key.create"), None).unwrap();
+    assert_eq!(log.len(), 1);
+    assert!(!format!("{log:?}").contains("bam3ManualSecret"));
+}
+
+/// M3.4: Swift subusers.
+#[tokio::test]
+async fn m3_subusers() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let uid = "ba-m3-sub";
+    let _ = admin.delete_user(uid, true).await;
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+    ops.create_user(uid, "M3 subusers", &None, &None, &None)
+        .await
+        .expect("create_user");
+
+    let created = ops
+        .create_subuser(uid, "swift1", "read")
+        .await
+        .expect("create_subuser");
+    println!("create_subuser read -> {:?}", created.subusers);
+    let swift = created
+        .swift_key
+        .expect("RGW generates a Swift key for the subuser");
+    assert_eq!(swift.user, format!("{uid}:swift1"));
+    assert!(
+        swift.secret_key.len() >= 20,
+        "generated Swift secret is returned once"
+    );
+    let created = ops
+        .create_subuser(uid, "swift2", "full")
+        .await
+        .expect("create_subuser 2");
+    let perms: Vec<&str> = created
+        .subusers
+        .iter()
+        .map(|s| s.permissions.as_str())
+        .collect();
+    assert_eq!(perms, ["read", "full-control"]);
+    let again = ops.create_subuser(uid, "swift1", "readwrite").await;
+    println!(
+        "create_subuser on an existing name -> {:?}",
+        again.map(|n| n.subusers)
+    );
+    assert!(ops.create_subuser(uid, "swift3", "bogus").await.is_err());
+
+    let user = ops.get_user(uid).await.expect("get_user");
+    assert_eq!(user.subusers.len(), 2);
+    assert!(
+        user.swift_keys.iter().all(|k| k.secret_key.is_empty()),
+        "Swift secrets are stripped on read"
+    );
+
+    ops.remove_subuser(uid, "swift1")
+        .await
+        .expect("remove_subuser");
+    let missing = ops.remove_subuser(uid, "swift1").await.unwrap_err();
+    println!("remove_subuser (missing) -> {missing}");
+    assert!(missing.contains("NoSuchSubUser"));
+    let user = ops.get_user(uid).await.expect("get_user");
+    assert_eq!(user.subusers.len(), 1);
+    assert_eq!(
+        user.swift_keys.len(),
+        1,
+        "the Swift key is removed with its subuser"
+    );
+
+    ops.delete_user(uid, false).await.expect("delete_user");
+    let dump = format!("{:?}", audit.recent(None, None).unwrap());
+    assert!(
+        !dump.contains(&swift.secret_key),
+        "a Swift secret reached the audit log"
+    );
+}
+
+/// M3.5: removing a user that owns data needs purge-data.
+#[tokio::test]
+async fn m3_delete_user_with_and_without_purge() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let uid = "ba-m3-purge";
+    let _ = admin.delete_user(uid, true).await;
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+    let user = ops
+        .create_user(uid, "M3 purge", &None, &None, &None)
+        .await
+        .expect("create_user");
+    let key = &user.keys[0];
+    assert_eq!(
+        s3(key, "PUT", "/ba-m3-purge-bucket", "", b"").await,
+        200,
+        "create bucket"
+    );
+    assert_eq!(
+        s3(key, "PUT", "/ba-m3-purge-bucket/a.txt", "", b"data").await,
+        200,
+        "put object"
+    );
+
+    let refused = ops.delete_user(uid, false).await.unwrap_err();
+    println!("delete_user without purge-data -> {refused}");
+    assert!(refused.contains("BucketAlreadyExists"), "{refused}");
+    assert!(ops.get_user(uid).await.is_ok(), "the user must still exist");
+
+    ops.delete_user(uid, true)
+        .await
+        .expect("delete_user with purge-data");
+    println!("delete_user with purge-data -> ok");
+    assert!(ops
+        .get_user(uid)
+        .await
+        .unwrap_err()
+        .starts_with("NoSuchUser"));
+    let gone = ops
+        .admin
+        .get_bucket("ba-m3-purge-bucket")
+        .await
+        .unwrap_err();
+    println!("bucket after purge -> {gone}");
+    assert_eq!(
+        gone,
+        RgwError::NoSuchBucket,
+        "purge-data removed the bucket too"
+    );
+    // The key is gone with the user as well.
+    assert_eq!(
+        s3(key, "GET", "/ba-m3-purge-bucket/a.txt", "", b"").await,
+        403
+    );
+}
+
+/// M3.6: marker-based paging of the user list, with ~30 users.
+#[tokio::test]
+async fn m3_users_pagination() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let uids: Vec<String> = (0..30).map(|i| format!("ba-m3-page-{i:02}")).collect();
+    for uid in &uids {
+        let _ = admin.delete_user(uid, true).await; // leftover from an aborted run
+        admin
+            .create_user(uid, "M3 paging", None, None, None)
+            .await
+            .expect("create_user");
+    }
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+
+    let (mut seen, mut pages, mut marker) = (Vec::new(), 0, None::<String>);
+    loop {
+        let page = ops
+            .list_users_page(marker.as_deref(), 10)
+            .await
+            .expect("list_users_page");
+        pages += 1;
+        assert!(page.users.len() <= 10, "a page never exceeds the limit");
+        assert!(page
+            .users
+            .iter()
+            .all(|u| u.keys.iter().all(|k| k.secret_key.is_empty())));
+        seen.extend(page.users.into_iter().map(|u| u.user_id));
+        marker = page.next_marker;
+        if marker.is_none() {
+            break;
+        }
+        assert!(pages < 50, "paging does not terminate");
+    }
+    println!(
+        "list_users_page limit=10 -> {pages} pages, {} users in total",
+        seen.len()
+    );
+    let mine: Vec<&String> = seen
+        .iter()
+        .filter(|u| u.starts_with("ba-m3-page-"))
+        .collect();
+    assert_eq!(
+        mine.len(),
+        30,
+        "every created user appears exactly once across the pages"
+    );
+    let mut unique = seen.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), seen.len(), "no user is listed twice");
+    assert!(pages >= 4, "30+ users at 10 per page need at least 4 pages");
+
+    for uid in &uids {
+        ops.admin.delete_user(uid, false).await.expect("cleanup");
+    }
+}
+
+/// M3.9: bucket list, detail with the S3 bucket policy, delete only when empty.
+#[tokio::test]
+async fn m3_buckets() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let (uid, bucket) = ("ba-m3-bkt", "ba-m3-bkt-data");
+    let _ = admin.delete_user(uid, true).await;
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+    let user = ops
+        .create_user(uid, "M3 buckets", &None, &None, &None)
+        .await
+        .expect("create_user");
+    let key = &user.keys[0];
+    let path = format!("/{bucket}");
+    assert_eq!(s3(key, "PUT", &path, "", b"").await, 200, "create bucket");
+    assert_eq!(
+        s3(key, "PUT", &format!("{path}/a.txt"), "", b"hello").await,
+        200,
+        "put object"
+    );
+    let policy = format!(
+        r#"{{"Version":"2012-10-17","Statement":[{{"Effect":"Allow","Principal":{{"AWS":["arn:aws:iam:::user/{uid}"]}},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::{bucket}/*"]}}]}}"#
+    );
+    let status = s3(key, "PUT", &path, "policy=", policy.as_bytes()).await;
+    assert!(
+        status == 200 || status == 204,
+        "put bucket policy -> {status}"
+    );
+
+    let all = ops.list_buckets(None).await.expect("list_buckets");
+    let listed = all
+        .iter()
+        .find(|b| b.bucket == bucket)
+        .expect("bucket is listed");
+    println!(
+        "list_buckets -> {} buckets; {bucket}: owner={} usage={:?}",
+        all.len(),
+        listed.owner,
+        listed.usage.get("rgw.main")
+    );
+    assert_eq!(listed.owner, uid);
+    assert_eq!(listed.usage["rgw.main"].size, 5);
+    assert_eq!(listed.usage["rgw.main"].num_objects, 1);
+    let own = ops
+        .list_buckets(Some(uid))
+        .await
+        .expect("list_buckets(uid)");
+    assert_eq!(own.len(), 1);
+
+    let detail = ops.get_bucket(bucket).await.expect("get_bucket");
+    println!(
+        "get_bucket -> policy={:?} policy_error={:?}",
+        detail.policy, detail.policy_error
+    );
+    assert_eq!(detail.policy_error, None);
+    let stored: serde_json::Value =
+        serde_json::from_str(&detail.policy.expect("policy is found")).unwrap();
+    assert_eq!(stored["Statement"][0]["Action"][0], "s3:GetObject");
+    assert!(!detail.info.bucket_quota.enabled);
+
+    let refused = ops.delete_bucket(bucket).await.unwrap_err();
+    println!("delete_bucket (1 object inside) -> {refused}");
+    assert!(refused.contains("BucketNotEmpty"), "{refused}");
+    assert_eq!(
+        s3(key, "DELETE", &format!("{path}/a.txt"), "", b"").await,
+        204,
+        "delete object"
+    );
+    ops.delete_bucket(bucket)
+        .await
+        .expect("delete_bucket (empty, has a policy)");
+    assert!(ops
+        .get_bucket(bucket)
+        .await
+        .unwrap_err()
+        .starts_with("NoSuchBucket"));
+    assert!(ops.list_buckets(Some(uid)).await.unwrap().is_empty());
+
+    ops.delete_user(uid, false).await.expect("delete_user");
+    let log: Vec<bool> = audit
+        .recent(Some("bucket.delete"), None)
+        .unwrap()
+        .iter()
+        .map(|e| e.ok)
+        .collect();
+    assert_eq!(
+        log,
+        [true, false],
+        "newest first: the successful delete, then the refused one"
+    );
+}
+
+/// M3.7: quota of a single bucket: set, change, switch off.
+#[tokio::test]
+async fn m3_bucket_quota() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let (uid, bucket) = ("ba-m3-bq", "ba-m3-bq-data");
+    let _ = admin.delete_user(uid, true).await;
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+    let user = ops
+        .create_user(uid, "M3 bucket quota", &None, &None, &None)
+        .await
+        .expect("create_user");
+    assert_eq!(
+        s3(&user.keys[0], "PUT", &format!("/{bucket}"), "", b"").await,
+        200,
+        "create bucket"
+    );
+
+    ops.set_bucket_quota(bucket, true, 2048, 50)
+        .await
+        .expect("set_bucket_quota");
+    let quota = ops
+        .get_bucket(bucket)
+        .await
+        .expect("get_bucket")
+        .info
+        .bucket_quota;
+    println!("set_bucket_quota 2048 KB / 50 objects -> {quota:?}");
+    assert!(quota.enabled);
+    assert_eq!((quota.max_size_kb, quota.max_objects), (2048, 50));
+
+    ops.set_bucket_quota(bucket, true, -1, 5)
+        .await
+        .expect("change");
+    let quota = ops.get_bucket(bucket).await.unwrap().info.bucket_quota;
+    assert!(
+        quota.enabled && quota.max_size < 0 && quota.max_objects == 5,
+        "{quota:?}"
+    );
+
+    ops.set_bucket_quota(bucket, false, -1, -1)
+        .await
+        .expect("switch off");
+    let quota = ops.get_bucket(bucket).await.unwrap().info.bucket_quota;
+    println!("set_bucket_quota off -> {quota:?}");
+    assert!(!quota.enabled);
+    // The owner's default bucket quota (user drawer, Quota tab) is a different setting and is untouched.
+    assert!(!ops.get_quotas(uid).await.unwrap().bucket.enabled);
+
+    ops.delete_user(uid, true).await.expect("cleanup");
+    let log = audit.recent(Some("bucket.quota.set"), None).unwrap();
+    assert_eq!(log.len(), 3);
+    assert!(log
+        .iter()
+        .all(|e| e.ok && e.target == bucket && e.detail.starts_with("owner=ba-m3-bq ")));
+}
+
+/// M3.8: usage for a date range, and trim. Real S3 traffic is generated first; whether RGW
+/// reports it depends on `rgw_enable_usage_log` on the cluster, so both outcomes are handled
+/// and the one that happened is printed.
+#[tokio::test]
+async fn m3_usage_range_and_trim() {
+    use bucketadmin_lib::rgw_admin::sigv4::amz_date;
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let (uid, bucket) = ("ba-m3-usage", "ba-m3-usage-data");
+    let _ = admin.delete_user(uid, true).await;
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+    let support = ops.usage_support().await.expect("usage_support");
+    println!("usage_support -> {support:?}");
+    assert!(support.supported, "the lab admin has usage caps");
+
+    let user = ops
+        .create_user(uid, "M3 usage", &None, &None, &None)
+        .await
+        .expect("create_user");
+    let key = &user.keys[0];
+    let path = format!("/{bucket}");
+    assert_eq!(s3(key, "PUT", &path, "", b"").await, 200);
+    assert_eq!(
+        s3(key, "PUT", &format!("{path}/a.txt"), "", b"0123456789").await,
+        200
+    );
+    assert_eq!(
+        s3(key, "PUT", &format!("{path}/b.txt"), "", b"abc").await,
+        200
+    );
+    assert_eq!(s3(key, "GET", &format!("{path}/a.txt"), "", b"").await, 200);
+
+    // [today, tomorrow) in UTC, as the UI sends it for "today".
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let day = |secs: u64| {
+        let d = amz_date(secs);
+        format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..8])
+    };
+    let (start, end) = (day(now), day(now + 86_400));
+
+    // RGW flushes its usage log about every 30 s.
+    let wait: u64 = std::env::var("RGW_USAGE_WAIT_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(45);
+    let mut usage = ops
+        .get_usage(uid, Some(&start), Some(&end))
+        .await
+        .expect("get_usage");
+    let mut waited = 0;
+    while usage.entries.is_empty() && waited < wait {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        waited += 5;
+        usage = ops
+            .get_usage(uid, Some(&start), Some(&end))
+            .await
+            .expect("get_usage");
+    }
+
+    if usage.entries.is_empty() {
+        println!(
+            "USAGE-DATA-MISSING: no usage {waited} s after 4 real S3 requests ({start}..{end}). \
+             The lab RGW is not logging usage (rgw_enable_usage_log); the data assertions were skipped."
+        );
+    } else {
+        let buckets = &usage.entries[0].buckets;
+        let categories: Vec<(&str, u64, u64, u64)> = buckets
+            .iter()
+            .flat_map(|b| &b.categories)
+            .map(|c| (c.category.as_str(), c.ops, c.bytes_sent, c.bytes_received))
+            .collect();
+        println!("get_usage {start}..{end} after {waited} s -> {categories:?}");
+        let ops_of = |name: &str| {
+            categories
+                .iter()
+                .filter(|c| c.0 == name)
+                .map(|c| c.1)
+                .sum::<u64>()
+        };
+        assert_eq!(ops_of("put_obj"), 2, "two object PUTs");
+        assert_eq!(ops_of("get_obj"), 1, "one object GET");
+        assert_eq!(ops_of("create_bucket"), 1);
+        let received: u64 = categories
+            .iter()
+            .filter(|c| c.0 == "put_obj")
+            .map(|c| c.3)
+            .sum();
+        assert_eq!(received, 13, "10 + 3 bytes uploaded");
+        // A range that ends before today has none of it.
+        let earlier = ops
+            .get_usage(uid, Some("2020-01-01"), Some(&start))
+            .await
+            .unwrap();
+        assert!(earlier.entries.is_empty());
+    }
+
+    let records: usize = usage.entries.iter().map(|e| e.buckets.len()).sum();
+    let trimmed = ops.trim_usage(uid, &start, &end).await.expect("trim_usage");
+    println!(
+        "trim_usage {start}..{end} -> {} records removed",
+        trimmed.records
+    );
+    assert_eq!(trimmed.records, records);
+    let after = ops.get_usage(uid, Some(&start), Some(&end)).await.unwrap();
+    assert!(
+        after.entries.is_empty(),
+        "nothing is left in the range after the trim"
+    );
+    assert!(
+        ops.trim_usage(uid, &end, &start).await.is_err(),
+        "reversed range is refused"
+    );
+
+    ops.delete_user(uid, true).await.expect("cleanup");
+    let log = audit.recent(Some("usage.trim"), None).unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(
+        log[0].detail,
+        format!("start={start} end={end} records={records}")
+    );
+}
+
+// ---- data for scripts/ui-smoke/ui-smoke.sh (the UI itself cannot create buckets) ----
+
+const SMOKE_DATA_UID: &str = "ba-m3-ui-data";
+const SMOKE_PAGING_USERS: usize = 27;
+
+async fn ui_smoke_cleanup(admin: &RgwAdmin) {
+    let _ = admin.delete_user(SMOKE_DATA_UID, true).await;
+    let _ = admin.delete_user("ba-m1-ui", true).await; // the driver's own user, after an aborted run
+    for i in 0..SMOKE_PAGING_USERS {
+        let _ = admin.delete_user(&format!("ba-m3-ui-p{i:02}"), true).await;
+    }
+}
+
+/// One user owning a bucket with an object and a policy plus an empty bucket, and enough
+/// other users for the list to need a second page.
+#[tokio::test]
+#[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
+async fn ui_smoke_fixture_create() {
+    let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
+    ui_smoke_cleanup(&admin).await;
+    let user = admin
+        .create_user(SMOKE_DATA_UID, "UI smoke data", None, None, None)
+        .await
+        .expect("create fixture user");
+    let key = &user.keys[0];
+    assert_eq!(s3(key, "PUT", "/ba-m3-ui-data-bucket", "", b"").await, 200);
+    assert_eq!(
+        s3(
+            key,
+            "PUT",
+            "/ba-m3-ui-data-bucket/report.csv",
+            "",
+            &[b'x'; 2048]
+        )
+        .await,
+        200
+    );
+    let policy = r#"{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["arn:aws:iam:::user/ba-m3-ui-data"]},"Action":["s3:GetObject","s3:ListBucket"],"Resource":["arn:aws:s3:::ba-m3-ui-data-bucket","arn:aws:s3:::ba-m3-ui-data-bucket/*"]}]}"#;
+    let status = s3(
+        key,
+        "PUT",
+        "/ba-m3-ui-data-bucket",
+        "policy=",
+        policy.as_bytes(),
+    )
+    .await;
+    assert!(
+        status == 200 || status == 204,
+        "put bucket policy -> {status}"
+    );
+    assert_eq!(s3(key, "PUT", "/ba-m3-ui-empty", "", b"").await, 200);
+    for i in 0..SMOKE_PAGING_USERS {
+        let uid = format!("ba-m3-ui-p{i:02}");
+        admin
+            .create_user(&uid, "UI smoke paging", None, None, None)
+            .await
+            .expect("create paging user");
+    }
+}
+
+#[tokio::test]
+#[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
+async fn ui_smoke_fixture_remove() {
+    let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
+    ui_smoke_cleanup(&admin).await;
 }

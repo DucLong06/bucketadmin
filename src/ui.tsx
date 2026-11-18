@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import {
   Alert,
   Button,
@@ -10,7 +10,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import type { KeyPair } from "./api";
+import type { KeyPair, Profile } from "./api";
+import { explain } from "./errors";
 
 /** Runs backend calls with shared busy/error state; resolves to undefined when the call failed. */
 export function useAction() {
@@ -29,6 +30,43 @@ export function useAction() {
     }
   }
   return { busy, error, run, setError };
+}
+
+export function ClusterSelect(props: { profiles: Profile[]; value: string; onChange: (id: string) => void }) {
+  return (
+    <TextField
+      select
+      label="Cluster"
+      value={props.value}
+      onChange={(e) => props.onChange(e.target.value)}
+      size="small"
+      sx={{ minWidth: 200 }}
+      slotProps={{ select: { native: true } }}
+    >
+      {props.profiles.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.label}
+        </option>
+      ))}
+    </TextField>
+  );
+}
+
+/** Backend error in Vietnamese, with the error code and the original text one click away. */
+export function ErrorAlert({ error, sx }: { error: string | null | undefined; sx?: object }) {
+  if (!error) return null;
+  const { message, code, detail } = explain(error);
+  return (
+    <Alert severity="error" sx={sx}>
+      {message}
+      {message !== detail && (
+        <details style={{ marginTop: 4 }}>
+          <summary>Chi tiết kỹ thuật{code ? ` (${code})` : ""}</summary>
+          <code style={{ wordBreak: "break-word" }}>{detail}</code>
+        </details>
+      )}
+    </Alert>
+  );
 }
 
 export function CopyButton({ value, label }: { value: string; label: string }) {
@@ -58,7 +96,13 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
 const readOnly = { input: { readOnly: true, sx: { fontFamily: "monospace" } } };
 
 /** Shows freshly created keys. The secret is not stored anywhere, so this is the only chance to copy it. */
-export function SecretDialog(props: { keys: KeyPair[] | null; warning?: string | null; onClose: () => void }) {
+export function SecretDialog(props: {
+  keys: KeyPair[] | null;
+  warning?: string | null;
+  /** Label of the non-secret half; Swift keys are identified by their user, not an access key. */
+  accessLabel?: string;
+  onClose: () => void;
+}) {
   const [show, setShow] = useState(false);
   const keys = props.keys ?? [];
   const close = () => {
@@ -73,13 +117,19 @@ export function SecretDialog(props: { keys: KeyPair[] | null; warning?: string |
           <Alert severity="warning">
             Secret key chỉ hiển thị một lần duy nhất. Sau khi đóng hộp thoại này sẽ không xem lại được.
           </Alert>
-          {props.warning && <Alert severity="error">{props.warning}</Alert>}
+          <ErrorAlert error={props.warning} />
           {keys.length === 0 && <Typography>User được tạo không kèm key nào.</Typography>}
           {keys.map((k) => (
             <Stack key={k.access_key} spacing={1}>
               <Stack direction="row" spacing={1}>
-                <TextField label="Access key" value={k.access_key} size="small" fullWidth slotProps={readOnly} />
-                <CopyButton value={k.access_key} label="Copy access key" />
+                <TextField
+                  label={props.accessLabel ?? "Access key"}
+                  value={k.access_key}
+                  size="small"
+                  fullWidth
+                  slotProps={readOnly}
+                />
+                <CopyButton value={k.access_key} label={`Copy ${(props.accessLabel ?? "access key").toLowerCase()}`} />
               </Stack>
               <Stack direction="row" spacing={1}>
                 <TextField
@@ -117,6 +167,8 @@ type ConfirmProps = {
   requireText?: string;
   busy?: boolean;
   error?: string | null;
+  /** Extra controls shown under the text, e.g. an option that changes what the confirmation does. */
+  children?: ReactNode;
   onConfirm: () => void;
   onClose: () => void;
 };
@@ -134,6 +186,7 @@ export function ConfirmDialog(props: ConfirmProps) {
       <DialogContent>
         <Stack spacing={2}>
           <Typography>{props.text}</Typography>
+          {props.children}
           {props.requireText !== undefined && (
             <TextField
               label={`Gõ "${props.requireText}" để xác nhận`}
@@ -144,7 +197,7 @@ export function ConfirmDialog(props: ConfirmProps) {
               fullWidth
             />
           )}
-          {props.error && <Alert severity="error">{props.error}</Alert>}
+          <ErrorAlert error={props.error} />
         </Stack>
       </DialogContent>
       <DialogActions>

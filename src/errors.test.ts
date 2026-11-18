@@ -1,0 +1,49 @@
+import { expect, test } from "vitest";
+import { explain } from "./errors";
+
+// The inputs are the exact strings the Rust side produces (RgwError's Display).
+test("named RGW errors get a Vietnamese message and keep code + original", () => {
+  const e = explain("NoSuchUser (404): user does not exist");
+  expect(e.message).toBe("User không tồn tại (có thể đã bị xoá).");
+  expect(e.code).toBe("NoSuchUser");
+  expect(e.detail).toBe("NoSuchUser (404): user does not exist");
+  expect(explain("AccessDenied (403): the admin user lacks the caps for this operation").message).toMatch(/caps/);
+  expect(explain("UserAlreadyExists (409): user already exists").code).toBe("UserAlreadyExists");
+  expect(explain("NoSuchBucket (404): bucket does not exist").message).toMatch(/^Bucket không tồn tại/);
+  expect(explain("NoSuchKey (404): no such access key").message).toMatch(/^Key không tồn tại/);
+});
+
+test("errors that only arrive as 'RGW returned HTTP ...' are mapped by their code", () => {
+  expect(explain("RGW returned HTTP 409 BucketAlreadyExists ").code).toBe("BucketAlreadyExists");
+  expect(explain("RGW returned HTTP 409 BucketAlreadyExists ").message).toMatch(/user vẫn còn bucket/);
+  expect(explain("RGW returned HTTP 400 InvalidArgument ").message).toMatch(/^Tham số không hợp lệ/);
+  expect(explain("RGW returned HTTP 403 QuotaExceeded ").message).toBe("Vượt quá quota.");
+  expect(explain("RGW returned HTTP 400 InvalidAccessKey ").message).toBe("Access key không hợp lệ.");
+  expect(explain("RGW returned HTTP 409 BucketNotEmpty ").message).toMatch(/còn object/);
+});
+
+test("404 without a known code, unknown codes and bare statuses", () => {
+  const notFound = explain("RGW returned HTTP 404  <html>404 Not Found</html>");
+  expect(notFound.message).toMatch(/^Không tìm thấy \(HTTP 404\)/);
+  expect(notFound.code).toBe("404");
+  const unknown = explain("RGW returned HTTP 503 SlowDown please retry");
+  expect(unknown.message).toBe("RGW báo lỗi HTTP 503 (SlowDown).");
+  expect(unknown.code).toBe("SlowDown");
+  expect(explain("RGW returned HTTP 502  <html>Bad Gateway</html>").message).toBe("RGW báo lỗi HTTP 502.");
+});
+
+test("network failures: timeout is told apart from connection errors", () => {
+  const refused = explain(
+    "cannot reach RGW: error sending request for url (http://127.0.0.1:1/admin/info?format=json): client error (Connect): tcp connect error: Connection refused (os error 111)",
+  );
+  expect(refused.code).toBe("network");
+  expect(refused.message).toMatch(/^Không kết nối được/);
+  const slow = explain("cannot reach RGW: error sending request for url (http://h/admin/info): operation timed out");
+  expect(slow.code).toBe("timeout");
+  expect(slow.message).toMatch(/^Hết thời gian chờ/);
+});
+
+test("unrecognised text is passed through unchanged", () => {
+  const e = explain("keychain: cannot read secret key: locked");
+  expect(e).toEqual({ message: e.detail, code: null, detail: "keychain: cannot read secret key: locked" });
+});
