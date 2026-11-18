@@ -49,7 +49,7 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
     setTimeout(() => setCopied(false), 1500);
   }
   return (
-    <Button size="small" onClick={copy} aria-label={label}>
+    <Button size="small" onClick={copy} aria-label={label} sx={{ whiteSpace: "nowrap", minWidth: 88 }}>
       {copied ? "Đã copy" : "Copy"}
     </Button>
   );

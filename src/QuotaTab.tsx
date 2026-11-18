@@ -104,7 +104,8 @@ export default function QuotaTab({ clusterId, uid }: UserTabProps) {
     quotas && (
       <QuotaForm
         // Remount when RGW's values change so the fields show the stored state.
-        key={JSON.stringify(quotas[quotaType])}
+        // The type is part of the key: both quotas often hold identical values.
+        key={quotaType + JSON.stringify(quotas[quotaType])}
         title={title}
         hint={hint}
         quota={quotas[quotaType]}

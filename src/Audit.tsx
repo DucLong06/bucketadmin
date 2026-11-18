@@ -112,8 +112,8 @@ export default function Audit({ profiles }: { profiles: Profile[] }) {
               <TableRow key={e.id} hover>
                 <TableCell sx={{ whiteSpace: "nowrap" }}>{new Date(e.ts * 1000).toLocaleString("vi-VN")}</TableCell>
                 <TableCell>{clusterLabel(e.cluster_id)}</TableCell>
-                <TableCell sx={{ fontFamily: "monospace" }}>{e.action}</TableCell>
-                <TableCell sx={{ fontFamily: "monospace" }}>{e.target}</TableCell>
+                <TableCell sx={{ fontFamily: "monospace", whiteSpace: "nowrap" }}>{e.action}</TableCell>
+                <TableCell sx={{ fontFamily: "monospace", whiteSpace: "nowrap" }}>{e.target}</TableCell>
                 <TableCell>{e.detail}</TableCell>
                 <TableCell>
                   {e.ok ? (
