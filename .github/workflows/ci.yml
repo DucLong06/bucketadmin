@@ -44,3 +44,43 @@ jobs:
       # Lab tests (tests/rgw_lab.rs) skip themselves here: no RGW_* secrets in CI.
       - run: cargo test
         working-directory: src-tauri
+
+  deb:
+    # Same runner and steps as release.yml, so a packaging break shows up on the PR, not at tag time.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System libraries (build + render gate)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libdbus-1-dev pkg-config xvfb ffmpeg
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - name: Build the .deb
+        run: scripts/build-deb.sh "0.0.0~ci${{ github.run_number }}"
+
+      - name: Render gate (the packaged binary must show the real UI)
+        run: scripts/render-gate.sh bucketadmin_*.deb
+
+      - name: Keep the .deb and the render gate screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-preview
+          path: |
+            bucketadmin_*.deb
+            /tmp/ba-m2/render.png
+          if-no-files-found: ignore
