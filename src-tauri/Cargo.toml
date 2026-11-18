@@ -31,3 +31,12 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[features]
+# Serve the embedded frontend instead of build.devUrl. `tauri build` turns on tauri/custom-protocol
+# by itself; this alias is for a plain `cargo build --release --features custom-protocol`.
+# Without it a hand-built binary opens a blank "Could not connect to localhost" window.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = true
