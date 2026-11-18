@@ -17,6 +17,8 @@ serde_json = "1"
 thiserror = "2"
 sha2 = "0.10"
 hmac = "0.12"
+# Linux Secret Service over libdbus; crypto-rust keeps openssl out
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 # rustls + system trust store (internal CAs); no openssl
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
 
