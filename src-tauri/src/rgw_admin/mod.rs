@@ -1,6 +1,8 @@
 //! Client for the Ceph RGW Admin Ops API (`<base>/admin/<resource>?format=json`).
 //! Reference: ceph/ceph `doc/radosgw/adminops.rst`.
 
+#[cfg(test)]
+pub(crate) mod mock;
 pub mod sigv4;
 mod types;
 
@@ -68,6 +70,7 @@ pub trait HttpClient: Send + Sync {
     fn send(&self, req: HttpRequest) -> impl Future<Output = Result<HttpResponse, String>> + Send;
 }
 
+#[derive(Clone)]
 pub struct ReqwestClient(reqwest::Client);
 
 impl ReqwestClient {
@@ -230,17 +233,43 @@ impl<H: HttpClient> RgwAdmin<H> {
         self.json("GET", "user", &[("uid", uid)]).await
     }
 
+    /// `access_key` / `secret_key`: `None` lets RGW generate that half of the key pair.
     pub async fn create_user(
         &self,
         uid: &str,
         display_name: &str,
         email: Option<&str>,
+        access_key: Option<&str>,
+        secret_key: Option<&str>,
     ) -> Result<UserInfo, RgwError> {
         let mut params = vec![("uid", uid), ("display-name", display_name)];
-        if let Some(email) = email {
-            params.push(("email", email));
-        }
+        let optional = [
+            ("email", email),
+            ("access-key", access_key),
+            ("secret-key", secret_key),
+        ];
+        params.extend(optional.iter().filter_map(|(k, v)| v.map(|v| (*k, v))));
         self.json("PUT", "user", &params).await
+    }
+
+    /// `PUT /admin/user?key`: adds an S3 key and returns all S3 keys of the user.
+    /// `None` lets RGW generate that half of the key pair.
+    pub async fn create_key(
+        &self,
+        uid: &str,
+        access_key: Option<&str>,
+        secret_key: Option<&str>,
+    ) -> Result<Vec<KeyPair>, RgwError> {
+        let mut params = vec![("key", ""), ("uid", uid)];
+        let optional = [("access-key", access_key), ("secret-key", secret_key)];
+        params.extend(optional.iter().filter_map(|(k, v)| v.map(|v| (*k, v))));
+        self.json("PUT", "user", &params).await
+    }
+
+    /// `DELETE /admin/user?key`. Squid answers 403 InvalidAccessKeyId for an unknown key.
+    pub async fn remove_key(&self, uid: &str, access_key: &str) -> Result<(), RgwError> {
+        let params = [("key", ""), ("uid", uid), ("access-key", access_key)];
+        self.send("DELETE", "user", &params).await.map(|_| ())
     }
 
     pub async fn modify_user(&self, uid: &str, changes: &UserModify) -> Result<UserInfo, RgwError> {
@@ -373,53 +402,8 @@ fn error_from_response(resp: &HttpResponse) -> RgwError {
 
 #[cfg(test)]
 mod tests {
+    use super::mock::Mock;
     use super::*;
-    use std::collections::VecDeque;
-    use std::sync::Mutex;
-
-    #[derive(Default)]
-    struct Mock {
-        responses: Mutex<VecDeque<HttpResponse>>,
-        requests: Mutex<Vec<HttpRequest>>,
-    }
-
-    impl HttpClient for &Mock {
-        async fn send(&self, req: HttpRequest) -> Result<HttpResponse, String> {
-            self.requests.lock().unwrap().push(req);
-            self.responses
-                .lock()
-                .unwrap()
-                .pop_front()
-                .ok_or_else(|| "connection refused".to_string())
-        }
-    }
-
-    impl Mock {
-        fn reply(status: u16, body: &str) -> Self {
-            let mock = Mock::default();
-            mock.responses.lock().unwrap().push_back(HttpResponse {
-                status,
-                headers: vec![("Server".into(), "Ceph Object Gateway (squid)".into())],
-                body: body.as_bytes().to_vec(),
-            });
-            mock
-        }
-
-        fn client(&self) -> RgwAdmin<&Mock> {
-            let creds = Credentials {
-                access_key: "AK".into(),
-                secret_key: "SK".into(),
-            };
-            RgwAdmin::new("http://rgw.test:7480/", creds, self).unwrap()
-        }
-
-        /// (method, url) of the only request sent.
-        fn sent(&self) -> (&'static str, String) {
-            let reqs = self.requests.lock().unwrap();
-            assert_eq!(reqs.len(), 1);
-            (reqs[0].method, reqs[0].url.clone())
-        }
-    }
 
     const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -495,7 +479,7 @@ mod tests {
     async fn create_modify_delete_use_documented_verbs() {
         let mock = Mock::reply(200, r#"{"user_id":"u1"}"#);
         mock.client()
-            .create_user("u1", "User One", Some("u1@example.com"))
+            .create_user("u1", "User One", Some("u1@example.com"), None, None)
             .await
             .unwrap();
         assert_eq!(
@@ -691,5 +675,39 @@ mod tests {
         assert_eq!(admin.host, "s3.corp.test");
         assert_eq!(admin.origin, "https://s3.corp.test");
         assert_eq!(admin.base_path, "/rgw");
+    }
+
+    #[tokio::test]
+    async fn manual_key_on_create_and_key_calls() {
+        let mock = Mock::reply(200, r#"{"user_id":"u1"}"#);
+        mock.client()
+            .create_user("u1", "U", None, Some("AKMANUAL"), Some("sk/+="))
+            .await
+            .unwrap();
+        assert_eq!(
+            mock.calls(),
+            ["PUT /admin/user?access-key=AKMANUAL&display-name=U&format=json&secret-key=sk%2F%2B%3D&uid=u1"]
+        );
+
+        let mock = Mock::reply(
+            200,
+            r#"[{"user":"u1","access_key":"OLD","secret_key":"s1","active":true},{"user":"u1","access_key":"NEW","secret_key":"s2","active":true}]"#,
+        );
+        let keys = mock.client().create_key("u1", None, None).await.unwrap();
+        assert_eq!(keys[1].access_key, "NEW");
+        assert_eq!(mock.calls(), ["PUT /admin/user?format=json&key=&uid=u1"]);
+
+        let mock = Mock::reply(200, "");
+        mock.client().remove_key("u1", "OLD").await.unwrap();
+        assert_eq!(
+            mock.calls(),
+            ["DELETE /admin/user?access-key=OLD&format=json&key=&uid=u1"]
+        );
+
+        let mock = Mock::reply(403, r#"{"Code":"InvalidAccessKeyId"}"#);
+        assert_eq!(
+            mock.client().remove_key("u1", "NOPE").await.unwrap_err(),
+            RgwError::InvalidAccessKeyId
+        );
     }
 }
