@@ -321,3 +321,79 @@ async fn m3_manual_key_entry() {
     assert_eq!(log.len(), 1);
     assert!(!format!("{log:?}").contains("bam3ManualSecret"));
 }
+
+/// M3.4: Swift subusers.
+#[tokio::test]
+async fn m3_subusers() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let uid = "ba-m3-sub";
+    let _ = admin.delete_user(uid, true).await;
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+    ops.create_user(uid, "M3 subusers", &None, &None, &None)
+        .await
+        .expect("create_user");
+
+    let created = ops
+        .create_subuser(uid, "swift1", "read")
+        .await
+        .expect("create_subuser");
+    println!("create_subuser read -> {:?}", created.subusers);
+    let swift = created
+        .swift_key
+        .expect("RGW generates a Swift key for the subuser");
+    assert_eq!(swift.user, format!("{uid}:swift1"));
+    assert!(
+        swift.secret_key.len() >= 20,
+        "generated Swift secret is returned once"
+    );
+    let created = ops
+        .create_subuser(uid, "swift2", "full")
+        .await
+        .expect("create_subuser 2");
+    let perms: Vec<&str> = created
+        .subusers
+        .iter()
+        .map(|s| s.permissions.as_str())
+        .collect();
+    assert_eq!(perms, ["read", "full-control"]);
+    let again = ops.create_subuser(uid, "swift1", "readwrite").await;
+    println!(
+        "create_subuser on an existing name -> {:?}",
+        again.map(|n| n.subusers)
+    );
+    assert!(ops.create_subuser(uid, "swift3", "bogus").await.is_err());
+
+    let user = ops.get_user(uid).await.expect("get_user");
+    assert_eq!(user.subusers.len(), 2);
+    assert!(
+        user.swift_keys.iter().all(|k| k.secret_key.is_empty()),
+        "Swift secrets are stripped on read"
+    );
+
+    ops.remove_subuser(uid, "swift1")
+        .await
+        .expect("remove_subuser");
+    let missing = ops.remove_subuser(uid, "swift1").await.unwrap_err();
+    println!("remove_subuser (missing) -> {missing}");
+    assert!(missing.contains("NoSuchSubUser"));
+    let user = ops.get_user(uid).await.expect("get_user");
+    assert_eq!(user.subusers.len(), 1);
+    assert_eq!(
+        user.swift_keys.len(),
+        1,
+        "the Swift key is removed with its subuser"
+    );
+
+    ops.delete_user(uid).await.expect("delete_user");
+    let dump = format!("{:?}", audit.recent(None, None).unwrap());
+    assert!(
+        !dump.contains(&swift.secret_key),
+        "a Swift secret reached the audit log"
+    );
+}

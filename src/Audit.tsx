@@ -29,6 +29,8 @@ const ACTIONS = [
   "user.delete",
   "key.create",
   "key.remove",
+  "subuser.create",
+  "subuser.remove",
   "caps.add",
   "caps.remove",
   "quota.set",

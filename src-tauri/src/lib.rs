@@ -5,7 +5,7 @@ pub mod rgw_admin;
 
 use audit::{Audit, AuditEntry};
 use clusters::{ClusterProfile, ProfileStore};
-use ops::{Ops, Quotas, RotatedKey};
+use ops::{NewSubuser, Ops, Quotas, RotatedKey};
 use rgw_admin::{
     Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin, Usage,
     UserInfo,
@@ -187,6 +187,28 @@ async fn key_rotate(
     state.ops(&cluster_id)?.rotate_key(&uid, &access_key).await
 }
 
+#[tauri::command]
+async fn subuser_create(
+    state: St<'_>,
+    cluster_id: String,
+    uid: String,
+    subuser: String,
+    access: String,
+) -> Cmd<'_, NewSubuser> {
+    let ops = state.ops(&cluster_id)?;
+    ops.create_subuser(&uid, &subuser, &access).await
+}
+
+#[tauri::command]
+async fn subuser_remove(
+    state: St<'_>,
+    cluster_id: String,
+    uid: String,
+    subuser: String,
+) -> Cmd<'_, ()> {
+    state.ops(&cluster_id)?.remove_subuser(&uid, &subuser).await
+}
+
 // ---- caps, quota, usage -----------------------------------------------------
 
 #[tauri::command]
@@ -287,6 +309,8 @@ pub fn run() {
             key_remove,
             key_add,
             key_rotate,
+            subuser_create,
+            subuser_remove,
             caps_add,
             caps_remove,
             quota_get,

@@ -4,8 +4,8 @@
 
 use crate::audit::Audit;
 use crate::rgw_admin::{
-    Capability, HttpClient, KeyPair, Quota, QuotaType, ReqwestClient, RgwAdmin, RgwError, Usage,
-    UserInfo, UserModify,
+    Capability, HttpClient, KeyPair, Quota, QuotaType, ReqwestClient, RgwAdmin, RgwError, Subuser,
+    Usage, UserInfo, UserModify,
 };
 use futures_util::{stream, StreamExt};
 use serde::Serialize;
@@ -33,8 +33,15 @@ pub struct RotatedKey {
     pub remove_error: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct NewSubuser {
+    pub subusers: Vec<Subuser>,
+    /// The Swift key RGW generated for the new subuser, secret included (shown once).
+    pub swift_key: Option<KeyPair>,
+}
+
 fn redact(mut user: UserInfo) -> UserInfo {
-    for key in &mut user.keys {
+    for key in user.keys.iter_mut().chain(&mut user.swift_keys) {
         key.secret_key.clear();
     }
     user
@@ -64,6 +71,23 @@ pub fn validate_cap(cap: &str) -> Result<String, String> {
         ));
     }
     Ok(compact)
+}
+
+/// `access` is RGW's parameter value; anything else is answered with a bare 400 InvalidArgument.
+pub fn validate_subuser(name: &str, access: &str) -> Result<(), String> {
+    let name_ok = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !name_ok {
+        return Err("subuser name may only contain letters, digits, - and _".into());
+    }
+    if !matches!(access, "read" | "write" | "readwrite" | "full") {
+        return Err(format!(
+            "invalid subuser access {access:?}: use read, write, readwrite or full"
+        ));
+    }
+    Ok(())
 }
 
 /// Format check for an S3 key pair typed in by hand. RGW itself accepts almost anything,
@@ -257,6 +281,32 @@ impl<H: HttpClient> Ops<'_, H> {
         let key = self.create_key(uid).await?;
         let remove_error = self.remove_key(uid, old_access_key).await.err();
         Ok(RotatedKey { key, remove_error })
+    }
+
+    /// Creates a Swift subuser and returns its generated Swift key once.
+    pub async fn create_subuser(
+        &self,
+        uid: &str,
+        subuser: &str,
+        access: &str,
+    ) -> Result<NewSubuser, String> {
+        validate_subuser(subuser, access)?;
+        let created = self.admin.create_subuser(uid, subuser, access).await;
+        let detail = format!("subuser={subuser} access={access}");
+        let subusers = self.record("subuser.create", uid, &detail, created)?;
+        // The create call does not return the secret RGW generated; read it from the user once.
+        let id = format!("{uid}:{subuser}");
+        let user = self.admin.get_user(uid).await.ok();
+        let swift_key = user.and_then(|u| u.swift_keys.into_iter().find(|k| k.user == id));
+        Ok(NewSubuser {
+            subusers,
+            swift_key,
+        })
+    }
+
+    pub async fn remove_subuser(&self, uid: &str, subuser: &str) -> Result<(), String> {
+        let result = self.admin.remove_subuser(uid, subuser).await;
+        self.record("subuser.remove", uid, &format!("subuser={subuser}"), result)
     }
 
     pub async fn add_cap(&self, uid: &str, cap: &str) -> Result<Vec<Capability>, String> {
@@ -601,6 +651,70 @@ mod tests {
         assert_eq!(logged[0].0, "key.create");
         assert_eq!(logged[0].2, format!("access_key={access} manual"));
         assert!(!format!("{logged:?}").contains("manualSecret"));
+    }
+
+    #[tokio::test]
+    async fn subusers_are_audited_and_swift_secrets_only_shown_on_create() {
+        let with_swift = r#"{"user_id":"alice","subusers":[{"id":"alice:sw","permissions":"read"}],
+            "keys":[{"user":"alice","access_key":"AK","secret_key":"S3SECRET"}],
+            "swift_keys":[{"user":"alice:sw","secret_key":"SWIFTSECRET"}]}"#;
+        let mock = Mock::reply(200, r#"[{"id":"alice:sw","permissions":"read"}]"#)
+            .then(200, with_swift)
+            .then(200, with_swift)
+            .then(200, "")
+            .then(404, r#"{"Code":"NoSuchSubUser"}"#);
+        let audit = Audit::in_memory().unwrap();
+        let ops = ops(&mock, &audit);
+
+        assert!(ops
+            .create_subuser("alice", "bad name", "read")
+            .await
+            .is_err());
+        assert!(ops.create_subuser("alice", "sw", "bogus").await.is_err());
+        assert!(mock.calls().is_empty(), "invalid input never reaches RGW");
+
+        let created = ops.create_subuser("alice", "sw", "read").await.unwrap();
+        assert_eq!(created.subusers[0].permissions, "read");
+        assert_eq!(created.swift_key.unwrap().secret_key, "SWIFTSECRET");
+        // A later read of the user exposes neither kind of secret.
+        let user = ops.get_user("alice").await.unwrap();
+        assert_eq!(user.subusers[0].id, "alice:sw");
+        let dump = serde_json::to_string(&user).unwrap();
+        assert!(
+            !dump.contains("SWIFTSECRET") && !dump.contains("S3SECRET"),
+            "{dump}"
+        );
+
+        ops.remove_subuser("alice", "sw").await.unwrap();
+        assert!(ops
+            .remove_subuser("alice", "sw")
+            .await
+            .unwrap_err()
+            .contains("NoSuchSubUser"));
+        assert_eq!(
+            rows(&audit),
+            [
+                (
+                    "subuser.create".into(),
+                    "alice".into(),
+                    "subuser=sw access=read".into(),
+                    true
+                ),
+                (
+                    "subuser.remove".into(),
+                    "alice".into(),
+                    "subuser=sw".into(),
+                    true
+                ),
+                (
+                    "subuser.remove".into(),
+                    "alice".into(),
+                    "subuser=sw".into(),
+                    false
+                ),
+            ]
+        );
+        assert!(!format!("{:?}", audit.recent(None, None).unwrap()).contains("SWIFTSECRET"));
     }
 
     #[test]

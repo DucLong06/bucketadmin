@@ -5,6 +5,7 @@ export type Profile = { id: string; label: string; endpoint: string; access_key:
 export type ClusterInfo = { cluster_id: string; version: string | null };
 /** `secret_key` is empty except in the response that creates the key. */
 export type KeyPair = { user: string; access_key: string; secret_key: string };
+export type Subuser = { id: string; permissions: string };
 export type Capability = { type: string; perm: string };
 export type Quota = { enabled: boolean; max_size: number; max_size_kb: number; max_objects: number };
 export type UserInfo = {
@@ -15,6 +16,7 @@ export type UserInfo = {
   suspended: number;
   keys: KeyPair[];
   caps: Capability[];
+  subusers: Subuser[];
 };
 export type UsageStats = {
   category: string;

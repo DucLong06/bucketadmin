@@ -24,8 +24,20 @@ pub struct UserInfo {
     pub max_buckets: i64,
     pub keys: Vec<KeyPair>,
     pub caps: Vec<Capability>,
+    pub subusers: Vec<Subuser>,
+    /// Swift keys of the subusers: `user` is `uid:subuser`, `access_key` stays empty.
+    pub swift_keys: Vec<KeyPair>,
     pub bucket_quota: Option<Quota>,
     pub user_quota: Option<Quota>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Subuser {
+    /// `uid:subuser`
+    pub id: String,
+    /// As RGW reports it: `read`, `write`, `read-write`, `full-control` or `<none>`.
+    pub permissions: String,
 }
 
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]

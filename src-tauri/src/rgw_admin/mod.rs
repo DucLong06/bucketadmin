@@ -272,6 +272,25 @@ impl<H: HttpClient> RgwAdmin<H> {
         self.send("DELETE", "user", &params).await.map(|_| ())
     }
 
+    /// `PUT /admin/user?subuser=<name>`: creates a Swift subuser (RGW generates its secret)
+    /// and returns every subuser of the user. `access`: read | write | readwrite | full.
+    pub async fn create_subuser(
+        &self,
+        uid: &str,
+        subuser: &str,
+        access: &str,
+    ) -> Result<Vec<Subuser>, RgwError> {
+        let params = [("uid", uid), ("subuser", subuser), ("access", access)];
+        self.json("PUT", "user", &params).await
+    }
+
+    /// `DELETE /admin/user?subuser=<name>`; its Swift key is removed with it.
+    /// Squid answers 404 NoSuchSubUser for an unknown subuser.
+    pub async fn remove_subuser(&self, uid: &str, subuser: &str) -> Result<(), RgwError> {
+        let params = [("uid", uid), ("subuser", subuser), ("purge-keys", "true")];
+        self.send("DELETE", "user", &params).await.map(|_| ())
+    }
+
     pub async fn modify_user(&self, uid: &str, changes: &UserModify) -> Result<UserInfo, RgwError> {
         let max_buckets = changes.max_buckets.map(|n| n.to_string());
         let mut params = vec![("uid", uid)];
@@ -709,5 +728,36 @@ mod tests {
             mock.client().remove_key("u1", "NOPE").await.unwrap_err(),
             RgwError::InvalidAccessKeyId
         );
+    }
+
+    #[tokio::test]
+    async fn subuser_calls() {
+        let mock = Mock::reply(200, r#"[{"id":"u1:swift","permissions":"full-control"}]"#);
+        let subusers = mock
+            .client()
+            .create_subuser("u1", "swift", "full")
+            .await
+            .unwrap();
+        assert_eq!(subusers[0].id, "u1:swift");
+        assert_eq!(subusers[0].permissions, "full-control");
+        assert_eq!(
+            mock.calls(),
+            ["PUT /admin/user?access=full&format=json&subuser=swift&uid=u1"]
+        );
+
+        let mock = Mock::reply(200, "");
+        mock.client().remove_subuser("u1", "swift").await.unwrap();
+        assert_eq!(
+            mock.calls(),
+            ["DELETE /admin/user?format=json&purge-keys=true&subuser=swift&uid=u1"]
+        );
+
+        let mock = Mock::reply(404, r#"{"Code":"NoSuchSubUser"}"#);
+        let err = mock
+            .client()
+            .remove_subuser("u1", "nope")
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "RGW returned HTTP 404 NoSuchSubUser ");
     }
 }

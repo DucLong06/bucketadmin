@@ -76,7 +76,13 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
 const readOnly = { input: { readOnly: true, sx: { fontFamily: "monospace" } } };
 
 /** Shows freshly created keys. The secret is not stored anywhere, so this is the only chance to copy it. */
-export function SecretDialog(props: { keys: KeyPair[] | null; warning?: string | null; onClose: () => void }) {
+export function SecretDialog(props: {
+  keys: KeyPair[] | null;
+  warning?: string | null;
+  /** Label of the non-secret half; Swift keys are identified by their user, not an access key. */
+  accessLabel?: string;
+  onClose: () => void;
+}) {
   const [show, setShow] = useState(false);
   const keys = props.keys ?? [];
   const close = () => {
@@ -96,8 +102,14 @@ export function SecretDialog(props: { keys: KeyPair[] | null; warning?: string |
           {keys.map((k) => (
             <Stack key={k.access_key} spacing={1}>
               <Stack direction="row" spacing={1}>
-                <TextField label="Access key" value={k.access_key} size="small" fullWidth slotProps={readOnly} />
-                <CopyButton value={k.access_key} label="Copy access key" />
+                <TextField
+                  label={props.accessLabel ?? "Access key"}
+                  value={k.access_key}
+                  size="small"
+                  fullWidth
+                  slotProps={readOnly}
+                />
+                <CopyButton value={k.access_key} label={`Copy ${(props.accessLabel ?? "access key").toLowerCase()}`} />
               </Stack>
               <Stack direction="row" spacing={1}>
                 <TextField
