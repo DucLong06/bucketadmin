@@ -15,7 +15,10 @@ import {
   Typography,
 } from "@mui/material";
 import { invoke, maskKey, type BrowseBucket, type Listing, type ObjectEntry, type Profile } from "./api";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { formatBytes, shortTime } from "./format";
+import ObjectDrawer from "./ObjectDrawer";
+import { TransferList, useTransfers } from "./transfers";
 import { ClusterSelect, ErrorAlert, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
 
@@ -42,6 +45,32 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   const [listing, setListing] = useState<Listing | null>(null);
   const { busy, error, run, setError } = useAction();
   const request = useRef(0);
+  const [selected, setSelected] = useState<ObjectEntry | null>(null);
+  const transfers = useTransfers();
+  // Where a dropped file goes: read by the drop listener, which outlives renders.
+  const here = useRef({ uid: "", bucket: "", prefix: "" });
+  here.current = { uid: session?.uid ?? "", bucket, prefix };
+
+  async function upload(paths: string[]) {
+    const { uid: asUid, bucket: toBucket, prefix: toPrefix } = here.current;
+    if (!asUid || !toBucket) return;
+    for (const path of paths) {
+      const key = toPrefix + path.slice(path.lastIndexOf("/") + 1);
+      const at = { clusterId, uid: asUid, bucket: toBucket, key };
+      await transfers.start(`↑ ${toBucket}/${key}`, (transferId) => invoke<number>("browse_upload", { at, path, transferId }));
+    }
+    const now = here.current;
+    if (now.bucket === toBucket && now.prefix === toPrefix) load(toBucket, toPrefix, null);
+  }
+  useEffect(() => {
+    // The webview reports dropped files with their paths (not their content).
+    const unlisten = getCurrentWebview().onDragDropEvent((e) => {
+      if (e.payload.type === "drop") upload(e.payload.paths);
+    });
+    return () => {
+      unlisten.then((stop) => stop());
+    };
+  }, [clusterId]);
 
   // Every S3 call is signed with this user's own key, looked up by the backend; the UI never sees a secret.
   async function open(target: string) {
@@ -93,9 +122,16 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
             {baseName(r.folder, prefix)}
           </Link>
         ) : (
-          <Box component="span" sx={{ fontFamily: "monospace" }} title={r.object.key}>
+          <Link
+            component="button"
+            color="inherit"
+            underline="hover"
+            sx={{ fontFamily: "monospace" }}
+            onClick={() => setSelected(r.object)}
+            aria-label={`Mở object ${r.object.key}`}
+          >
             {baseName(r.object.key, prefix)}
-          </Box>
+          </Link>
         ),
     },
     { header: "Size", width: "100px", align: "right", cell: (r) => ("object" in r ? formatBytes(r.object.size) : "—") },
@@ -145,6 +181,7 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
       </Stack>
       {busy && <LinearProgress aria-label="Đang tải" />}
       <ErrorAlert error={error} sx={{ mb: 2 }} />
+      <TransferList items={transfers.items} onClear={transfers.clear} />
       {!session && !busy && !error && (
         <Alert severity="info">
           Nhập uid của user cần browse rồi bấm Mở, hoặc bấm "Browse" trong chi tiết user ở tab Users. Bạn chỉ thấy và làm
@@ -199,6 +236,13 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                       </Link>
                     ))}
                   </Breadcrumbs>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={async () => upload(await invoke<string[]>("browse_pick_upload"))}
+                  >
+                    Upload
+                  </Button>
                   <Button size="small" onClick={() => load(bucket, prefix, null)} disabled={busy}>
                     Làm mới
                   </Button>
@@ -210,6 +254,9 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                   label="Danh sách object"
                   empty={<Typography color="text.secondary">{listing ? "Thư mục trống." : ""}</Typography>}
                 />
+                <Typography variant="body2" color="text.secondary">
+                  Kéo thả file vào cửa sổ để upload vào thư mục đang mở. File lớn hơn 8 MiB được upload theo từng phần.
+                </Typography>
                 {listing && (
                   <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
                     <Typography variant="body2" color="text.secondary">
@@ -228,6 +275,15 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
           </Box>
         </Stack>
       )}
+      <ObjectDrawer
+        clusterId={clusterId}
+        uid={session?.uid ?? ""}
+        bucket={bucket}
+        object={selected}
+        startTransfer={transfers.start}
+        onChanged={() => load(bucket, prefix, null)}
+        onClose={() => setSelected(null)}
+      />
     </>
   );
 }

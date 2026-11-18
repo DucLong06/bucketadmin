@@ -367,6 +367,7 @@ pub fn run() {
         }
     });
     builder
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(AppState {
                 profiles: ProfileStore::open_default()?,
@@ -408,7 +409,13 @@ pub fn run() {
             bucket_quota_set,
             audit_recent,
             browse::browse_open,
-            browse::browse_list
+            browse::browse_list,
+            browse::browse_pick_upload,
+            browse::browse_pick_save,
+            browse::browse_upload,
+            browse::browse_download,
+            browse::browse_presign,
+            browse::browse_delete
         ])
         .run(tauri::generate_context!())
         .expect("error while running BucketAdmin");

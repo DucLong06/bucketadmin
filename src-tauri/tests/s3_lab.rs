@@ -265,3 +265,238 @@ async fn m4_browse_with_user_credentials() {
         .await
         .expect("cleanup owner");
 }
+
+fn temp_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("bucketadmin-m4-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// Deterministic, non-repeating-looking bytes (so a misplaced range shows up in a compare).
+fn pattern(len: usize) -> Vec<u8> {
+    (0..len as u64)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+        .collect()
+}
+
+/// M4.2: single-request and multipart upload, ranged download with resume, presigned URL, delete.
+#[tokio::test]
+async fn m4_upload_download_presign() {
+    use bucketadmin_lib::s3::transfer::PART_SIZE;
+    use std::sync::Mutex;
+    let Some(admin) = lab() else { return };
+    let bucket = "ba-m4-transfer";
+    let (_, owner) = user(&admin, "ba-m4-xfer").await;
+    owner
+        .client()
+        .create_bucket()
+        .bucket(bucket)
+        .send()
+        .await
+        .expect("create bucket");
+    let dir = temp_dir("transfer");
+    const MIB: u64 = 1024 * 1024;
+
+    // ---- small file: one PutObject
+    let small = dir.join("small.txt");
+    std::fs::write(&small, b"hello browse").unwrap();
+    let calls = Mutex::new(Vec::new());
+    let size = owner
+        .upload(bucket, "docs/small.txt", &small, |d, t| {
+            calls.lock().unwrap().push((d, t))
+        })
+        .await
+        .expect("upload small");
+    assert_eq!(
+        (size, calls.lock().unwrap().as_slice()),
+        (12, &[(12, 12)][..])
+    );
+    let head = owner.head(bucket, "docs/small.txt", None).await.unwrap();
+    assert_eq!((head.size, head.content_type.as_str()), (12, "text/plain"));
+
+    // ---- 20 MiB file: multipart, 3 parts, progress after each
+    let big = dir.join("big.bin");
+    let data = pattern((20 * MIB) as usize);
+    std::fs::write(&big, &data).unwrap();
+    let calls = Mutex::new(Vec::new());
+    owner
+        .upload(bucket, "big.bin", &big, |d, t| {
+            calls.lock().unwrap().push((d, t))
+        })
+        .await
+        .expect("multipart upload");
+    println!("multipart upload progress -> {:?}", calls.lock().unwrap());
+    assert_eq!(
+        calls.lock().unwrap().as_slice(),
+        [
+            (8 * MIB, 20 * MIB),
+            (16 * MIB, 20 * MIB),
+            (20 * MIB, 20 * MIB)
+        ]
+    );
+    let head = owner.head(bucket, "big.bin", None).await.unwrap();
+    println!("multipart object -> size {} etag {}", head.size, head.etag);
+    assert_eq!(head.size, 20 * MIB);
+    assert!(
+        head.etag.trim_matches('"').ends_with("-3"),
+        "a multipart ETag ends in -<parts>: {}",
+        head.etag
+    );
+
+    // ---- download in ranges
+    let dest = dir.join("big.copy");
+    let calls = Mutex::new(Vec::new());
+    let got = owner
+        .download(bucket, "big.bin", None, &dest, |d, t| {
+            calls.lock().unwrap().push((d, t))
+        })
+        .await
+        .expect("download");
+    assert_eq!((got.size, got.resumed_from), (20 * MIB, 0));
+    assert_eq!(
+        calls.lock().unwrap().len(),
+        4,
+        "start + one call per 8 MiB range"
+    );
+    assert!(
+        std::fs::read(&dest).unwrap() == data,
+        "downloaded bytes equal the uploaded ones"
+    );
+    assert!(!dir.join("big.copy.part").exists() && !dir.join("big.copy.part.etag").exists());
+
+    // ---- resume: 9 MiB of an interrupted attempt are on disk. They are zeros here on purpose:
+    // if they survive in the result, they were kept rather than downloaded again.
+    let dest = dir.join("big.resumed");
+    std::fs::write(dir.join("big.resumed.part"), vec![0u8; (9 * MIB) as usize]).unwrap();
+    std::fs::write(dir.join("big.resumed.part.etag"), &head.etag).unwrap();
+    let got = owner
+        .download(bucket, "big.bin", None, &dest, |_, _| {})
+        .await
+        .expect("resumed download");
+    println!(
+        "resumed download -> resumed_from {} of {}",
+        got.resumed_from, got.size
+    );
+    assert_eq!(got.resumed_from, 9 * MIB);
+    let resumed = std::fs::read(&dest).unwrap();
+    assert_eq!(resumed.len() as u64, 20 * MIB);
+    assert!(
+        resumed[..(9 * MIB) as usize].iter().all(|b| *b == 0),
+        "the bytes on disk were kept"
+    );
+    assert!(
+        resumed[(9 * MIB) as usize..] == data[(9 * MIB) as usize..],
+        "the rest was fetched from the right offset"
+    );
+
+    // ---- a partial file of a different object version (other ETag) is not trusted
+    let dest = dir.join("big.stale");
+    std::fs::write(dir.join("big.stale.part"), vec![0u8; MIB as usize]).unwrap();
+    std::fs::write(dir.join("big.stale.part.etag"), "\"some-other-etag\"").unwrap();
+    let got = owner
+        .download(bucket, "big.bin", None, &dest, |_, _| {})
+        .await
+        .expect("download");
+    assert_eq!(got.resumed_from, 0);
+    assert!(std::fs::read(&dest).unwrap() == data);
+    assert_eq!(PART_SIZE, 8 * MIB);
+
+    // ---- a user who may only read cannot upload through the same code path
+    let (_, reader) = user(&admin, "ba-m4-xfer-ro").await;
+    let grant = policy(bucket, "ba-m4-xfer-ro", r#""s3:*""#);
+    owner
+        .client()
+        .put_bucket_policy()
+        .bucket(bucket)
+        .policy(grant)
+        .send()
+        .await
+        .expect("put policy");
+    let read_only = UserModify {
+        op_mask: Some("read".into()),
+        ..Default::default()
+    };
+    admin
+        .modify_user("ba-m4-xfer-ro", &read_only)
+        .await
+        .expect("op-mask=read");
+    let denied = reader
+        .upload(bucket, "by-reader.bin", &big, |_, _| {})
+        .await
+        .unwrap_err();
+    println!("read-only user multipart upload -> {denied}");
+    assert!(denied.starts_with("S3 AccessDenied (403)"), "{denied}");
+    let copy = dir.join("reader.copy");
+    reader
+        .download(bucket, "docs/small.txt", None, &copy, |_, _| {})
+        .await
+        .expect("read-only user can download");
+    assert_eq!(std::fs::read(&copy).unwrap(), b"hello browse");
+    let denied = reader
+        .delete(bucket, "docs/small.txt", None)
+        .await
+        .unwrap_err();
+    assert!(denied.starts_with("S3 AccessDenied (403)"), "{denied}");
+
+    // ---- presigned URL: works without credentials, then expires
+    let http = reqwest::Client::new();
+    let url = owner
+        .presign_get(bucket, "docs/small.txt", None, 300, None)
+        .await
+        .expect("presign");
+    println!("presigned url -> {}...", &url[..url.find('?').unwrap()]);
+    let answer = http.get(&url).send().await.unwrap();
+    assert_eq!(answer.status(), 200);
+    assert_eq!(answer.text().await.unwrap(), "hello browse");
+    let plain = format!("{}/{bucket}/docs/small.txt", endpoint());
+    assert_eq!(
+        http.get(&plain).send().await.unwrap().status(),
+        403,
+        "without the signature the object is private"
+    );
+    let typed = owner
+        .presign_get(bucket, "docs/small.txt", None, 300, Some("application/pdf"))
+        .await
+        .unwrap();
+    let answer = http.get(&typed).send().await.unwrap();
+    assert_eq!(answer.headers()["content-type"], "application/pdf");
+    let short = owner
+        .presign_get(bucket, "docs/small.txt", None, 1, None)
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    let expired = http.get(&short).send().await.unwrap().status();
+    println!("presigned url 3 s after a 1 s expiry -> {expired}");
+    assert_eq!(expired, 403);
+    assert!(owner
+        .presign_get(bucket, "docs/small.txt", None, 0, None)
+        .await
+        .is_err());
+    assert!(owner
+        .presign_get(bucket, "docs/small.txt", None, 8 * 24 * 3600, None)
+        .await
+        .is_err());
+
+    // ---- delete
+    owner
+        .delete(bucket, "docs/small.txt", None)
+        .await
+        .expect("delete");
+    assert!(owner.head(bucket, "docs/small.txt", None).await.is_err());
+    assert!(owner
+        .upload(bucket, "x", &dir.join("missing"), |_, _| {})
+        .await
+        .unwrap_err()
+        .starts_with("cannot read"));
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    admin
+        .delete_user("ba-m4-xfer-ro", true)
+        .await
+        .expect("cleanup");
+    admin
+        .delete_user("ba-m4-xfer", true)
+        .await
+        .expect("cleanup");
+}

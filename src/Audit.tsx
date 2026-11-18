@@ -37,6 +37,9 @@ const ACTIONS = [
   "bucket.quota.set",
   "bucket.delete",
   "usage.trim",
+  "object.upload",
+  "object.delete",
+  "object.presign",
 ];
 
 const native = { select: { native: true } };

@@ -2,6 +2,8 @@
 //! The cluster's admin secret is never used here: what this module can see or change is
 //! exactly what that user's key is allowed to.
 
+pub mod transfer;
+
 use aws_sdk_s3::config::{
     BehaviorVersion, Credentials, Region, RequestChecksumCalculation, ResponseChecksumValidation,
 };
@@ -78,7 +80,7 @@ where
 }
 
 /// `bytes=a-b` for `len` bytes starting at `start`.
-fn range(start: u64, len: u64) -> String {
+pub(crate) fn range(start: u64, len: u64) -> String {
     format!("bytes={start}-{}", start + len.max(1) - 1)
 }
 
