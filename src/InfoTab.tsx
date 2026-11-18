@@ -1,5 +1,5 @@
 import { type FormEvent, useState } from "react";
-import { Alert, Box, Button, Divider, FormControlLabel, Stack, Switch, TextField } from "@mui/material";
+import { Alert, Box, Button, Checkbox, Divider, FormControlLabel, Stack, Switch, TextField } from "@mui/material";
 import { invoke, type UserInfo } from "./api";
 import { ConfirmDialog, ErrorAlert, useAction } from "./ui";
 import type { UserTabProps } from "./UserDrawer";
@@ -9,6 +9,7 @@ export default function InfoTab({ clusterId, uid, user, onUser, onDeleted }: Use
   const [email, setEmail] = useState(user.email);
   const [saved, setSaved] = useState(false);
   const [confirm, setConfirm] = useState<"suspend" | "delete" | null>(null);
+  const [purge, setPurge] = useState(false);
   const { busy, error, run, setError } = useAction();
 
   async function save(e: FormEvent) {
@@ -30,12 +31,13 @@ export default function InfoTab({ clusterId, uid, user, onUser, onDeleted }: Use
   }
 
   async function remove() {
-    const done = await run(() => invoke("user_delete", { clusterId, uid }).then(() => true));
+    const done = await run(() => invoke("user_delete", { clusterId, uid, purgeData: purge }).then(() => true));
     if (done) onDeleted();
   }
 
   const closeConfirm = () => {
     setConfirm(null);
+    setPurge(false);
     setError(null);
   };
 
@@ -96,14 +98,24 @@ export default function InfoTab({ clusterId, uid, user, onUser, onDeleted }: Use
       <ConfirmDialog
         open={confirm === "delete"}
         title="Xoá user?"
-        text={`Thao tác này xoá vĩnh viễn user ${uid} cùng toàn bộ key của user. RGW sẽ từ chối nếu user còn bucket.`}
-        confirmLabel="Xoá user"
+        text={`Thao tác này xoá vĩnh viễn user ${uid} cùng toàn bộ key và subuser. Nếu user còn bucket, RGW sẽ từ chối trừ khi chọn xoá cả dữ liệu.`}
+        confirmLabel={purge ? "Xoá user và dữ liệu" : "Xoá user"}
         requireText={uid}
         busy={busy}
         error={error}
         onConfirm={remove}
         onClose={closeConfirm}
-      />
+      >
+        <FormControlLabel
+          control={<Checkbox checked={purge} onChange={(e) => setPurge(e.target.checked)} />}
+          label="Xoá cả dữ liệu của user (purge-data)"
+        />
+        {purge && (
+          <Alert severity="warning">
+            Mọi bucket và mọi object của user {uid} sẽ bị xoá vĩnh viễn, không khôi phục được.
+          </Alert>
+        )}
+      </ConfirmDialog>
     </Stack>
   );
 }

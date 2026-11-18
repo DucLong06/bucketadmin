@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import {
   Alert,
   Button,
@@ -147,6 +147,8 @@ type ConfirmProps = {
   requireText?: string;
   busy?: boolean;
   error?: string | null;
+  /** Extra controls shown under the text, e.g. an option that changes what the confirmation does. */
+  children?: ReactNode;
   onConfirm: () => void;
   onClose: () => void;
 };
@@ -164,6 +166,7 @@ export function ConfirmDialog(props: ConfirmProps) {
       <DialogContent>
         <Stack spacing={2}>
           <Typography>{props.text}</Typography>
+          {props.children}
           {props.requireText !== undefined && (
             <TextField
               label={`Gõ "${props.requireText}" để xác nhận`}

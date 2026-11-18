@@ -5,11 +5,48 @@
 //!   RGW_ACCESS_KEY=... RGW_SECRET_KEY=... cargo test --test rgw_lab -- --nocapture
 
 use bucketadmin_lib::rgw_admin::{
-    Credentials, QuotaType, ReqwestClient, RgwAdmin, RgwError, UserModify,
+    Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin, RgwError, UserModify,
 };
 
 fn endpoint() -> String {
     std::env::var("RGW_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:7480".into())
+}
+
+/// Path-style S3 request signed with a user's own key. Test traffic only: bucket and object
+/// setup, and the S3 calls whose usage the admin API should report.
+async fn s3(key: &KeyPair, method: &'static str, path: &str, query: &str, body: &[u8]) -> u16 {
+    use bucketadmin_lib::rgw_admin::{sigv4, HttpClient, HttpRequest};
+    let endpoint = endpoint();
+    let host = endpoint.split("://").nth(1).unwrap().trim_end_matches('/');
+    let creds = Credentials {
+        access_key: key.access_key.clone(),
+        secret_key: key.secret_key.clone(),
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let headers = sigv4::sign(
+        method,
+        host,
+        path,
+        query,
+        body,
+        &creds,
+        &sigv4::amz_date(now),
+    );
+    let url = match query {
+        "" => format!("{endpoint}{path}"),
+        _ => format!("{endpoint}{path}?{query}"),
+    };
+    let request = HttpRequest {
+        method,
+        url,
+        headers,
+        body: body.to_vec(),
+    };
+    let http = ReqwestClient::new().unwrap();
+    http.send(request).await.expect("S3 request").status
 }
 
 fn lab() -> Option<RgwAdmin> {
@@ -236,7 +273,7 @@ async fn m1_flow_through_ops_is_audited() {
             .suspended,
         0
     );
-    ops.delete_user(uid).await.expect("delete_user");
+    ops.delete_user(uid, false).await.expect("delete_user");
     assert!(ops
         .get_user(uid)
         .await
@@ -316,7 +353,7 @@ async fn m3_manual_key_entry() {
     assert!(ops.add_key(uid, "bad key", secret).await.is_err());
 
     ops.remove_key(uid, access).await.expect("remove_key");
-    ops.delete_user(uid).await.expect("delete_user");
+    ops.delete_user(uid, false).await.expect("delete_user");
     let log = audit.recent(Some("key.create"), None).unwrap();
     assert_eq!(log.len(), 1);
     assert!(!format!("{log:?}").contains("bam3ManualSecret"));
@@ -390,10 +427,60 @@ async fn m3_subusers() {
         "the Swift key is removed with its subuser"
     );
 
-    ops.delete_user(uid).await.expect("delete_user");
+    ops.delete_user(uid, false).await.expect("delete_user");
     let dump = format!("{:?}", audit.recent(None, None).unwrap());
     assert!(
         !dump.contains(&swift.secret_key),
         "a Swift secret reached the audit log"
+    );
+}
+
+/// M3.5: removing a user that owns data needs purge-data.
+#[tokio::test]
+async fn m3_delete_user_with_and_without_purge() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let uid = "ba-m3-purge";
+    let _ = admin.delete_user(uid, true).await;
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+    let user = ops
+        .create_user(uid, "M3 purge", &None, &None, &None)
+        .await
+        .expect("create_user");
+    let key = &user.keys[0];
+    assert_eq!(
+        s3(key, "PUT", "/ba-m3-purge-bucket", "", b"").await,
+        200,
+        "create bucket"
+    );
+    assert_eq!(
+        s3(key, "PUT", "/ba-m3-purge-bucket/a.txt", "", b"data").await,
+        200,
+        "put object"
+    );
+
+    let refused = ops.delete_user(uid, false).await.unwrap_err();
+    println!("delete_user without purge-data -> {refused}");
+    assert!(refused.contains("BucketAlreadyExists"), "{refused}");
+    assert!(ops.get_user(uid).await.is_ok(), "the user must still exist");
+
+    ops.delete_user(uid, true)
+        .await
+        .expect("delete_user with purge-data");
+    println!("delete_user with purge-data -> ok");
+    assert!(ops
+        .get_user(uid)
+        .await
+        .unwrap_err()
+        .starts_with("NoSuchUser"));
+    // The key is gone with the user, so the bucket is no longer reachable with it.
+    assert_eq!(
+        s3(key, "GET", "/ba-m3-purge-bucket/a.txt", "", b"").await,
+        403
     );
 }

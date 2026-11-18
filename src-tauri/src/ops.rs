@@ -217,10 +217,12 @@ impl<H: HttpClient> Ops<'_, H> {
         self.record(action, uid, "", result).map(redact)
     }
 
-    /// Never purges data: RGW refuses while the user still owns buckets.
-    pub async fn delete_user(&self, uid: &str) -> Result<(), String> {
-        let result = self.admin.delete_user(uid, false).await;
-        self.record("user.delete", uid, "", result)
+    /// `purge_data` also deletes every bucket and object the user owns. Without it RGW refuses
+    /// (409, reported as BucketAlreadyExists) while the user still owns a bucket.
+    pub async fn delete_user(&self, uid: &str, purge_data: bool) -> Result<(), String> {
+        let result = self.admin.delete_user(uid, purge_data).await;
+        let detail = format!("purge_data={purge_data}");
+        self.record("user.delete", uid, &detail, result)
     }
 
     async fn new_key(&self, uid: &str) -> Result<KeyPair, RgwError> {
@@ -481,7 +483,7 @@ mod tests {
             .await
             .is_err());
         assert!(ops.add_cap("bob", "zones = read").await.is_err());
-        assert!(ops.delete_user("ghost").await.is_err());
+        assert!(ops.delete_user("ghost", false).await.is_err());
 
         let entries = audit.recent(None, None).unwrap();
         assert_eq!(entries.len(), 3);
@@ -715,6 +717,40 @@ mod tests {
             ]
         );
         assert!(!format!("{:?}", audit.recent(None, None).unwrap()).contains("SWIFTSECRET"));
+    }
+
+    #[tokio::test]
+    async fn delete_user_sends_purge_data_only_when_asked() {
+        let mock = Mock::reply(409, r#"{"Code":"BucketAlreadyExists"}"#).then(200, "");
+        let audit = Audit::in_memory().unwrap();
+        let ops = ops(&mock, &audit);
+        let refused = ops.delete_user("alice", false).await.unwrap_err();
+        assert!(refused.contains("BucketAlreadyExists"), "{refused}");
+        ops.delete_user("alice", true).await.unwrap();
+        assert_eq!(
+            mock.calls(),
+            [
+                "DELETE /admin/user?format=json&uid=alice",
+                "DELETE /admin/user?format=json&purge-data=true&uid=alice",
+            ]
+        );
+        assert_eq!(
+            rows(&audit),
+            [
+                (
+                    "user.delete".into(),
+                    "alice".into(),
+                    "purge_data=false".into(),
+                    false
+                ),
+                (
+                    "user.delete".into(),
+                    "alice".into(),
+                    "purge_data=true".into(),
+                    true
+                ),
+            ]
+        );
     }
 
     #[test]

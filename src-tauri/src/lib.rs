@@ -144,8 +144,13 @@ async fn user_set_suspended(
 }
 
 #[tauri::command]
-async fn user_delete(state: St<'_>, cluster_id: String, uid: String) -> Cmd<'_, ()> {
-    state.ops(&cluster_id)?.delete_user(&uid).await
+async fn user_delete(
+    state: St<'_>,
+    cluster_id: String,
+    uid: String,
+    purge_data: bool,
+) -> Cmd<'_, ()> {
+    state.ops(&cluster_id)?.delete_user(&uid, purge_data).await
 }
 
 // ---- keys -----------------------------------------------------------------
