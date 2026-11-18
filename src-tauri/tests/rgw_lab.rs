@@ -659,3 +659,65 @@ async fn m3_buckets() {
         "newest first: the successful delete, then the refused one"
     );
 }
+
+/// M3.7: quota of a single bucket: set, change, switch off.
+#[tokio::test]
+async fn m3_bucket_quota() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let (uid, bucket) = ("ba-m3-bq", "ba-m3-bq-data");
+    let _ = admin.delete_user(uid, true).await;
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+    let user = ops
+        .create_user(uid, "M3 bucket quota", &None, &None, &None)
+        .await
+        .expect("create_user");
+    assert_eq!(
+        s3(&user.keys[0], "PUT", &format!("/{bucket}"), "", b"").await,
+        200,
+        "create bucket"
+    );
+
+    ops.set_bucket_quota(bucket, true, 2048, 50)
+        .await
+        .expect("set_bucket_quota");
+    let quota = ops
+        .get_bucket(bucket)
+        .await
+        .expect("get_bucket")
+        .info
+        .bucket_quota;
+    println!("set_bucket_quota 2048 KB / 50 objects -> {quota:?}");
+    assert!(quota.enabled);
+    assert_eq!((quota.max_size_kb, quota.max_objects), (2048, 50));
+
+    ops.set_bucket_quota(bucket, true, -1, 5)
+        .await
+        .expect("change");
+    let quota = ops.get_bucket(bucket).await.unwrap().info.bucket_quota;
+    assert!(
+        quota.enabled && quota.max_size < 0 && quota.max_objects == 5,
+        "{quota:?}"
+    );
+
+    ops.set_bucket_quota(bucket, false, -1, -1)
+        .await
+        .expect("switch off");
+    let quota = ops.get_bucket(bucket).await.unwrap().info.bucket_quota;
+    println!("set_bucket_quota off -> {quota:?}");
+    assert!(!quota.enabled);
+    // The owner's default bucket quota (user drawer, Quota tab) is a different setting and is untouched.
+    assert!(!ops.get_quotas(uid).await.unwrap().bucket.enabled);
+
+    ops.delete_user(uid, true).await.expect("cleanup");
+    let log = audit.recent(Some("bucket.quota.set"), None).unwrap();
+    assert_eq!(log.len(), 3);
+    assert!(log
+        .iter()
+        .all(|e| e.ok && e.target == bucket && e.detail.starts_with("owner=ba-m3-bq ")));
+}

@@ -19,7 +19,7 @@ type FormProps = {
 const sizeKb = (q: Quota) => (q.max_size < 0 ? -1 : q.max_size_kb);
 const isInt = (text: string) => /^-?\d+$/.test(text.trim());
 
-function QuotaForm({ title, hint, quota, busy, saved, onSave }: FormProps) {
+export function QuotaForm({ title, hint, quota, busy, saved, onSave }: FormProps) {
   const [enabled, setEnabled] = useState(quota.enabled);
   const [size, setSize] = useState(String(sizeKb(quota)));
   const [objects, setObjects] = useState(String(quota.max_objects < 0 ? -1 : quota.max_objects));

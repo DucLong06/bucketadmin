@@ -7,6 +7,7 @@ import UsageTab from "./UsageTab";
 import QuotaTab from "./QuotaTab";
 import CapsTab from "./CapsTab";
 import KeysTab from "./KeysTab";
+import UserBucketsTab from "./UserBucketsTab";
 import SubusersTab from "./SubusersTab";
 
 export type UserTabProps = {
@@ -25,6 +26,7 @@ const tabs: { label: string; Panel: ComponentType<UserTabProps> }[] = [
   { label: "Subusers", Panel: SubusersTab },
   { label: "Caps", Panel: CapsTab },
   { label: "Quota", Panel: QuotaTab },
+  { label: "Buckets", Panel: UserBucketsTab },
   { label: "Usage", Panel: UsageTab },
 ];
 

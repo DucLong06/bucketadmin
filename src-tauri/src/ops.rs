@@ -404,6 +404,27 @@ impl<H: HttpClient> Ops<'_, H> {
         })
     }
 
+    /// Quota of one bucket. Negative `max_size_kb` / `max_objects` mean "unlimited".
+    pub async fn set_bucket_quota(
+        &self,
+        bucket: &str,
+        enabled: bool,
+        max_size_kb: i64,
+        max_objects: i64,
+    ) -> Result<(), String> {
+        // RGW wants the owner next to the bucket name; look it up rather than trust the caller.
+        let info = self.admin.get_bucket(bucket).await;
+        let owner = info.map_err(|e| e.to_string())?.owner;
+        let detail = format!(
+            "owner={owner} enabled={enabled} max_size_kb={max_size_kb} max_objects={max_objects}"
+        );
+        let result = self
+            .admin
+            .set_bucket_quota(&owner, bucket, enabled, max_size_kb, max_objects)
+            .await;
+        self.record("bucket.quota.set", bucket, &detail, result)
+    }
+
     /// Removes an empty bucket; its policy and quota go with it. RGW itself refuses a bucket
     /// that still holds objects (409 BucketNotEmpty): objects are never purged from here.
     pub async fn delete_bucket(&self, bucket: &str) -> Result<(), String> {
@@ -874,6 +895,38 @@ mod tests {
                 ),
                 ("bucket.delete".into(), "photos".into(), String::new(), true),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn bucket_quota_looks_up_the_owner_and_is_audited() {
+        let mock = Mock::reply(200, r#"{"bucket":"photos","owner":"alice"}"#)
+            .then(200, "")
+            .then(404, r#"{"Code":"NoSuchBucket"}"#);
+        let audit = Audit::in_memory().unwrap();
+        let ops = ops(&mock, &audit);
+        ops.set_bucket_quota("photos", true, 2048, -1)
+            .await
+            .unwrap();
+        assert_eq!(
+            mock.calls()[1],
+            "PUT /admin/bucket?bucket=photos&enabled=true&format=json&max-objects=-1&max-size-kb=2048&quota=&uid=alice"
+        );
+        // Unknown bucket: nothing is sent and nothing is audited (there was no mutation to attempt).
+        assert!(ops
+            .set_bucket_quota("ghost", false, -1, -1)
+            .await
+            .unwrap_err()
+            .starts_with("NoSuchBucket"));
+        assert_eq!(mock.calls().len(), 3);
+        assert_eq!(
+            rows(&audit),
+            [(
+                "bucket.quota.set".into(),
+                "photos".into(),
+                "owner=alice enabled=true max_size_kb=2048 max_objects=-1".into(),
+                true
+            )]
         );
     }
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Alert, Box, Button, Chip, Divider, Drawer, LinearProgress, Stack, Typography } from "@mui/material";
 import { bucketObjects, bucketSize, invoke, type BucketDetail } from "./api";
 import { formatBytes, prettyJson } from "./format";
+import { QuotaForm } from "./QuotaTab";
 import { ConfirmDialog, ErrorAlert, useAction } from "./ui";
 
 type Props = {
@@ -27,6 +28,7 @@ const row = (label: string, value: string) => (
 export default function BucketDrawer({ clusterId, bucket, onClose, onChanged }: Props) {
   const [detail, setDetail] = useState<BucketDetail | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [quotaSaved, setQuotaSaved] = useState(false);
   const { busy, error, run, setError } = useAction();
 
   const load = async () => {
@@ -37,9 +39,22 @@ export default function BucketDrawer({ clusterId, bucket, onClose, onChanged }: 
   useEffect(() => {
     setDetail(null);
     setConfirming(false);
+    setQuotaSaved(false);
     setError(null);
     load();
   }, [bucket, clusterId]);
+
+  async function saveQuota(enabled: boolean, maxSizeKb: number, maxObjects: number) {
+    setQuotaSaved(false);
+    const done = await run(() =>
+      invoke("bucket_quota_set", { clusterId, bucket, enabled, maxSizeKb, maxObjects }).then(() => true),
+    );
+    if (done) {
+      await load(); // show what RGW actually stored
+      setQuotaSaved(true);
+      onChanged();
+    }
+  }
 
   async function remove() {
     const done = await run(() => invoke("bucket_delete", { clusterId, bucket }).then(() => true));
@@ -89,6 +104,18 @@ export default function BucketDrawer({ clusterId, bucket, onClose, onChanged }: 
               {row("Placement", info.placement_rule)}
               {row("Bucket id", info.id)}
             </Stack>
+            <Divider />
+
+            <QuotaForm
+              // Remount when RGW's values change so the fields show the stored state.
+              key={JSON.stringify(info.bucket_quota)}
+              title="Quota của bucket"
+              hint="Chỉ áp cho bucket này. Tắt đi thì bucket dùng quota mặc định của owner (tab Quota của user)."
+              quota={info.bucket_quota}
+              busy={busy}
+              saved={quotaSaved}
+              onSave={saveQuota}
+            />
             <Divider />
 
             <Stack spacing={1}>

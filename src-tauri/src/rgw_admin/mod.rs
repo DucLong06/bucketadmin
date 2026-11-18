@@ -409,6 +409,28 @@ impl<H: HttpClient> RgwAdmin<H> {
             .map(|_| ())
     }
 
+    /// `PUT /admin/bucket?quota`: the quota of this one bucket (caps: buckets=write).
+    /// `owner` must be the bucket's owner. Negative `max_size_kb` / `max_objects` mean "unlimited".
+    pub async fn set_bucket_quota(
+        &self,
+        owner: &str,
+        bucket: &str,
+        enabled: bool,
+        max_size_kb: i64,
+        max_objects: i64,
+    ) -> Result<(), RgwError> {
+        let (size, objects) = (max_size_kb.to_string(), max_objects.to_string());
+        let params = [
+            ("quota", ""),
+            ("uid", owner),
+            ("bucket", bucket),
+            ("enabled", if enabled { "true" } else { "false" }),
+            ("max-size-kb", &size),
+            ("max-objects", &objects),
+        ];
+        self.send("PUT", "bucket", &params).await.map(|_| ())
+    }
+
     /// The S3 bucket policy (IAM JSON text), `None` when the bucket has none.
     /// `GET /admin/bucket?policy` returns the ACL, not this document, so it is read from the
     /// bucket instance metadata (attr `user.rgw.iam-policy`, base64). Caps: metadata=read.

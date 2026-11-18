@@ -288,6 +288,20 @@ async fn bucket_delete(state: St<'_>, cluster_id: String, bucket: String) -> Cmd
     state.ops(&cluster_id)?.delete_bucket(&bucket).await
 }
 
+#[tauri::command]
+async fn bucket_quota_set(
+    state: St<'_>,
+    cluster_id: String,
+    bucket: String,
+    enabled: bool,
+    max_size_kb: i64,
+    max_objects: i64,
+) -> Cmd<'_, ()> {
+    let ops = state.ops(&cluster_id)?;
+    ops.set_bucket_quota(&bucket, enabled, max_size_kb, max_objects)
+        .await
+}
+
 // ---- audit ----------------------------------------------------------------
 
 /// Latest 100 rows; empty / missing filters match everything.
@@ -351,6 +365,7 @@ pub fn run() {
             buckets_list,
             bucket_get,
             bucket_delete,
+            bucket_quota_set,
             audit_recent
         ])
         .run(tauri::generate_context!())
