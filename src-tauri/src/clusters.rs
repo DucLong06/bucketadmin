@@ -242,7 +242,7 @@ mod tests {
 
         // A second store on the same directory sees the profile: it is persisted.
         let reopened = ProfileStore::new(dir.clone(), &secrets);
-        assert_eq!(reopened.list().unwrap(), [added.clone()]);
+        assert_eq!(reopened.list().unwrap(), std::slice::from_ref(&added));
         let (endpoint, creds) = reopened.credentials(&added.id).unwrap();
         assert_eq!(endpoint, "http://127.0.0.1:7480");
         assert_eq!(creds.access_key, "AKLAB");
