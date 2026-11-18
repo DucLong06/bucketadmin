@@ -500,3 +500,298 @@ async fn m4_upload_download_presign() {
         .await
         .expect("cleanup");
 }
+
+/// Writes a Parquet file of about `megabytes` MB with flat, nullable and nested columns and a
+/// 1 KiB incompressible payload per row. Returns the number of rows.
+fn write_parquet(path: &std::path::Path, megabytes: u64) -> u64 {
+    use arrow_array::builder::{ListBuilder, StringBuilder};
+    use arrow_array::{
+        ArrayRef, BinaryArray, Float64Array, Int32Array, Int64Array, RecordBatch, StringArray,
+        StructArray,
+    };
+    use arrow_schema::{DataType, Field, Fields, Schema};
+    use parquet::arrow::ArrowWriter;
+    use parquet::basic::Compression;
+    use parquet::file::properties::WriterProperties;
+    use std::sync::Arc;
+
+    let meta_fields = Fields::from(vec![
+        Field::new("shard", DataType::Int32, false),
+        Field::new("region", DataType::Utf8, false),
+    ]);
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int64, false),
+        Field::new("name", DataType::Utf8, false),
+        Field::new("score", DataType::Float64, true),
+        Field::new(
+            "tags",
+            DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            true,
+        ),
+        Field::new("meta", DataType::Struct(meta_fields.clone()), false),
+        Field::new("payload", DataType::Binary, false),
+    ]));
+    let props = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .set_max_row_group_row_count(Some(20_000))
+        // The payload is random: a dictionary would only be built to be thrown away.
+        .set_column_dictionary_enabled("payload".into(), false)
+        .build();
+    let mut writer = ArrowWriter::try_new(
+        std::fs::File::create(path).unwrap(),
+        schema.clone(),
+        Some(props),
+    )
+    .unwrap();
+
+    // xorshift noise: incompressible, so the file really has the requested size on disk.
+    let mut x = 0x9E37_79B9_7F4A_7C15u64;
+    let block: Vec<u8> = (0..1024 * 1024 + 1024)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 32) as u8
+        })
+        .collect();
+    let total = megabytes * 1000;
+    const BATCH: u64 = 5000;
+    let mut first = 0;
+    while first < total {
+        let ids: Vec<i64> = (first..(first + BATCH).min(total))
+            .map(|i| i as i64)
+            .collect();
+        let mut tags = ListBuilder::new(StringBuilder::new());
+        for id in &ids {
+            if id % 7 == 0 {
+                tags.append(false);
+            } else {
+                tags.values().append_value(format!("t{}", id % 3));
+                tags.values().append_value("lab");
+                tags.append(true);
+            }
+        }
+        let meta = StructArray::new(
+            meta_fields.clone(),
+            vec![
+                Arc::new(Int32Array::from_iter_values(
+                    ids.iter().map(|i| (i % 16) as i32),
+                )) as ArrayRef,
+                Arc::new(StringArray::from_iter_values(ids.iter().map(|i| {
+                    if i % 2 == 0 {
+                        "hn"
+                    } else {
+                        "hcm"
+                    }
+                }))),
+            ],
+            None,
+        );
+        let columns: Vec<ArrayRef> = vec![
+            Arc::new(Int64Array::from(ids.clone())),
+            Arc::new(StringArray::from_iter_values(
+                ids.iter().map(|i| format!("row-{i}")),
+            )),
+            Arc::new(Float64Array::from_iter(
+                ids.iter().map(|i| (i % 5 != 0).then_some(*i as f64 / 2.0)),
+            )),
+            Arc::new(tags.finish()),
+            Arc::new(meta),
+            Arc::new(BinaryArray::from_iter_values(ids.iter().map(|i| {
+                let at = (*i as usize * 7919) % (1024 * 1024);
+                &block[at..at + 1024]
+            }))),
+        ];
+        writer
+            .write(&RecordBatch::try_new(schema.clone(), columns).unwrap())
+            .unwrap();
+        first += BATCH;
+    }
+    writer.close().unwrap();
+    total
+}
+
+/// M4.3: Parquet preview by ranged reads. The file is generated here with arrow-rs; its size
+/// comes from BA_PARQUET_MB (default 64 so the regular suite stays quick; the 500 MB run is
+/// `BA_PARQUET_MB=500 cargo test --test s3_lab m4_parquet -- --nocapture`).
+#[tokio::test]
+async fn m4_parquet_ranged_preview() {
+    let Some(admin) = lab() else { return };
+    let megabytes: u64 = std::env::var("BA_PARQUET_MB")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(64);
+    let bucket = "ba-m4-parquet";
+    let (_, owner) = user(&admin, "ba-m4-pq").await;
+    owner
+        .client()
+        .create_bucket()
+        .bucket(bucket)
+        .send()
+        .await
+        .expect("create bucket");
+    let dir = temp_dir("parquet");
+    let file = dir.join("big.parquet");
+
+    let started = std::time::Instant::now();
+    let total = write_parquet(&file, megabytes);
+    let size = std::fs::metadata(&file).unwrap().len();
+    println!(
+        "generated {total} rows, {size} bytes ({:.1} MiB) in {:.0?}",
+        size as f64 / 1048576.0,
+        started.elapsed()
+    );
+    assert!(
+        size > megabytes * 1_000_000,
+        "the file is at least the requested size"
+    );
+    let started = std::time::Instant::now();
+    owner
+        .upload(bucket, "data/big.parquet", &file, |_, _| {})
+        .await
+        .expect("upload");
+    println!("uploaded in {:.0?}", started.elapsed());
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    const MIB: u64 = 1024 * 1024;
+    let cost = |label: &str, page: &bucketadmin_lib::s3::parquet::ParquetPage| {
+        println!(
+            "{label}: {} rows, fetched {} bytes ({:.2} MiB = {:.2}% of the file) in {} range requests",
+            page.rows.len(),
+            page.fetched_bytes,
+            page.fetched_bytes as f64 / MIB as f64,
+            page.fetched_bytes as f64 * 100.0 / size as f64,
+            page.requests
+        );
+        // At most the 8 MiB footer request + the pages of one view; never anything near the whole file.
+        assert!(
+            page.fetched_bytes <= 16 * MIB,
+            "{label} fetched {} bytes",
+            page.fetched_bytes
+        );
+        assert!(
+            page.fetched_bytes < size / 4,
+            "{label} fetched a large share of the file"
+        );
+    };
+
+    // ---- first page: schema, row count, values, nested cells as JSON
+    let page = owner
+        .parquet_page(bucket, "data/big.parquet", None, 0, 50)
+        .await
+        .expect("first page");
+    cost("first page", &page);
+    let columns: Vec<(&str, &str)> = page
+        .columns
+        .iter()
+        .map(|c| (c.name.as_str(), c.data_type.as_str()))
+        .collect();
+    println!("columns -> {columns:?}");
+    println!(
+        "row groups -> {}, total rows -> {}",
+        page.row_groups, page.total_rows
+    );
+    assert_eq!(
+        columns.iter().map(|c| c.0).collect::<Vec<_>>(),
+        ["id", "name", "score", "tags", "meta", "payload"]
+    );
+    assert_eq!(
+        (columns[0].1, columns[1].1, columns[2].1),
+        ("Int64", "Utf8", "Float64")
+    );
+    assert!(
+        columns[3].1.starts_with("List") && columns[4].1.starts_with("Struct"),
+        "{columns:?}"
+    );
+    assert_eq!(
+        (page.total_rows, page.file_size, page.rows.len()),
+        (total, size, 50)
+    );
+    assert_eq!(page.row_groups as u64, total.div_ceil(20_000));
+    println!(
+        "row 1 -> {}",
+        serde_json::to_string(&page.rows[1])
+            .unwrap()
+            .chars()
+            .take(150)
+            .collect::<String>()
+    );
+    let row = &page.rows[1];
+    assert_eq!(row["id"], 1);
+    assert_eq!(row["name"], "row-1");
+    assert_eq!(row["score"], 0.5);
+    assert_eq!(row["tags"], serde_json::json!(["t1", "lab"]));
+    assert_eq!(
+        row["meta"],
+        serde_json::json!({"shard": 1, "region": "hcm"})
+    );
+    let payload = row["payload"].as_str().unwrap();
+    assert!(
+        payload[..2000].bytes().all(|b| b.is_ascii_hexdigit()) && payload.ends_with("(+48 ký tự)"),
+        "binary cells are shown as hex, cut for display: {}",
+        &payload[1990..]
+    );
+    assert!(
+        page.rows[0]["score"].is_null() && page.rows[0]["tags"].is_null(),
+        "nulls stay nulls"
+    );
+
+    // ---- a page from the middle, crossing a row-group boundary
+    let middle = (total / 2 / 20_000) * 20_000 - 30;
+    let page = owner
+        .parquet_page(bucket, "data/big.parquet", None, middle, 100)
+        .await
+        .expect("middle page");
+    cost("middle page", &page);
+    // The footer was fetched for the first page and is reused: this page cost only its data pages.
+    assert!(
+        page.fetched_bytes <= 4 * MIB,
+        "middle page fetched {} bytes",
+        page.fetched_bytes
+    );
+    let ids: Vec<u64> = page
+        .rows
+        .iter()
+        .map(|r| r["id"].as_u64().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        (middle..middle + 100).collect::<Vec<_>>(),
+        "exactly the requested rows, in order"
+    );
+
+    // ---- the last, short page and a page past the end
+    let page = owner
+        .parquet_page(bucket, "data/big.parquet", None, total - 7, 50)
+        .await
+        .expect("last page");
+    cost("last page", &page);
+    assert_eq!(page.rows.len(), 7);
+    assert_eq!(page.rows[6]["id"], total - 1);
+    let past = owner
+        .parquet_page(bucket, "data/big.parquet", None, total + 10, 50)
+        .await
+        .expect("past the end");
+    assert!(past.rows.is_empty() && past.total_rows == total);
+
+    // ---- not a Parquet file
+    put(
+        &owner,
+        bucket,
+        "notes.txt",
+        b"just some text, long enough to not be a parquet footer",
+    )
+    .await
+    .unwrap();
+    let wrong = owner
+        .parquet_page(bucket, "notes.txt", None, 0, 10)
+        .await
+        .unwrap_err();
+    println!("non-parquet object -> {wrong}");
+    assert!(
+        wrong.starts_with("cannot read this file as Parquet"),
+        "{wrong}"
+    );
+
+    admin.delete_user("ba-m4-pq", true).await.expect("cleanup");
+}

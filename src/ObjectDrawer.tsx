@@ -2,6 +2,7 @@ import { type ComponentType, useEffect, useState } from "react";
 import { Box, Button, Divider, Drawer, Stack, Tab, Tabs, TextField, Typography } from "@mui/material";
 import { invoke, type ObjectEntry } from "./api";
 import { formatBytes, shortTime } from "./format";
+import PreviewTab from "./preview/Preview";
 import { MAX_PRESIGN_SECS, presignSeconds, type PresignUnit } from "./presign";
 import type { StartTransfer } from "./transfers";
 import { ConfirmDialog, CopyButton, ErrorAlert, useAction } from "./ui";
@@ -153,7 +154,10 @@ function DetailsTab({ at, object, startTransfer, onChanged, onClose }: ObjectTab
   );
 }
 
-const tabs: { label: string; Panel: ComponentType<ObjectTabProps> }[] = [{ label: "Chi tiết", Panel: DetailsTab }];
+const tabs: { label: string; Panel: ComponentType<ObjectTabProps> }[] = [
+  { label: "Xem trước", Panel: PreviewTab },
+  { label: "Chi tiết", Panel: DetailsTab },
+];
 
 type Props = Omit<ObjectTabProps, "at" | "object"> & {
   clusterId: string;

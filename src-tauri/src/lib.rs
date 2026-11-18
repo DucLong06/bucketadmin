@@ -415,7 +415,10 @@ pub fn run() {
             browse::browse_upload,
             browse::browse_download,
             browse::browse_presign,
-            browse::browse_delete
+            browse::browse_delete,
+            browse::browse_read,
+            browse::browse_media_url,
+            browse::browse_parquet
         ])
         .run(tauri::generate_context!())
         .expect("error while running BucketAdmin");

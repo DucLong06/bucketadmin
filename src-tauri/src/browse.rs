@@ -2,7 +2,8 @@
 //! browsed as. The admin credentials are used for exactly one thing: looking up that key.
 
 use crate::rgw_admin::RgwAdmin;
-use crate::s3::transfer::Downloaded;
+use crate::s3::parquet::ParquetPage;
+use crate::s3::transfer::{content_type_for, Downloaded};
 use crate::s3::{BucketEntry, Listing, LIST_PAGE, S3};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
@@ -258,4 +259,59 @@ pub async fn browse_delete(state: St<'_>, at: ObjectRef) -> Cmd<()> {
     };
     state.audit_s3(&at, action, "", &result);
     result
+}
+
+// ---- preview ----------------------------------------------------------------
+
+/// Largest piece one `browse_read` returns.
+const MAX_READ: u64 = 4 * 1024 * 1024;
+/// How long a URL handed to the webview for inline display stays valid.
+const MEDIA_URL_SECS: u64 = 3600;
+
+/// Bytes `[start, start + len)` of the object, raw (the text, CSV and hex viewers).
+#[tauri::command]
+pub async fn browse_read(
+    state: St<'_>,
+    at: ObjectRef,
+    start: u64,
+    len: u64,
+) -> Cmd<tauri::ipc::Response> {
+    at.require_key()?;
+    let s3 = state.session(&at).await?;
+    let len = len.clamp(1, MAX_READ);
+    let bytes = s3
+        .read_range(&at.bucket, &at.key, at.version(), start, len)
+        .await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// A short-lived URL the webview loads an image, audio, video or PDF from directly, so media
+/// streams from RGW by range requests. Its Content-Type follows the key's extension.
+#[tauri::command]
+pub async fn browse_media_url(state: St<'_>, at: ObjectRef) -> Cmd<String> {
+    at.require_key()?;
+    let s3 = state.session(&at).await?;
+    let inline_type = Some(content_type_for(&at.key));
+    s3.presign_get(
+        &at.bucket,
+        &at.key,
+        at.version(),
+        MEDIA_URL_SECS,
+        inline_type,
+    )
+    .await
+}
+
+/// Rows `[offset, offset + limit)` of a Parquet object, read by ranged GETs.
+#[tauri::command]
+pub async fn browse_parquet(
+    state: St<'_>,
+    at: ObjectRef,
+    offset: u64,
+    limit: usize,
+) -> Cmd<ParquetPage> {
+    at.require_key()?;
+    let s3 = state.session(&at).await?;
+    s3.parquet_page(&at.bucket, &at.key, at.version(), offset, limit)
+        .await
 }

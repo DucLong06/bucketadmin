@@ -918,6 +918,7 @@ dependencies = [
  "arrow-schema",
  "aws-sdk-s3",
  "base64 0.22.1",
+ "bytes",
  "futures-util",
  "hmac 0.12.1",
  "keyring",

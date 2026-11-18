@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Box } from "@mui/material";
 
 /** Rows to render for a scroll position: first index and one past the last. */
@@ -32,11 +32,17 @@ type Props<T> = {
   minWidth?: number;
   label: string;
   empty?: ReactNode;
+  /** Row to scroll into view and highlight (e.g. the current search hit). */
+  focusRow?: number;
 };
 
 /** A table that only mounts the rows in view, so 100 000 rows cost the same as 30. */
-export function VirtualTable<T>({ columns, rows, height, rowHeight = 36, minWidth, label, empty }: Props<T>) {
+export function VirtualTable<T>({ columns, rows, height, rowHeight = 36, minWidth, label, empty, focusRow }: Props<T>) {
   const [scrollTop, setScrollTop] = useState(0);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focusRow !== undefined && box.current) box.current.scrollTop = Math.max(0, focusRow * rowHeight - height / 2);
+  }, [focusRow]);
   const [first, last] = visibleRange(scrollTop, height, rowHeight, rows.length);
   const grid = {
     display: "grid",
@@ -52,6 +58,7 @@ export function VirtualTable<T>({ columns, rows, height, rowHeight = 36, minWidt
   const cell = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
   return (
     <Box
+      ref={box}
       role="table"
       aria-label={label}
       aria-rowcount={rows.length + 1}
@@ -61,8 +68,8 @@ export function VirtualTable<T>({ columns, rows, height, rowHeight = 36, minWidt
     >
       <Box sx={{ minWidth }}>
         <Box role="row" sx={{ ...grid, position: "sticky", top: 0, zIndex: 1, bgcolor: "background.paper", fontWeight: 600 }}>
-          {columns.map((c) => (
-            <Box key={c.header} role="columnheader" sx={{ ...cell, textAlign: c.align }}>
+          {columns.map((c, n) => (
+            <Box key={n} role="columnheader" sx={{ ...cell, textAlign: c.align }}>
               {c.header}
             </Box>
           ))}
@@ -73,10 +80,18 @@ export function VirtualTable<T>({ columns, rows, height, rowHeight = 36, minWidt
               key={first + i}
               role="row"
               aria-rowindex={first + i + 2}
-              sx={{ ...grid, position: "absolute", top: (first + i) * rowHeight, left: 0, right: 0, "&:hover": { bgcolor: "action.hover" } }}
+              sx={{
+                ...grid,
+                position: "absolute",
+                top: (first + i) * rowHeight,
+                left: 0,
+                right: 0,
+                bgcolor: first + i === focusRow ? "action.selected" : undefined,
+                "&:hover": { bgcolor: "action.hover" },
+              }}
             >
-              {columns.map((c) => (
-                <Box key={c.header} role="cell" sx={{ ...cell, textAlign: c.align }}>
+              {columns.map((c, n) => (
+                <Box key={n} role="cell" sx={{ ...cell, textAlign: c.align }}>
                   {c.cell(row, first + i)}
                 </Box>
               ))}

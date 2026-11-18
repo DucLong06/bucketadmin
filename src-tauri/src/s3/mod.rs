@@ -2,6 +2,7 @@
 //! The cluster's admin secret is never used here: what this module can see or change is
 //! exactly what that user's key is allowed to.
 
+pub mod parquet;
 pub mod transfer;
 
 use aws_sdk_s3::config::{
@@ -20,6 +21,8 @@ pub const LIST_PAGE: i32 = 1000;
 pub struct S3 {
     client: Client,
     access_key: String,
+    /// Footer of the Parquet object previewed last, so paging through it does not fetch it again.
+    parquet_footer: parquet::FooterCache,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -107,6 +110,7 @@ impl S3 {
         Self {
             client: Client::from_conf(config),
             access_key: access_key.to_string(),
+            parquet_footer: Default::default(),
         }
     }
 

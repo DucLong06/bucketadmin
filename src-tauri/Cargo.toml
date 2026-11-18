@@ -28,6 +28,8 @@ tokio = { version = "1", features = ["fs", "io-util"] }
 # Parquet preview through ranged reads: footer + only the pages a view needs
 parquet = { version = "60", default-features = false, features = ["arrow", "async", "snap", "zstd", "flate2-rust_backend", "lz4"] }
 arrow-json = "60"
+# already in the tree; the buffer type of the Parquet reader interface
+bytes = "1"
 # native open/save dialogs for upload and download
 tauri-plugin-dialog = "2"
 # audit log; bundled = no system libsqlite needed
