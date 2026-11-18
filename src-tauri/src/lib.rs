@@ -166,6 +166,18 @@ async fn key_remove(
 }
 
 #[tauri::command]
+async fn key_add(
+    state: St<'_>,
+    cluster_id: String,
+    uid: String,
+    access_key: String,
+    secret_key: String,
+) -> Cmd<'_, ()> {
+    let ops = state.ops(&cluster_id)?;
+    ops.add_key(&uid, &access_key, &secret_key).await
+}
+
+#[tauri::command]
 async fn key_rotate(
     state: St<'_>,
     cluster_id: String,
@@ -273,6 +285,7 @@ pub fn run() {
             user_delete,
             key_create,
             key_remove,
+            key_add,
             key_rotate,
             caps_add,
             caps_remove,

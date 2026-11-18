@@ -282,3 +282,42 @@ async fn m1_flow_through_ops_is_audited() {
         );
     }
 }
+
+/// M3.3: attach an existing key pair to a user.
+#[tokio::test]
+async fn m3_manual_key_entry() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let uid = "ba-m3-key";
+    let _ = admin.delete_user(uid, true).await;
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+    ops.create_user(uid, "M3 manual key", &None, &None, &None)
+        .await
+        .expect("create_user");
+
+    let (access, secret) = (
+        "BAM3MANUALKEY0000001",
+        "bam3ManualSecret/0123456789+abcdefghijk=",
+    );
+    ops.add_key(uid, access, secret).await.expect("add_key");
+    let user = ops.get_user(uid).await.expect("get_user");
+    println!("add_key -> user now has {} keys", user.keys.len());
+    assert_eq!(user.keys.len(), 2);
+    assert!(user.keys.iter().any(|k| k.access_key == access));
+
+    let duplicate = ops.add_key(uid, access, secret).await.unwrap_err();
+    println!("add_key (same access key again) -> {duplicate}");
+    assert!(duplicate.contains("already has this access key"));
+    assert!(ops.add_key(uid, "bad key", secret).await.is_err());
+
+    ops.remove_key(uid, access).await.expect("remove_key");
+    ops.delete_user(uid).await.expect("delete_user");
+    let log = audit.recent(Some("key.create"), None).unwrap();
+    assert_eq!(log.len(), 1);
+    assert!(!format!("{log:?}").contains("bam3ManualSecret"));
+}

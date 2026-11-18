@@ -66,6 +66,24 @@ pub fn validate_cap(cap: &str) -> Result<String, String> {
     Ok(compact)
 }
 
+/// Format check for an S3 key pair typed in by hand. RGW itself accepts almost anything,
+/// including values that no S3 client could ever sign with.
+pub fn validate_key_pair(access_key: &str, secret_key: &str) -> Result<(), String> {
+    let access_ok = (16..=128).contains(&access_key.len())
+        && access_key.chars().all(|c| c.is_ascii_alphanumeric());
+    if !access_ok {
+        return Err("access key must be 16-128 letters and digits".into());
+    }
+    let secret_ok = (32..=128).contains(&secret_key.len())
+        && secret_key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/+=".contains(c));
+    if !secret_ok {
+        return Err("secret key must be 32-128 characters: letters, digits and / + =".into());
+    }
+    Ok(())
+}
+
 impl<H: HttpClient> Ops<'_, H> {
     /// Writes the audit row for a finished mutation and converts the error for the UI.
     fn record<T>(
@@ -209,6 +227,29 @@ impl<H: HttpClient> Ops<'_, H> {
             &format!("access_key={access_key}"),
             result,
         )
+    }
+
+    /// Attaches an existing key pair (nothing is generated, so there is no secret to show).
+    pub async fn add_key(
+        &self,
+        uid: &str,
+        access_key: &str,
+        secret_key: &str,
+    ) -> Result<(), String> {
+        validate_key_pair(access_key, secret_key)?;
+        // RGW treats an access key the user already owns as "replace its secret": refuse instead.
+        let user = self.admin.get_user(uid).await.map_err(|e| e.to_string())?;
+        if user.keys.iter().any(|k| k.access_key == access_key) {
+            return Err(
+                "the user already has this access key; rotate it to change the secret".into(),
+            );
+        }
+        let result = self
+            .admin
+            .create_key(uid, Some(access_key), Some(secret_key))
+            .await;
+        let detail = format!("access_key={access_key} manual");
+        self.record("key.create", uid, &detail, result.map(|_| ()))
     }
 
     /// New key first, then the old one is removed, so the user is never left without a key.
@@ -521,6 +562,45 @@ mod tests {
                 false
             )
         );
+    }
+
+    #[tokio::test]
+    async fn add_key_validates_refuses_duplicates_and_audits_without_the_secret() {
+        let (access, secret) = (
+            "MANUALKEY0123456789A",
+            "manualSecret/0123456789+abcdefghijklmnop=",
+        );
+        let mock = Mock::reply(
+            200,
+            &user_json("alice", &[("OLDKEY0123456789ABCD", "s-old")]),
+        )
+        .then(200, "[]")
+        .then(200, &user_json("alice", &[(access, "s")]));
+        let audit = Audit::in_memory().unwrap();
+        let ops = ops(&mock, &audit);
+
+        assert!(ops.add_key("alice", "short", secret).await.is_err());
+        assert!(ops
+            .add_key("alice", access, "has spaces in the secret key 0123456789")
+            .await
+            .is_err());
+        assert!(mock.calls().is_empty(), "malformed keys never reach RGW");
+
+        ops.add_key("alice", access, secret).await.unwrap();
+        assert_eq!(
+            mock.calls()[1],
+            format!("PUT /admin/user?access-key={access}&format=json&key=&secret-key=manualSecret%2F0123456789%2Babcdefghijklmnop%3D&uid=alice")
+        );
+        // Second attempt: the user now owns that access key, so nothing is sent.
+        let err = ops.add_key("alice", access, secret).await.unwrap_err();
+        assert!(err.contains("already has this access key"), "{err}");
+        assert_eq!(mock.calls().len(), 3);
+
+        let logged = rows(&audit);
+        assert_eq!(logged.len(), 1);
+        assert_eq!(logged[0].0, "key.create");
+        assert_eq!(logged[0].2, format!("access_key={access} manual"));
+        assert!(!format!("{logged:?}").contains("manualSecret"));
     }
 
     #[test]

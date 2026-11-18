@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Alert, Box, Button, Paper, Stack, Typography } from "@mui/material";
+import { Button, Paper, Stack, Typography } from "@mui/material";
+import AddKeyDialog from "./AddKeyDialog";
 import { invoke, type KeyPair } from "./api";
 import { ConfirmDialog, CopyButton, ErrorAlert, SecretDialog, useAction } from "./ui";
 import { explain } from "./errors";
@@ -11,6 +12,7 @@ type Pending = { kind: "rotate" | "remove"; accessKey: string };
 export default function KeysTab({ clusterId, uid, user, refresh }: UserTabProps) {
   const [fresh, setFresh] = useState<{ keys: KeyPair[]; warning: string | null } | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  const [adding, setAdding] = useState(false);
   const { busy, error, run, setError } = useAction();
 
   async function create() {
@@ -72,11 +74,14 @@ export default function KeysTab({ clusterId, uid, user, refresh }: UserTabProps)
           </Paper>
         ))}
       </Stack>
-      <Box>
+      <Stack direction="row" spacing={1}>
         <Button variant="contained" onClick={create} disabled={busy}>
           Tạo key mới
         </Button>
-      </Box>
+        <Button variant="outlined" onClick={() => setAdding(true)}>
+          Thêm key có sẵn
+        </Button>
+      </Stack>
       {pending === null && <ErrorAlert error={error} />}
 
       <ConfirmDialog
@@ -98,6 +103,14 @@ export default function KeysTab({ clusterId, uid, user, refresh }: UserTabProps)
         error={error}
         onConfirm={confirmed}
         onClose={closeConfirm}
+      />
+      <AddKeyDialog
+        clusterId={clusterId}
+        uid={uid}
+        existing={user.keys.map((k) => k.access_key)}
+        open={adding}
+        onClose={() => setAdding(false)}
+        onAdded={refresh}
       />
       <SecretDialog keys={fresh?.keys ?? null} warning={fresh?.warning} onClose={() => setFresh(null)} />
     </Stack>
