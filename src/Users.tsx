@@ -17,8 +17,9 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { invoke, uidOf, type Profile, type UserInfo } from "./api";
-import { useAction } from "./ui";
+import { invoke, uidOf, type KeyPair, type Profile, type UserInfo } from "./api";
+import CreateUserDialog from "./CreateUserDialog";
+import { SecretDialog, useAction } from "./ui";
 
 type Props = { profiles: Profile[]; clusterId: string; onClusterChange: (id: string) => void };
 
@@ -27,6 +28,8 @@ const byUid = (a: UserInfo, b: UserInfo) => uidOf(a).localeCompare(uidOf(b));
 export default function Users({ profiles, clusterId, onClusterChange }: Props) {
   const [users, setUsers] = useState<UserInfo[] | null>(null);
   const [filter, setFilter] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newKeys, setNewKeys] = useState<KeyPair[] | null>(null);
   const { busy, error, run } = useAction();
   const request = useRef(0);
 
@@ -41,6 +44,12 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
     setUsers(null);
     load();
   }, [clusterId]);
+
+  function onCreated(user: UserInfo) {
+    setNewKeys(user.keys); // shown once in the dialog, never kept in the table state
+    const row = { ...user, keys: user.keys.map((k) => ({ ...k, secret_key: "" })) };
+    setUsers((list) => [...(list ?? []), row].sort(byUid));
+  }
 
   const needle = filter.trim().toLowerCase();
   const shown = (users ?? []).filter((u) => uidOf(u).toLowerCase().includes(needle));
@@ -73,6 +82,9 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
         <Box sx={{ flexGrow: 1 }} />
         <Button onClick={load} disabled={busy}>
           Làm mới
+        </Button>
+        <Button variant="contained" onClick={() => setCreateOpen(true)}>
+          Tạo user
         </Button>
       </Stack>
       {busy && <LinearProgress aria-label="Đang tải danh sách user" />}
@@ -129,6 +141,13 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
           Hiển thị {shown.length}/{users.length} user
         </Typography>
       )}
+      <CreateUserDialog
+        clusterId={clusterId}
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={onCreated}
+      />
+      <SecretDialog keys={newKeys} onClose={() => setNewKeys(null)} />
     </>
   );
 }
