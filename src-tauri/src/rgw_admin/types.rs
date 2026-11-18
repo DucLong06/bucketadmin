@@ -74,7 +74,7 @@ pub enum QuotaType {
 }
 
 impl QuotaType {
-    pub(crate) fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             QuotaType::User => "user",
             QuotaType::Bucket => "bucket",
