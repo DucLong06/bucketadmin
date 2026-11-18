@@ -5,10 +5,10 @@ pub mod rgw_admin;
 
 use audit::{Audit, AuditEntry};
 use clusters::{ClusterProfile, ProfileStore};
-use ops::{NewSubuser, Ops, Quotas, RotatedKey, UsersPage};
+use ops::{BucketDetail, NewSubuser, Ops, Quotas, RotatedKey, UsersPage};
 use rgw_admin::{
-    Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin, Usage,
-    UserInfo,
+    BucketInfo, Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin,
+    Usage, UserInfo,
 };
 use tauri::{Manager, State};
 
@@ -267,6 +267,27 @@ async fn usage_get(state: St<'_>, cluster_id: String, uid: String) -> Cmd<'_, Us
     state.ops(&cluster_id)?.get_usage(&uid).await
 }
 
+// ---- buckets --------------------------------------------------------------
+
+#[tauri::command]
+async fn buckets_list(
+    state: St<'_>,
+    cluster_id: String,
+    uid: Option<String>,
+) -> Cmd<'_, Vec<BucketInfo>> {
+    state.ops(&cluster_id)?.list_buckets(uid.as_deref()).await
+}
+
+#[tauri::command]
+async fn bucket_get(state: St<'_>, cluster_id: String, bucket: String) -> Cmd<'_, BucketDetail> {
+    state.ops(&cluster_id)?.get_bucket(&bucket).await
+}
+
+#[tauri::command]
+async fn bucket_delete(state: St<'_>, cluster_id: String, bucket: String) -> Cmd<'_, ()> {
+    state.ops(&cluster_id)?.delete_bucket(&bucket).await
+}
+
 // ---- audit ----------------------------------------------------------------
 
 /// Latest 100 rows; empty / missing filters match everything.
@@ -327,6 +348,9 @@ pub fn run() {
             quota_get,
             quota_set,
             usage_get,
+            buckets_list,
+            bucket_get,
+            bucket_delete,
             audit_recent
         ])
         .run(tauri::generate_context!())

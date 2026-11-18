@@ -4,8 +4,8 @@
 
 use crate::audit::Audit;
 use crate::rgw_admin::{
-    Capability, HttpClient, KeyPair, Quota, QuotaType, ReqwestClient, RgwAdmin, RgwError, Subuser,
-    Usage, UserIdPage, UserInfo, UserModify,
+    BucketInfo, Capability, HttpClient, KeyPair, Quota, QuotaType, ReqwestClient, RgwAdmin,
+    RgwError, Subuser, Usage, UserIdPage, UserInfo, UserModify,
 };
 use futures_util::{stream, StreamExt};
 use serde::Serialize;
@@ -33,6 +33,15 @@ pub struct RotatedKey {
     pub key: KeyPair,
     /// Set when the new key exists but the old one could not be removed.
     pub remove_error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BucketDetail {
+    pub info: BucketInfo,
+    /// The S3 bucket policy as JSON text; `None` when the bucket has none.
+    pub policy: Option<String>,
+    /// Why the policy could not be read (typically a missing metadata cap). `info` is still valid.
+    pub policy_error: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -373,6 +382,33 @@ impl<H: HttpClient> Ops<'_, H> {
             .set_quota(uid, quota_type, enabled, max_size_kb, max_objects)
             .await;
         self.record("quota.set", uid, &detail, result)
+    }
+
+    /// Buckets with stats, all of the cluster or one user's. Not audited (read-only).
+    pub async fn list_buckets(&self, uid: Option<&str>) -> Result<Vec<BucketInfo>, String> {
+        let buckets = self.admin.list_buckets(uid).await;
+        buckets.map_err(|e| e.to_string())
+    }
+
+    pub async fn get_bucket(&self, bucket: &str) -> Result<BucketDetail, String> {
+        let info = self.admin.get_bucket(bucket).await;
+        let info = info.map_err(|e| e.to_string())?;
+        let (policy, policy_error) = match self.admin.get_bucket_policy(&info).await {
+            Ok(policy) => (policy, None),
+            Err(e) => (None, Some(e.to_string())),
+        };
+        Ok(BucketDetail {
+            info,
+            policy,
+            policy_error,
+        })
+    }
+
+    /// Removes an empty bucket; its policy and quota go with it. RGW itself refuses a bucket
+    /// that still holds objects (409 BucketNotEmpty): objects are never purged from here.
+    pub async fn delete_bucket(&self, bucket: &str) -> Result<(), String> {
+        let result = self.admin.delete_bucket(bucket).await;
+        self.record("bucket.delete", bucket, "", result)
     }
 
     pub async fn get_usage(&self, uid: &str) -> Result<Usage, String> {
@@ -798,6 +834,45 @@ mod tests {
                     "purge_data=true".into(),
                     true
                 ),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn bucket_detail_survives_an_unreadable_policy_and_delete_is_audited() {
+        let bucket = r#"{"bucket":"photos","id":"abc.1","owner":"alice","usage":{"rgw.main":{"size":11,"num_objects":1}}}"#;
+        let mock = Mock::reply(200, bucket)
+            .then(403, r#"{"Code":"AccessDenied"}"#)
+            .then(409, r#"{"Code":"BucketNotEmpty"}"#)
+            .then(200, "");
+        let audit = Audit::in_memory().unwrap();
+        let ops = ops(&mock, &audit);
+
+        let detail = ops.get_bucket("photos").await.unwrap();
+        assert_eq!(detail.info.owner, "alice");
+        assert_eq!(detail.policy, None);
+        assert!(detail.policy_error.unwrap().starts_with("AccessDenied"));
+
+        assert!(ops
+            .delete_bucket("photos")
+            .await
+            .unwrap_err()
+            .contains("BucketNotEmpty"));
+        ops.delete_bucket("photos").await.unwrap();
+        assert_eq!(
+            mock.calls()[2],
+            "DELETE /admin/bucket?bucket=photos&format=json"
+        );
+        assert_eq!(
+            rows(&audit),
+            [
+                (
+                    "bucket.delete".into(),
+                    "photos".into(),
+                    String::new(),
+                    false
+                ),
+                ("bucket.delete".into(), "photos".into(), String::new(), true),
             ]
         );
     }

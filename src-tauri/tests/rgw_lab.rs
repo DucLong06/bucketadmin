@@ -482,7 +482,18 @@ async fn m3_delete_user_with_and_without_purge() {
         .await
         .unwrap_err()
         .starts_with("NoSuchUser"));
-    // The key is gone with the user, so the bucket is no longer reachable with it.
+    let gone = ops
+        .admin
+        .get_bucket("ba-m3-purge-bucket")
+        .await
+        .unwrap_err();
+    println!("bucket after purge -> {gone}");
+    assert_eq!(
+        gone,
+        RgwError::NoSuchBucket,
+        "purge-data removed the bucket too"
+    );
+    // The key is gone with the user as well.
     assert_eq!(
         s3(key, "GET", "/ba-m3-purge-bucket/a.txt", "", b"").await,
         403
@@ -550,4 +561,101 @@ async fn m3_users_pagination() {
     for uid in &uids {
         ops.admin.delete_user(uid, false).await.expect("cleanup");
     }
+}
+
+/// M3.9: bucket list, detail with the S3 bucket policy, delete only when empty.
+#[tokio::test]
+async fn m3_buckets() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let (uid, bucket) = ("ba-m3-bkt", "ba-m3-bkt-data");
+    let _ = admin.delete_user(uid, true).await;
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+    let user = ops
+        .create_user(uid, "M3 buckets", &None, &None, &None)
+        .await
+        .expect("create_user");
+    let key = &user.keys[0];
+    let path = format!("/{bucket}");
+    assert_eq!(s3(key, "PUT", &path, "", b"").await, 200, "create bucket");
+    assert_eq!(
+        s3(key, "PUT", &format!("{path}/a.txt"), "", b"hello").await,
+        200,
+        "put object"
+    );
+    let policy = format!(
+        r#"{{"Version":"2012-10-17","Statement":[{{"Effect":"Allow","Principal":{{"AWS":["arn:aws:iam:::user/{uid}"]}},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::{bucket}/*"]}}]}}"#
+    );
+    let status = s3(key, "PUT", &path, "policy=", policy.as_bytes()).await;
+    assert!(
+        status == 200 || status == 204,
+        "put bucket policy -> {status}"
+    );
+
+    let all = ops.list_buckets(None).await.expect("list_buckets");
+    let listed = all
+        .iter()
+        .find(|b| b.bucket == bucket)
+        .expect("bucket is listed");
+    println!(
+        "list_buckets -> {} buckets; {bucket}: owner={} usage={:?}",
+        all.len(),
+        listed.owner,
+        listed.usage.get("rgw.main")
+    );
+    assert_eq!(listed.owner, uid);
+    assert_eq!(listed.usage["rgw.main"].size, 5);
+    assert_eq!(listed.usage["rgw.main"].num_objects, 1);
+    let own = ops
+        .list_buckets(Some(uid))
+        .await
+        .expect("list_buckets(uid)");
+    assert_eq!(own.len(), 1);
+
+    let detail = ops.get_bucket(bucket).await.expect("get_bucket");
+    println!(
+        "get_bucket -> policy={:?} policy_error={:?}",
+        detail.policy, detail.policy_error
+    );
+    assert_eq!(detail.policy_error, None);
+    let stored: serde_json::Value =
+        serde_json::from_str(&detail.policy.expect("policy is found")).unwrap();
+    assert_eq!(stored["Statement"][0]["Action"][0], "s3:GetObject");
+    assert!(!detail.info.bucket_quota.enabled);
+
+    let refused = ops.delete_bucket(bucket).await.unwrap_err();
+    println!("delete_bucket (1 object inside) -> {refused}");
+    assert!(refused.contains("BucketNotEmpty"), "{refused}");
+    assert_eq!(
+        s3(key, "DELETE", &format!("{path}/a.txt"), "", b"").await,
+        204,
+        "delete object"
+    );
+    ops.delete_bucket(bucket)
+        .await
+        .expect("delete_bucket (empty, has a policy)");
+    assert!(ops
+        .get_bucket(bucket)
+        .await
+        .unwrap_err()
+        .starts_with("NoSuchBucket"));
+    assert!(ops.list_buckets(Some(uid)).await.unwrap().is_empty());
+
+    ops.delete_user(uid, false).await.expect("delete_user");
+    let log: Vec<bool> = audit
+        .recent(Some("bucket.delete"), None)
+        .unwrap()
+        .iter()
+        .map(|e| e.ok)
+        .collect();
+    assert_eq!(
+        log,
+        [true, false],
+        "newest first: the successful delete, then the refused one"
+    );
 }

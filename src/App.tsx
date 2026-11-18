@@ -13,6 +13,7 @@ import {
 } from "@mui/material";
 import { invoke, type Profile } from "./api";
 import Audit from "./Audit";
+import Buckets from "./Buckets";
 import Clusters from "./Clusters";
 import { ErrorAlert } from "./ui";
 import Users from "./Users";
@@ -47,6 +48,7 @@ export default function App() {
           </Typography>
           <Tabs value={page} onChange={(_, value) => setPage(value)} aria-label="Điều hướng chính">
             <Tab value="users" label="Users" />
+            <Tab value="buckets" label="Buckets" />
             <Tab value="clusters" label="Clusters" />
             <Tab value="audit" label="Audit" />
           </Tabs>
@@ -55,6 +57,7 @@ export default function App() {
       <Container maxWidth="lg" sx={{ py: 3 }}>
         <ErrorAlert error={error} />
         {page === "users" && <Users profiles={profiles} clusterId={clusterId} onClusterChange={setClusterId} />}
+        {page === "buckets" && <Buckets profiles={profiles} clusterId={clusterId} onClusterChange={setClusterId} />}
         {page === "clusters" && <Clusters profiles={profiles} onChanged={reload} />}
         {page === "audit" && <Audit profiles={profiles} />}
       </Container>

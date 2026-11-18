@@ -2,6 +2,7 @@
 //! the set of fields differs between Ceph releases.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -154,4 +155,40 @@ pub struct UsageStats {
     pub bytes_received: u64,
     pub ops: u64,
     pub successful_ops: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BucketUsage {
+    pub size: u64,
+    pub size_actual: u64,
+    pub num_objects: u64,
+}
+
+/// `GET /admin/bucket` entry (with stats).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BucketInfo {
+    pub bucket: String,
+    pub tenant: String,
+    pub id: String,
+    pub owner: String,
+    pub versioning: String,
+    pub placement_rule: String,
+    pub creation_time: String,
+    pub object_lock_enabled: bool,
+    /// Stats per category; object data is under `rgw.main`. Empty for an empty bucket.
+    pub usage: BTreeMap<String, BucketUsage>,
+    /// The quota of this one bucket (not the owner's default bucket quota).
+    pub bucket_quota: Quota,
+}
+
+impl BucketInfo {
+    /// The name the admin API addresses the bucket by: `tenant/bucket` for tenanted buckets.
+    pub fn key(&self) -> String {
+        match self.tenant.as_str() {
+            "" => self.bucket.clone(),
+            tenant => format!("{tenant}/{}", self.bucket),
+        }
+    }
 }

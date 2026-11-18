@@ -17,6 +17,8 @@ serde_json = "1"
 thiserror = "2"
 sha2 = "0.10"
 hmac = "0.12"
+# already in the tree via reqwest; decodes the bucket policy attr
+base64 = "0.22"
 # already in the tree via reqwest/tauri; used for bounded-concurrency user loading
 futures-util = "0.3"
 # audit log; bundled = no system libsqlite needed

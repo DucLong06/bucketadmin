@@ -10,7 +10,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import type { KeyPair } from "./api";
+import type { KeyPair, Profile } from "./api";
 import { explain } from "./errors";
 
 /** Runs backend calls with shared busy/error state; resolves to undefined when the call failed. */
@@ -30,6 +30,26 @@ export function useAction() {
     }
   }
   return { busy, error, run, setError };
+}
+
+export function ClusterSelect(props: { profiles: Profile[]; value: string; onChange: (id: string) => void }) {
+  return (
+    <TextField
+      select
+      label="Cluster"
+      value={props.value}
+      onChange={(e) => props.onChange(e.target.value)}
+      size="small"
+      sx={{ minWidth: 200 }}
+      slotProps={{ select: { native: true } }}
+    >
+      {props.profiles.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.label}
+        </option>
+      ))}
+    </TextField>
+  );
 }
 
 /** Backend error in Vietnamese, with the error code and the original text one click away. */

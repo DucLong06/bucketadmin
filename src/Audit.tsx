@@ -34,6 +34,7 @@ const ACTIONS = [
   "caps.add",
   "caps.remove",
   "quota.set",
+  "bucket.delete",
 ];
 
 const native = { select: { native: true } };

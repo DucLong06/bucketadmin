@@ -387,6 +387,52 @@ impl<H: HttpClient> RgwAdmin<H> {
         self.send("PUT", "user", &params).await.map(|_| ())
     }
 
+    /// All buckets with their stats (`uid`: only that user's). Caps: buckets=read.
+    // shortcut: one unpaged request, fine for hundreds of buckets; page with max-entries/marker
+    // once a cluster with many thousands of buckets makes this slow.
+    pub async fn list_buckets(&self, uid: Option<&str>) -> Result<Vec<BucketInfo>, RgwError> {
+        let mut params = vec![("stats", "true")];
+        if let Some(uid) = uid {
+            params.push(("uid", uid));
+        }
+        self.json("GET", "bucket", &params).await
+    }
+
+    pub async fn get_bucket(&self, bucket: &str) -> Result<BucketInfo, RgwError> {
+        self.json("GET", "bucket", &[("bucket", bucket)]).await
+    }
+
+    /// Never purges objects: RGW answers 409 BucketNotEmpty while the bucket holds any.
+    pub async fn delete_bucket(&self, bucket: &str) -> Result<(), RgwError> {
+        self.send("DELETE", "bucket", &[("bucket", bucket)])
+            .await
+            .map(|_| ())
+    }
+
+    /// The S3 bucket policy (IAM JSON text), `None` when the bucket has none.
+    /// `GET /admin/bucket?policy` returns the ACL, not this document, so it is read from the
+    /// bucket instance metadata (attr `user.rgw.iam-policy`, base64). Caps: metadata=read.
+    pub async fn get_bucket_policy(&self, info: &BucketInfo) -> Result<Option<String>, RgwError> {
+        use base64::Engine;
+        let key = format!("{}:{}", info.key(), info.id);
+        let meta: serde_json::Value = self
+            .json("GET", "metadata/bucket.instance", &[("key", &key)])
+            .await?;
+        let attrs = meta.pointer("/data/attrs").and_then(|a| a.as_array());
+        let encoded = attrs
+            .into_iter()
+            .flatten()
+            .find(|a| a["key"] == "user.rgw.iam-policy")
+            .and_then(|a| a["val"].as_str());
+        let Some(encoded) = encoded else {
+            return Ok(None);
+        };
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|e| RgwError::Decode(format!("bucket policy attr is not base64: {e}")))?;
+        Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
     /// `GET /admin/usage` (caps: usage=read); `uid = None` covers all users.
     pub async fn get_usage(&self, uid: Option<&str>) -> Result<Usage, RgwError> {
         let params: Vec<(&str, &str)> = uid.map(|u| ("uid", u)).into_iter().collect();
@@ -773,5 +819,64 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.to_string(), "RGW returned HTTP 404 NoSuchSubUser ");
+    }
+
+    const BUCKET_JSON: &str = r#"{"bucket":"photos","tenant":"","id":"abc.1","owner":"alice","versioning":"off",
+        "placement_rule":"default-placement","creation_time":"2026-11-18T13:44:41.971458Z","object_lock_enabled":false,
+        "usage":{"rgw.main":{"size":11,"size_actual":4096,"num_objects":1}},
+        "bucket_quota":{"enabled":true,"check_on_raw":false,"max_size":2097152,"max_size_kb":2048,"max_objects":50}}"#;
+
+    #[tokio::test]
+    async fn bucket_list_get_delete() {
+        let mock = Mock::reply(200, &format!("[{BUCKET_JSON}]"));
+        let buckets = mock.client().list_buckets(Some("alice")).await.unwrap();
+        assert_eq!(buckets[0].owner, "alice");
+        assert_eq!(buckets[0].usage["rgw.main"].num_objects, 1);
+        assert!(buckets[0].bucket_quota.enabled);
+        assert_eq!(
+            mock.calls(),
+            ["GET /admin/bucket?format=json&stats=true&uid=alice"]
+        );
+
+        let mock = Mock::reply(200, r#"{"bucket":"empty","owner":"alice","usage":{}}"#);
+        let empty = mock.client().get_bucket("empty").await.unwrap();
+        assert!(empty.usage.is_empty());
+        assert_eq!(mock.calls(), ["GET /admin/bucket?bucket=empty&format=json"]);
+
+        let mock = Mock::reply(409, r#"{"Code":"BucketNotEmpty"}"#);
+        let err = mock.client().delete_bucket("photos").await.unwrap_err();
+        assert_eq!(err.to_string(), "RGW returned HTTP 409 BucketNotEmpty ");
+        assert_eq!(
+            mock.calls(),
+            ["DELETE /admin/bucket?bucket=photos&format=json"]
+        );
+    }
+
+    #[tokio::test]
+    async fn bucket_policy_comes_from_instance_metadata() {
+        let info: BucketInfo = serde_json::from_str(BUCKET_JSON).unwrap();
+        // "eyJWZXJzaW9uIjoiMjAxMi0xMC0xNyJ9" = {"Version":"2012-10-17"}
+        let meta = r#"{"key":"bucket.instance:photos:abc.1","data":{"attrs":[
+            {"key":"user.rgw.acl","val":"AgI="},
+            {"key":"user.rgw.iam-policy","val":"eyJWZXJzaW9uIjoiMjAxMi0xMC0xNyJ9"}]}}"#;
+        let mock = Mock::reply(200, meta);
+        let policy = mock.client().get_bucket_policy(&info).await.unwrap();
+        assert_eq!(policy.as_deref(), Some(r#"{"Version":"2012-10-17"}"#));
+        assert_eq!(
+            mock.calls(),
+            ["GET /admin/metadata/bucket.instance?format=json&key=photos%3Aabc.1"]
+        );
+
+        let mock = Mock::reply(
+            200,
+            r#"{"data":{"attrs":[{"key":"user.rgw.acl","val":"AgI="}]}}"#,
+        );
+        assert_eq!(mock.client().get_bucket_policy(&info).await.unwrap(), None);
+
+        let tenanted = BucketInfo {
+            tenant: "acme".into(),
+            ..info
+        };
+        assert_eq!(tenanted.key(), "acme/photos");
     }
 }

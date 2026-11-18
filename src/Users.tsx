@@ -19,7 +19,7 @@ import {
 } from "@mui/material";
 import { invoke, uidOf, type KeyPair, type Profile, type UserInfo } from "./api";
 import CreateUserDialog from "./CreateUserDialog";
-import { ErrorAlert, SecretDialog, useAction } from "./ui";
+import { ClusterSelect, ErrorAlert, SecretDialog, useAction } from "./ui";
 import UserDrawer from "./UserDrawer";
 
 type Props = { profiles: Profile[]; clusterId: string; onClusterChange: (id: string) => void };
@@ -85,21 +85,7 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
         Users
       </Typography>
       <Stack direction="row" spacing={2} sx={{ mb: 2, alignItems: "center" }}>
-        <TextField
-          select
-          label="Cluster"
-          value={clusterId}
-          onChange={(e) => onClusterChange(e.target.value)}
-          size="small"
-          sx={{ minWidth: 200 }}
-          slotProps={{ select: { native: true } }}
-        >
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </TextField>
+        <ClusterSelect profiles={profiles} value={clusterId} onChange={onClusterChange} />
         <TextField label="Tìm theo uid" value={filter} onChange={(e) => setFilter(e.target.value)} size="small" />
         <Box sx={{ flexGrow: 1 }} />
         <Button onClick={() => load(null)} disabled={busy}>
