@@ -124,3 +124,161 @@ async fn user_lifecycle() {
     admin.delete_user(uid, false).await.expect("delete_user");
     assert_eq!(admin.get_user(uid).await.unwrap_err(), RgwError::NoSuchUser);
 }
+
+/// M1 flow through the audited operations layer (what the Tauri commands call):
+/// create user -> add caps -> set quota -> usage -> keys -> suspend -> delete.
+#[tokio::test]
+async fn m1_flow_through_ops_is_audited() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let uid = "ba-m1-itest";
+    let _ = admin.delete_user(uid, true).await; // leftover from an aborted run
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+
+    let created = ops
+        .create_user(uid, "M1 flow", &Some("m1@example.com".into()), &None, &None)
+        .await
+        .expect("create_user");
+    let first = created.keys[0].clone();
+    assert!(!first.secret_key.is_empty(), "secret is returned on create");
+    let listed = ops.list_users().await.expect("list_users");
+    let row = listed
+        .iter()
+        .find(|u| u.user_id == uid)
+        .expect("new user is listed");
+    assert_eq!(row.keys[0].access_key, first.access_key);
+    assert!(listed
+        .iter()
+        .all(|u| u.keys.iter().all(|k| k.secret_key.is_empty())));
+    println!("list_users -> {} users, secrets stripped", listed.len());
+
+    // The space is the case the reference Python script could not sign.
+    let caps = ops
+        .add_cap(uid, "usage=read, write")
+        .await
+        .expect("add_cap");
+    println!("add_cap usage=read, write -> {caps:?}");
+    assert_eq!(
+        (caps[0].cap_type.as_str(), caps[0].perm.as_str()),
+        ("usage", "*")
+    );
+    ops.add_cap(uid, "buckets=read").await.expect("add_cap 2");
+    assert!(ops
+        .add_cap(uid, "zones=read")
+        .await
+        .unwrap_err()
+        .starts_with("InvalidCapability"));
+    let caps = ops
+        .remove_cap(uid, "usage=write")
+        .await
+        .expect("remove_cap");
+    println!("remove_cap usage=write -> {caps:?}");
+
+    ops.set_quota(uid, QuotaType::User, true, 2048, 100)
+        .await
+        .expect("set user quota");
+    ops.set_quota(uid, QuotaType::Bucket, true, -1, 5)
+        .await
+        .expect("set bucket quota");
+    let quotas = ops.get_quotas(uid).await.expect("get_quotas");
+    println!("get_quotas -> {quotas:?}");
+    assert_eq!(
+        (quotas.user.max_size_kb, quotas.user.max_objects),
+        (2048, 100)
+    );
+    assert!(quotas.bucket.enabled && quotas.bucket.max_size < 0 && quotas.bucket.max_objects == 5);
+
+    let usage = ops.get_usage(uid).await.expect("get_usage");
+    println!("get_usage -> {usage:?}");
+
+    let second = ops.create_key(uid).await.expect("create_key");
+    assert_ne!(second.access_key, first.access_key);
+    let rotated = ops
+        .rotate_key(uid, &first.access_key)
+        .await
+        .expect("rotate_key");
+    assert_eq!(rotated.remove_error, None);
+    ops.remove_key(uid, &second.access_key)
+        .await
+        .expect("remove_key");
+    let user = ops.get_user(uid).await.expect("get_user");
+    let left: Vec<&str> = user.keys.iter().map(|k| k.access_key.as_str()).collect();
+    assert_eq!(
+        left,
+        [rotated.key.access_key.as_str()],
+        "only the rotated key remains"
+    );
+
+    let modified = ops
+        .modify_user(uid, "M1 renamed", "")
+        .await
+        .expect("modify_user");
+    assert_eq!(
+        (modified.display_name.as_str(), modified.email.as_str()),
+        ("M1 renamed", "")
+    );
+    assert_eq!(
+        ops.set_suspended(uid, true)
+            .await
+            .expect("suspend")
+            .suspended,
+        1
+    );
+    assert_eq!(
+        ops.set_suspended(uid, false)
+            .await
+            .expect("enable")
+            .suspended,
+        0
+    );
+    ops.delete_user(uid).await.expect("delete_user");
+    assert!(ops
+        .get_user(uid)
+        .await
+        .unwrap_err()
+        .starts_with("NoSuchUser"));
+
+    let mut log = audit.recent(None, None).unwrap();
+    log.reverse();
+    let actions: Vec<String> = log
+        .iter()
+        .map(|e| format!("{}{}", e.action, if e.ok { "" } else { "!" }))
+        .collect();
+    println!("audit -> {actions:?}");
+    assert_eq!(
+        actions,
+        [
+            "user.create",
+            "caps.add",
+            "caps.add",
+            "caps.add!",
+            "caps.remove",
+            "quota.set",
+            "quota.set",
+            "key.create",
+            "key.create",
+            "key.remove",
+            "key.remove",
+            "user.modify",
+            "user.suspend",
+            "user.enable",
+            "user.delete"
+        ]
+    );
+    let dump = format!("{log:?}");
+    for secret in [
+        &first.secret_key,
+        &second.secret_key,
+        &rotated.key.secret_key,
+    ] {
+        assert!(
+            !dump.contains(secret.as_str()),
+            "a secret key reached the audit log"
+        );
+    }
+}
