@@ -4,10 +4,10 @@ export function endpointError(value: string): string | null {
   try {
     url = new URL(value.trim());
   } catch {
-    return "Enter a URL like http://host:7480";
+    return "Nhập URL dạng http://host:7480";
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    return "Endpoint must start with http:// or https://";
+    return "Endpoint phải bắt đầu bằng http:// hoặc https://";
   }
   return null;
 }
