@@ -1,0 +1,6 @@
+BRIEF-*.md
+RESULT*.md
+REVIEW*.md
+.launch-*.sh
+claude-*.log
+*.deb
