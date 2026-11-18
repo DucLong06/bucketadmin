@@ -40,6 +40,9 @@ const ACTIONS = [
   "object.upload",
   "object.delete",
   "object.presign",
+  "version.restore",
+  "version.delete",
+  "acl.set",
 ];
 
 const native = { select: { native: true } };

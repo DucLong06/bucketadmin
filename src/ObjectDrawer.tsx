@@ -1,17 +1,22 @@
 import { type ComponentType, useEffect, useState } from "react";
 import { Box, Button, Divider, Drawer, Stack, Tab, Tabs, TextField, Typography } from "@mui/material";
+import { AclTab } from "./AclEditor";
 import { invoke, type ObjectEntry } from "./api";
 import { formatBytes, shortTime } from "./format";
 import PreviewTab from "./preview/Preview";
 import { MAX_PRESIGN_SECS, presignSeconds, type PresignUnit } from "./presign";
 import type { StartTransfer } from "./transfers";
 import { ConfirmDialog, CopyButton, ErrorAlert, useAction } from "./ui";
+import VersionsTab from "./VersionsTab";
 
 /** What the backend needs to find the object and to know whose key to sign with. */
 export type ObjectAt = { clusterId: string; uid: string; bucket: string; key: string; version?: string | null };
+/** Versioning state of the open bucket; `supported` false hides everything about versions. */
+export type Versioning = { supported: boolean; status: string; reason: string | null };
 export type ObjectTabProps = {
   at: ObjectAt;
   object: ObjectEntry;
+  versioning: Versioning;
   startTransfer: StartTransfer;
   /** The object was changed or removed: the listing should reload. */
   onChanged: () => void;
@@ -154,9 +159,11 @@ function DetailsTab({ at, object, startTransfer, onChanged, onClose }: ObjectTab
   );
 }
 
-const tabs: { label: string; Panel: ComponentType<ObjectTabProps> }[] = [
+const allTabs: { label: string; Panel: ComponentType<ObjectTabProps> }[] = [
   { label: "Xem trước", Panel: PreviewTab },
   { label: "Chi tiết", Panel: DetailsTab },
+  { label: "Versions", Panel: VersionsTab },
+  { label: "ACL", Panel: AclTab },
 ];
 
 type Props = Omit<ObjectTabProps, "at" | "object"> & {
@@ -169,7 +176,8 @@ type Props = Omit<ObjectTabProps, "at" | "object"> & {
 export default function ObjectDrawer({ clusterId, uid, bucket, object, ...rest }: Props) {
   const [tab, setTab] = useState(0);
   useEffect(() => setTab(0), [object?.key]);
-  const Panel = tabs[tab].Panel;
+  const tabs = rest.versioning.supported ? allTabs : allTabs.filter((t) => t.Panel !== VersionsTab);
+  const Panel = (tabs[tab] ?? tabs[0]).Panel;
   return (
     <Drawer anchor="right" open={object !== null} onClose={rest.onClose}>
       {object && (

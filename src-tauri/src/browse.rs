@@ -2,6 +2,7 @@
 //! browsed as. The admin credentials are used for exactly one thing: looking up that key.
 
 use crate::rgw_admin::RgwAdmin;
+use crate::s3::acl::{Acl, AppliedAcl, Grant, VersionEntry, Versioning};
 use crate::s3::parquet::ParquetPage;
 use crate::s3::transfer::{content_type_for, Downloaded};
 use crate::s3::{BucketEntry, Listing, LIST_PAGE, S3};
@@ -314,4 +315,54 @@ pub async fn browse_parquet(
     let s3 = state.session(&at).await?;
     s3.parquet_page(&at.bucket, &at.key, at.version(), offset, limit)
         .await
+}
+
+// ---- versions and ACL ---------------------------------------------------------
+
+/// The bucket's versioning state; `supported = false` tells the UI to hide the feature.
+#[tauri::command]
+pub async fn browse_versioning(state: St<'_>, at: ObjectRef) -> Cmd<Versioning> {
+    Ok(state.session(&at).await?.versioning(&at.bucket).await)
+}
+
+#[tauri::command]
+pub async fn browse_versions(state: St<'_>, at: ObjectRef) -> Cmd<Vec<VersionEntry>> {
+    at.require_key()?;
+    let s3 = state.session(&at).await?;
+    s3.list_versions(&at.bucket, &at.key).await
+}
+
+/// Makes `at.version` the current content of the key again (as a new version).
+#[tauri::command]
+pub async fn browse_restore(state: St<'_>, at: ObjectRef) -> Cmd<()> {
+    at.require_key()?;
+    let version = at.version().ok_or("a version id is required to restore")?;
+    let s3 = state.session(&at).await?;
+    let result = s3.restore_version(&at.bucket, &at.key, version).await;
+    state.audit_s3(&at, "version.restore", "", &result);
+    result
+}
+
+/// ACL of the object, or of the bucket when `at.key` is empty.
+#[tauri::command]
+pub async fn browse_acl_get(state: St<'_>, at: ObjectRef) -> Cmd<Acl> {
+    state.session(&at).await?.get_acl(&at.bucket, &at.key).await
+}
+
+/// Replaces the ACL and reports what reads back afterwards.
+#[tauri::command]
+pub async fn browse_acl_put(state: St<'_>, at: ObjectRef, grants: Vec<Grant>) -> Cmd<AppliedAcl> {
+    let s3 = state.session(&at).await?;
+    let result = s3.put_acl(&at.bucket, &at.key, &grants).await;
+    let listed: Vec<String> = grants
+        .iter()
+        .map(|g| format!("{}:{}={}", g.kind, g.grantee, g.permission))
+        .collect();
+    let verified = result
+        .as_ref()
+        .map(|applied| applied.verified)
+        .unwrap_or(false);
+    let detail = format!("grants={} verified={verified}", listed.join(","));
+    state.audit_s3(&at, "acl.set", &detail, &result);
+    result
 }

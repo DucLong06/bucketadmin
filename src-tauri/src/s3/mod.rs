@@ -2,6 +2,7 @@
 //! The cluster's admin secret is never used here: what this module can see or change is
 //! exactly what that user's key is allowed to.
 
+pub mod acl;
 pub mod parquet;
 pub mod transfer;
 
@@ -60,7 +61,7 @@ pub struct ObjectHead {
     pub version_id: Option<String>,
 }
 
-fn time(t: Option<&DateTime>) -> String {
+pub(crate) fn time(t: Option<&DateTime>) -> String {
     t.and_then(|t| t.fmt(DateTimeFormat::DateTime).ok())
         .unwrap_or_default()
 }

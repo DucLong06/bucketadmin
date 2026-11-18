@@ -4,6 +4,11 @@ import {
   Box,
   Breadcrumbs,
   Button,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   LinearProgress,
   Link,
   List,
@@ -17,7 +22,8 @@ import {
 import { invoke, maskKey, type BrowseBucket, type Listing, type ObjectEntry, type Profile } from "./api";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { formatBytes, shortTime } from "./format";
-import ObjectDrawer from "./ObjectDrawer";
+import AclEditor from "./AclEditor";
+import ObjectDrawer, { type Versioning } from "./ObjectDrawer";
 import { TransferList, useTransfers } from "./transfers";
 import { ClusterSelect, ErrorAlert, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
@@ -32,6 +38,7 @@ type Props = {
 };
 type Session = { uid: string; access_key: string; buckets: BrowseBucket[] };
 type Row = { folder: string } | { object: ObjectEntry };
+const NO_VERSIONING: Versioning = { supported: false, status: "", reason: null };
 
 /** "a/b/c.txt" under prefix "a/b/" is shown as "c.txt". */
 const baseName = (key: string, prefix: string) => key.slice(prefix.length);
@@ -46,6 +53,8 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   const { busy, error, run, setError } = useAction();
   const request = useRef(0);
   const [selected, setSelected] = useState<ObjectEntry | null>(null);
+  const [versioning, setVersioning] = useState<Versioning>(NO_VERSIONING);
+  const [bucketAcl, setBucketAcl] = useState(false);
   const transfers = useTransfers();
   // Where a dropped file goes: read by the drop listener, which outlives renders.
   const here = useRef({ uid: "", bucket: "", prefix: "" });
@@ -93,6 +102,12 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
     if (!session) return;
     const mine = ++request.current;
     if (token === null) {
+      if (toBucket !== bucket) {
+        // Asked once per bucket; a key that may not ask simply gets no Versions tab.
+        setVersioning(NO_VERSIONING);
+        const at = { clusterId, uid: session.uid, bucket: toBucket };
+        invoke<Versioning>("browse_versioning", { at }).then(setVersioning, () => {});
+      }
       setBucket(toBucket);
       setPrefix(toPrefix);
       setListing(null);
@@ -236,6 +251,12 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                       </Link>
                     ))}
                   </Breadcrumbs>
+                  {versioning.supported && (
+                    <Chip size="small" variant="outlined" label={`Versioning: ${versioning.status || "chưa bật"}`} />
+                  )}
+                  <Button size="small" onClick={() => setBucketAcl(true)}>
+                    ACL của bucket
+                  </Button>
                   <Button
                     size="small"
                     variant="contained"
@@ -275,11 +296,21 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
           </Box>
         </Stack>
       )}
+      <Dialog open={bucketAcl} onClose={() => setBucketAcl(false)} maxWidth="md" fullWidth aria-labelledby="bucket-acl-title">
+        <DialogTitle id="bucket-acl-title">ACL của bucket {bucket}</DialogTitle>
+        <DialogContent>
+          {bucketAcl && <AclEditor at={{ clusterId, uid: session?.uid ?? "", bucket, key: "" }} />}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setBucketAcl(false)}>Đóng</Button>
+        </DialogActions>
+      </Dialog>
       <ObjectDrawer
         clusterId={clusterId}
         uid={session?.uid ?? ""}
         bucket={bucket}
         object={selected}
+        versioning={versioning}
         startTransfer={transfers.start}
         onChanged={() => load(bucket, prefix, null)}
         onClose={() => setSelected(null)}

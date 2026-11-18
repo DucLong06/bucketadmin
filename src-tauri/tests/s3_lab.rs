@@ -795,3 +795,312 @@ async fn m4_parquet_ranged_preview() {
 
     admin.delete_user("ba-m4-pq", true).await.expect("cleanup");
 }
+
+/// M4.4: versions (list, read, restore, delete, delete markers) and the ACL editor's calls.
+#[tokio::test]
+async fn m4_versions_and_acl() {
+    use aws_sdk_s3::types::{BucketVersioningStatus, VersioningConfiguration};
+    use bucketadmin_lib::s3::acl::Grant;
+    let Some(admin) = lab() else { return };
+    let bucket = "ba-m4-versions";
+    let (_, owner) = user(&admin, "ba-m4-ver").await;
+    let (_, other) = user(&admin, "ba-m4-ver-other").await;
+    owner
+        .client()
+        .create_bucket()
+        .bucket(bucket)
+        .send()
+        .await
+        .expect("create bucket");
+
+    // ---- before versioning is switched on
+    let state = owner.versioning(bucket).await;
+    println!("versioning (new bucket) -> {state:?}");
+    assert!(state.supported && state.status.is_empty());
+    put(&owner, bucket, "plain.txt", b"only").await.unwrap();
+    let plain = owner
+        .list_versions(bucket, "plain.txt")
+        .await
+        .expect("list_versions");
+    assert_eq!(plain.len(), 1);
+    assert_eq!(
+        (plain[0].version_id.as_str(), plain[0].is_latest),
+        ("null", true)
+    );
+    let denied = other.versioning(bucket).await;
+    println!(
+        "versioning asked by another user -> supported={} reason={:?}",
+        denied.supported, denied.reason
+    );
+    assert!(
+        !denied.supported,
+        "a user who may not ask gets the feature hidden"
+    );
+
+    // ---- versioned key
+    let on = VersioningConfiguration::builder()
+        .status(BucketVersioningStatus::Enabled)
+        .build();
+    owner
+        .client()
+        .put_bucket_versioning()
+        .bucket(bucket)
+        .versioning_configuration(on)
+        .send()
+        .await
+        .expect("enable versioning");
+    assert_eq!(owner.versioning(bucket).await.status, "Enabled");
+    for body in ["v1", "version two", "v3!"] {
+        put(&owner, bucket, "doc.txt", body.as_bytes())
+            .await
+            .unwrap();
+    }
+    put(
+        &owner,
+        bucket,
+        "doc.txt.bak",
+        b"other key with the same prefix",
+    )
+    .await
+    .unwrap();
+    let versions = owner
+        .list_versions(bucket, "doc.txt")
+        .await
+        .expect("list_versions");
+    println!(
+        "versions of doc.txt -> {:?}",
+        versions
+            .iter()
+            .map(|v| (v.size, v.is_latest, v.delete_marker))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        versions.iter().map(|v| v.size).collect::<Vec<_>>(),
+        [3, 11, 2],
+        "newest first, only this key"
+    );
+    assert!(versions[0].is_latest && !versions[1].is_latest);
+    let (v1, v2) = (
+        versions[2].version_id.clone(),
+        versions[1].version_id.clone(),
+    );
+    assert_eq!(
+        owner
+            .read_range(bucket, "doc.txt", Some(&v1), 0, 100)
+            .await
+            .unwrap(),
+        b"v1"
+    );
+
+    // ---- download one version
+    let dir = temp_dir("versions");
+    let got = owner
+        .download(bucket, "doc.txt", Some(&v2), &dir.join("v2.txt"), |_, _| {})
+        .await
+        .expect("download version");
+    assert_eq!(
+        (got.size, std::fs::read(dir.join("v2.txt")).unwrap()),
+        (11, b"version two".to_vec())
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    // ---- restore: the old content becomes a new latest version, nothing is lost
+    owner
+        .restore_version(bucket, "doc.txt", &v1)
+        .await
+        .expect("restore_version");
+    let after = owner.list_versions(bucket, "doc.txt").await.unwrap();
+    assert_eq!(after.len(), 4);
+    assert_eq!(
+        owner
+            .read_range(bucket, "doc.txt", None, 0, 100)
+            .await
+            .unwrap(),
+        b"v1"
+    );
+    println!(
+        "after restore -> {} versions, latest reads {:?}",
+        after.len(),
+        "v1"
+    );
+
+    // ---- delete without a version leaves a delete marker; removing the marker undeletes
+    owner.delete(bucket, "doc.txt", None).await.expect("delete");
+    assert!(
+        owner.head(bucket, "doc.txt", None).await.is_err(),
+        "the key looks deleted"
+    );
+    let marked = owner.list_versions(bucket, "doc.txt").await.unwrap();
+    assert!(
+        marked[0].delete_marker && marked[0].is_latest,
+        "{:?}",
+        marked[0]
+    );
+    assert_eq!(marked.len(), 5);
+    owner
+        .delete(bucket, "doc.txt", Some(&marked[0].version_id))
+        .await
+        .expect("delete the marker");
+    assert_eq!(
+        owner
+            .read_range(bucket, "doc.txt", None, 0, 100)
+            .await
+            .unwrap(),
+        b"v1",
+        "the object is back"
+    );
+
+    // ---- delete one specific version
+    owner
+        .delete(bucket, "doc.txt", Some(&v2))
+        .await
+        .expect("delete version");
+    let left = owner.list_versions(bucket, "doc.txt").await.unwrap();
+    println!(
+        "after deleting one version -> {:?}",
+        left.iter().map(|v| v.size).collect::<Vec<_>>()
+    );
+    assert!(left.iter().all(|v| v.version_id != v2) && left.len() == 3);
+    assert!(owner
+        .read_range(bucket, "doc.txt", Some(&v2), 0, 10)
+        .await
+        .is_err());
+
+    // ---- ACL: read, grant a user, verify by that user's own access, revoke
+    let grant = |kind: &str, grantee: &str, permission: &str| Grant {
+        kind: kind.into(),
+        grantee: grantee.into(),
+        display_name: String::new(),
+        permission: permission.into(),
+    };
+    let acl = owner.get_acl(bucket, "plain.txt").await.expect("get_acl");
+    println!(
+        "object ACL -> owner {} grants {:?}",
+        acl.owner_id,
+        acl.grants
+            .iter()
+            .map(|g| (&g.grantee, &g.permission))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(acl.owner_id, "ba-m4-ver");
+    assert_eq!(acl.grants.len(), 1);
+    assert_eq!(
+        (
+            acl.grants[0].kind.as_str(),
+            acl.grants[0].grantee.as_str(),
+            acl.grants[0].permission.as_str()
+        ),
+        ("user", "ba-m4-ver", "FULL_CONTROL")
+    );
+    assert!(
+        other
+            .read_range(bucket, "plain.txt", None, 0, 10)
+            .await
+            .is_err(),
+        "no access before the grant"
+    );
+
+    let wanted = [
+        grant("user", "ba-m4-ver", "FULL_CONTROL"),
+        grant("user", "ba-m4-ver-other", "READ"),
+    ];
+    let applied = owner
+        .put_acl(bucket, "plain.txt", &wanted)
+        .await
+        .expect("put_acl");
+    println!(
+        "put_acl (+READ for another user) -> verified={} grants={}",
+        applied.verified,
+        applied.acl.grants.len()
+    );
+    assert!(applied.verified && applied.acl.grants.len() == 2);
+    assert_eq!(
+        other
+            .read_range(bucket, "plain.txt", None, 0, 10)
+            .await
+            .unwrap(),
+        b"only",
+        "the grant took effect"
+    );
+    let not_allowed = other
+        .put_acl(bucket, "plain.txt", &wanted)
+        .await
+        .unwrap_err();
+    println!("put_acl by a user with READ only -> {not_allowed}");
+    assert!(
+        not_allowed.starts_with("S3 AccessDenied (403)"),
+        "{not_allowed}"
+    );
+
+    // ---- group AllUsers: anonymous read works, then stops when revoked
+    let http = reqwest::Client::new();
+    let url = format!("{}/{bucket}/plain.txt", endpoint());
+    assert_eq!(http.get(&url).send().await.unwrap().status(), 403);
+    let public = [
+        grant("user", "ba-m4-ver", "FULL_CONTROL"),
+        grant("group", "AllUsers", "READ"),
+    ];
+    let applied = owner
+        .put_acl(bucket, "plain.txt", &public)
+        .await
+        .expect("put_acl public");
+    assert!(applied.verified);
+    assert!(applied
+        .acl
+        .grants
+        .iter()
+        .any(|g| g.kind == "group" && g.grantee == "AllUsers"));
+    let anonymous = http.get(&url).send().await.unwrap().status();
+    println!("anonymous GET with AllUsers=READ -> {anonymous}");
+    assert_eq!(anonymous, 200);
+    assert!(other
+        .read_range(bucket, "plain.txt", None, 0, 10)
+        .await
+        .is_ok());
+    let private = [grant("user", "ba-m4-ver", "FULL_CONTROL")];
+    assert!(
+        owner
+            .put_acl(bucket, "plain.txt", &private)
+            .await
+            .unwrap()
+            .verified
+    );
+    assert_eq!(
+        http.get(&url).send().await.unwrap().status(),
+        403,
+        "revoked"
+    );
+
+    // ---- bucket ACL: READ lets the other user list
+    assert!(other.list(bucket, "", None, 10).await.is_err());
+    let bucket_acl = [
+        grant("user", "ba-m4-ver", "FULL_CONTROL"),
+        grant("user", "ba-m4-ver-other", "READ"),
+    ];
+    let applied = owner
+        .put_acl(bucket, "", &bucket_acl)
+        .await
+        .expect("put bucket acl");
+    assert!(applied.verified);
+    assert!(
+        other.list(bucket, "", None, 10).await.is_ok(),
+        "bucket READ lets the grantee list"
+    );
+    assert!(
+        put(&other, bucket, "nope.txt", b"x").await.is_err(),
+        "READ does not let the grantee write"
+    );
+
+    // ---- invalid grants never reach RGW
+    assert!(owner
+        .put_acl(bucket, "plain.txt", &[grant("user", "ba-m4-ver", "ADMIN")])
+        .await
+        .unwrap_err()
+        .contains("invalid ACL permission"));
+
+    admin
+        .delete_user("ba-m4-ver-other", true)
+        .await
+        .expect("cleanup");
+    admin.delete_user("ba-m4-ver", true).await.expect("cleanup");
+}
