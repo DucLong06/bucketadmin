@@ -20,6 +20,7 @@ import {
 import { invoke, uidOf, type KeyPair, type Profile, type UserInfo } from "./api";
 import CreateUserDialog from "./CreateUserDialog";
 import { SecretDialog, useAction } from "./ui";
+import UserDrawer from "./UserDrawer";
 
 type Props = { profiles: Profile[]; clusterId: string; onClusterChange: (id: string) => void };
 
@@ -29,6 +30,7 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
   const [users, setUsers] = useState<UserInfo[] | null>(null);
   const [filter, setFilter] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
   const [newKeys, setNewKeys] = useState<KeyPair[] | null>(null);
   const { busy, error, run } = useAction();
   const request = useRef(0);
@@ -42,6 +44,7 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
   }
   useEffect(() => {
     setUsers(null);
+    setSelected(null);
     load();
   }, [clusterId]);
 
@@ -49,6 +52,13 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
     setNewKeys(user.keys); // shown once in the dialog, never kept in the table state
     const row = { ...user, keys: user.keys.map((k) => ({ ...k, secret_key: "" })) };
     setUsers((list) => [...(list ?? []), row].sort(byUid));
+  }
+
+  const replaceUser = (user: UserInfo) =>
+    setUsers((list) => (list ?? []).map((u) => (uidOf(u) === uidOf(user) ? user : u)));
+  function onDeleted(uid: string) {
+    setSelected(null);
+    setUsers((list) => (list ?? []).filter((u) => uidOf(u) !== uid));
   }
 
   const needle = filter.trim().toLowerCase();
@@ -107,7 +117,16 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
           <TableBody>
             {shown.map((u) => (
               <TableRow key={uidOf(u)} hover>
-                <TableCell sx={{ fontFamily: "monospace" }}>{uidOf(u)}</TableCell>
+                <TableCell>
+                  <Link
+                    component="button"
+                    sx={{ fontFamily: "monospace" }}
+                    onClick={() => setSelected(uidOf(u))}
+                    aria-label={`Mở chi tiết user ${uidOf(u)}`}
+                  >
+                    {uidOf(u)}
+                  </Link>
+                </TableCell>
                 <TableCell>{u.display_name}</TableCell>
                 <TableCell>
                   {u.suspended ? (
@@ -148,6 +167,13 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
         onCreated={onCreated}
       />
       <SecretDialog keys={newKeys} onClose={() => setNewKeys(null)} />
+      <UserDrawer
+        clusterId={clusterId}
+        user={(users ?? []).find((u) => uidOf(u) === selected) ?? null}
+        onUser={replaceUser}
+        onDeleted={onDeleted}
+        onClose={() => setSelected(null)}
+      />
     </>
   );
 }
