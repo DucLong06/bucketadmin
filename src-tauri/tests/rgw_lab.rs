@@ -854,3 +854,70 @@ async fn m3_usage_range_and_trim() {
         format!("start={start} end={end} records={records}")
     );
 }
+
+// ---- data for scripts/ui-smoke/ui-smoke.sh (the UI itself cannot create buckets) ----
+
+const SMOKE_DATA_UID: &str = "ba-m3-ui-data";
+const SMOKE_PAGING_USERS: usize = 27;
+
+async fn ui_smoke_cleanup(admin: &RgwAdmin) {
+    let _ = admin.delete_user(SMOKE_DATA_UID, true).await;
+    let _ = admin.delete_user("ba-m1-ui", true).await; // the driver's own user, after an aborted run
+    for i in 0..SMOKE_PAGING_USERS {
+        let _ = admin.delete_user(&format!("ba-m3-ui-p{i:02}"), true).await;
+    }
+}
+
+/// One user owning a bucket with an object and a policy plus an empty bucket, and enough
+/// other users for the list to need a second page.
+#[tokio::test]
+#[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
+async fn ui_smoke_fixture_create() {
+    let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
+    ui_smoke_cleanup(&admin).await;
+    let user = admin
+        .create_user(SMOKE_DATA_UID, "UI smoke data", None, None, None)
+        .await
+        .expect("create fixture user");
+    let key = &user.keys[0];
+    assert_eq!(s3(key, "PUT", "/ba-m3-ui-data-bucket", "", b"").await, 200);
+    assert_eq!(
+        s3(
+            key,
+            "PUT",
+            "/ba-m3-ui-data-bucket/report.csv",
+            "",
+            &[b'x'; 2048]
+        )
+        .await,
+        200
+    );
+    let policy = r#"{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["arn:aws:iam:::user/ba-m3-ui-data"]},"Action":["s3:GetObject","s3:ListBucket"],"Resource":["arn:aws:s3:::ba-m3-ui-data-bucket","arn:aws:s3:::ba-m3-ui-data-bucket/*"]}]}"#;
+    let status = s3(
+        key,
+        "PUT",
+        "/ba-m3-ui-data-bucket",
+        "policy=",
+        policy.as_bytes(),
+    )
+    .await;
+    assert!(
+        status == 200 || status == 204,
+        "put bucket policy -> {status}"
+    );
+    assert_eq!(s3(key, "PUT", "/ba-m3-ui-empty", "", b"").await, 200);
+    for i in 0..SMOKE_PAGING_USERS {
+        let uid = format!("ba-m3-ui-p{i:02}");
+        admin
+            .create_user(&uid, "UI smoke paging", None, None, None)
+            .await
+            .expect("create paging user");
+    }
+}
+
+#[tokio::test]
+#[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
+async fn ui_smoke_fixture_remove() {
+    let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
+    ui_smoke_cleanup(&admin).await;
+}

@@ -76,7 +76,15 @@ export default function UserDrawer({ clusterId, user, onUser, onDeleted, onClose
             {!!user.suspended && <Chip size="small" color="warning" label="Suspended" />}
             <Button onClick={onClose}>Đóng</Button>
           </Stack>
-          <Tabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Chi tiết user">
+          <Tabs
+            value={tab}
+            onChange={(_, value) => setTab(value)}
+            aria-label="Chi tiết user"
+            // Seven tabs: narrower than the default so they fit the drawer, scrollable if they still do not.
+            variant="scrollable"
+            scrollButtons="auto"
+            sx={{ "& .MuiTab-root": { minWidth: 0, px: 1.75 } }}
+          >
             {tabs.map((t, i) => (
               <Tab key={t.label} value={i} label={t.label} />
             ))}

@@ -17,6 +17,8 @@ import { ConfirmDialog, ErrorAlert, useAction } from "./ui";
 import { daysAgo, exportName, nextDay, usageCsv, usageRecords, usageRows, usageTotals } from "./usage";
 import type { UserTabProps } from "./UserDrawer";
 
+// Wide enough for the longer of the two labels ("Đến hết ngày (UTC)").
+const dateSx = { minWidth: 200 };
 const dateField = { inputLabel: { shrink: true } };
 
 export default function UsageTab({ clusterId, uid }: UserTabProps) {
@@ -73,6 +75,7 @@ export default function UsageTab({ clusterId, uid }: UserTabProps) {
         <TextField
           label="Từ ngày (UTC)"
           type="date"
+          sx={dateSx}
           value={start}
           onChange={(e) => setStart(e.target.value)}
           size="small"
@@ -81,6 +84,7 @@ export default function UsageTab({ clusterId, uid }: UserTabProps) {
         <TextField
           label="Đến hết ngày (UTC)"
           type="date"
+          sx={dateSx}
           value={end}
           onChange={(e) => setEnd(e.target.value)}
           size="small"
