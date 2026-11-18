@@ -31,6 +31,16 @@ pub struct UserInfo {
     pub user_quota: Option<Quota>,
 }
 
+/// One page of `GET /admin/metadata/user?max-entries=N`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct UserIdPage {
+    pub keys: Vec<String>,
+    pub truncated: bool,
+    /// Opaque continuation token; only present when `truncated`.
+    pub marker: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Subuser {

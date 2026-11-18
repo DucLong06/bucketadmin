@@ -183,7 +183,11 @@ async fn m1_flow_through_ops_is_audited() {
         .expect("create_user");
     let first = created.keys[0].clone();
     assert!(!first.secret_key.is_empty(), "secret is returned on create");
-    let listed = ops.list_users().await.expect("list_users");
+    let listed = ops
+        .list_users_page(None, 1000)
+        .await
+        .expect("list_users")
+        .users;
     let row = listed
         .iter()
         .find(|u| u.user_id == uid)
@@ -483,4 +487,67 @@ async fn m3_delete_user_with_and_without_purge() {
         s3(key, "GET", "/ba-m3-purge-bucket/a.txt", "", b"").await,
         403
     );
+}
+
+/// M3.6: marker-based paging of the user list, with ~30 users.
+#[tokio::test]
+async fn m3_users_pagination() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let uids: Vec<String> = (0..30).map(|i| format!("ba-m3-page-{i:02}")).collect();
+    for uid in &uids {
+        let _ = admin.delete_user(uid, true).await; // leftover from an aborted run
+        admin
+            .create_user(uid, "M3 paging", None, None, None)
+            .await
+            .expect("create_user");
+    }
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+
+    let (mut seen, mut pages, mut marker) = (Vec::new(), 0, None::<String>);
+    loop {
+        let page = ops
+            .list_users_page(marker.as_deref(), 10)
+            .await
+            .expect("list_users_page");
+        pages += 1;
+        assert!(page.users.len() <= 10, "a page never exceeds the limit");
+        assert!(page
+            .users
+            .iter()
+            .all(|u| u.keys.iter().all(|k| k.secret_key.is_empty())));
+        seen.extend(page.users.into_iter().map(|u| u.user_id));
+        marker = page.next_marker;
+        if marker.is_none() {
+            break;
+        }
+        assert!(pages < 50, "paging does not terminate");
+    }
+    println!(
+        "list_users_page limit=10 -> {pages} pages, {} users in total",
+        seen.len()
+    );
+    let mine: Vec<&String> = seen
+        .iter()
+        .filter(|u| u.starts_with("ba-m3-page-"))
+        .collect();
+    assert_eq!(
+        mine.len(),
+        30,
+        "every created user appears exactly once across the pages"
+    );
+    let mut unique = seen.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), seen.len(), "no user is listed twice");
+    assert!(pages >= 4, "30+ users at 10 per page need at least 4 pages");
+
+    for uid in &uids {
+        ops.admin.delete_user(uid, false).await.expect("cleanup");
+    }
 }

@@ -5,7 +5,7 @@ pub mod rgw_admin;
 
 use audit::{Audit, AuditEntry};
 use clusters::{ClusterProfile, ProfileStore};
-use ops::{NewSubuser, Ops, Quotas, RotatedKey};
+use ops::{NewSubuser, Ops, Quotas, RotatedKey, UsersPage};
 use rgw_admin::{
     Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin, Usage,
     UserInfo,
@@ -97,8 +97,14 @@ async fn test_profile(state: St<'_>, id: String) -> Cmd<'_, ClusterInfo> {
 // ---- users ----------------------------------------------------------------
 
 #[tauri::command]
-async fn users_list(state: St<'_>, cluster_id: String) -> Cmd<'_, Vec<UserInfo>> {
-    state.ops(&cluster_id)?.list_users().await
+async fn users_list(
+    state: St<'_>,
+    cluster_id: String,
+    marker: Option<String>,
+    limit: usize,
+) -> Cmd<'_, UsersPage> {
+    let ops = state.ops(&cluster_id)?;
+    ops.list_users_page(marker.as_deref(), limit).await
 }
 
 #[tauri::command]

@@ -5,13 +5,15 @@
 use crate::audit::Audit;
 use crate::rgw_admin::{
     Capability, HttpClient, KeyPair, Quota, QuotaType, ReqwestClient, RgwAdmin, RgwError, Subuser,
-    Usage, UserInfo, UserModify,
+    Usage, UserIdPage, UserInfo, UserModify,
 };
 use futures_util::{stream, StreamExt};
 use serde::Serialize;
 
 /// `get_user` calls in flight while loading the user list.
 const USER_FETCH_CONCURRENCY: usize = 4;
+/// Upper bound for one page of the user list, whatever the caller asks for.
+const MAX_USERS_PAGE: usize = 1000;
 
 pub struct Ops<'a, H = ReqwestClient> {
     pub admin: RgwAdmin<H>,
@@ -31,6 +33,13 @@ pub struct RotatedKey {
     pub key: KeyPair,
     /// Set when the new key exists but the old one could not be removed.
     pub remove_error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UsersPage {
+    pub users: Vec<UserInfo>,
+    /// Pass back to load the next page; `None` on the last page.
+    pub next_marker: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,12 +138,23 @@ impl<H: HttpClient> Ops<'_, H> {
         result
     }
 
-    /// All users with their details, secrets stripped. Not audited (read-only).
-    pub async fn list_users(&self) -> Result<Vec<UserInfo>, String> {
-        let uids = self.admin.list_users().await.map_err(|e| e.to_string())?;
+    /// One page of users with their details, secrets stripped. Not audited (read-only).
+    /// `marker` is the `next_marker` of the previous page; `None` starts from the beginning.
+    pub async fn list_users_page(
+        &self,
+        marker: Option<&str>,
+        limit: usize,
+    ) -> Result<UsersPage, String> {
+        let limit = limit.clamp(1, MAX_USERS_PAGE);
+        let page = self.admin.list_users_page(marker, limit).await;
+        let UserIdPage {
+            keys,
+            truncated,
+            marker,
+        } = page.map_err(|e| e.to_string())?;
         let admin = &self.admin;
         // Owned uid per future: a closure over `&String` is not general enough for a Send future.
-        let fetched: Vec<_> = stream::iter(uids)
+        let fetched: Vec<_> = stream::iter(keys)
             .map(|uid| async move { admin.get_user(&uid).await })
             .buffered(USER_FETCH_CONCURRENCY)
             .collect()
@@ -147,7 +167,10 @@ impl<H: HttpClient> Ops<'_, H> {
                 Err(e) => return Err(e.to_string()),
             }
         }
-        Ok(users)
+        Ok(UsersPage {
+            users,
+            next_marker: marker.filter(|_| truncated),
+        })
     }
 
     pub async fn get_user(&self, uid: &str) -> Result<UserInfo, String> {
@@ -396,7 +419,11 @@ mod tests {
     #[tokio::test]
     async fn list_users_fetches_four_at_a_time_and_strips_secrets() {
         let uids: Vec<String> = (0..10).map(|i| format!("u{i}")).collect();
-        let mut mock = Mock::reply(200, &serde_json::to_string(&uids).unwrap());
+        let first_page = format!(
+            r#"{{"keys":{},"truncated":true,"marker":"M1"}}"#,
+            serde_json::to_string(&uids).unwrap()
+        );
+        let mut mock = Mock::reply(200, &first_page);
         for uid in &uids {
             mock = if uid == "u3" {
                 mock.then(404, r#"{"Code":"NoSuchUser"}"#)
@@ -405,7 +432,9 @@ mod tests {
             };
         }
         let audit = Audit::in_memory().unwrap();
-        let users = ops(&mock, &audit).list_users().await.unwrap();
+        let page = ops(&mock, &audit).list_users_page(None, 10).await.unwrap();
+        assert_eq!(page.next_marker.as_deref(), Some("M1"));
+        let users = page.users;
 
         let listed: Vec<&str> = users.iter().map(|u| u.user_id.as_str()).collect();
         assert_eq!(
@@ -416,14 +445,34 @@ mod tests {
         assert!(!serde_json::to_string(&users).unwrap().contains("TOPSECRET"));
         assert_eq!(mock.max_in_flight.load(SeqCst), USER_FETCH_CONCURRENCY);
         assert_eq!(mock.calls().len(), 11);
+        assert_eq!(
+            mock.calls()[0],
+            "GET /admin/metadata/user?format=json&max-entries=10"
+        );
         assert!(rows(&audit).is_empty(), "reads are not audited");
+
+        // The marker is passed back verbatim; a page that is not truncated ends the listing.
+        let mock = Mock::reply(200, r#"{"keys":[],"truncated":false,"marker":"ignored"}"#);
+        let last = ops(&mock, &audit)
+            .list_users_page(Some("M1"), 5000)
+            .await
+            .unwrap();
+        assert!(last.users.is_empty());
+        assert_eq!(last.next_marker, None);
+        assert_eq!(
+            mock.calls(),
+            ["GET /admin/metadata/user?format=json&marker=M1&max-entries=1000"]
+        );
     }
 
     #[tokio::test]
     async fn list_users_reports_other_errors() {
-        let mock = Mock::reply(200, r#"["u0"]"#).then(403, r#"{"Code":"AccessDenied"}"#);
+        let mock = Mock::reply(200, r#"{"keys":["u0"]}"#).then(403, r#"{"Code":"AccessDenied"}"#);
         let audit = Audit::in_memory().unwrap();
-        let err = ops(&mock, &audit).list_users().await.unwrap_err();
+        let err = ops(&mock, &audit)
+            .list_users_page(None, 10)
+            .await
+            .unwrap_err();
         assert!(err.starts_with("AccessDenied"), "{err}");
     }
 

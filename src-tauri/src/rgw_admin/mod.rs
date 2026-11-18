@@ -229,6 +229,20 @@ impl<H: HttpClient> RgwAdmin<H> {
         self.json("GET", "metadata/user", &[]).await
     }
 
+    /// One page of user ids. RGW has no offset: pass the previous page's `marker` to continue.
+    pub async fn list_users_page(
+        &self,
+        marker: Option<&str>,
+        max_entries: usize,
+    ) -> Result<UserIdPage, RgwError> {
+        let max = max_entries.to_string();
+        let mut params = vec![("max-entries", max.as_str())];
+        if let Some(marker) = marker {
+            params.push(("marker", marker));
+        }
+        self.json("GET", "metadata/user", &params).await
+    }
+
     pub async fn get_user(&self, uid: &str) -> Result<UserInfo, RgwError> {
         self.json("GET", "user", &[("uid", uid)]).await
     }

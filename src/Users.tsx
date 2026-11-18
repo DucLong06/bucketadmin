@@ -23,6 +23,9 @@ import { ErrorAlert, SecretDialog, useAction } from "./ui";
 import UserDrawer from "./UserDrawer";
 
 type Props = { profiles: Profile[]; clusterId: string; onClusterChange: (id: string) => void };
+type UsersPage = { users: UserInfo[]; next_marker: string | null };
+
+const PAGE_SIZE = 25;
 
 const byUid = (a: UserInfo, b: UserInfo) => uidOf(a).localeCompare(uidOf(b));
 
@@ -31,21 +34,30 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
   const [filter, setFilter] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [nextMarker, setNextMarker] = useState<string | null>(null);
   const [newKeys, setNewKeys] = useState<KeyPair[] | null>(null);
   const { busy, error, run } = useAction();
   const request = useRef(0);
 
-  async function load() {
+  // RGW lists users by an opaque marker, not by offset: pages can only be appended in order.
+  async function load(marker: string | null) {
     if (!clusterId) return;
     const mine = ++request.current;
-    const loaded = await run(() => invoke<UserInfo[]>("users_list", { clusterId }));
+    const page = await run(() => invoke<UsersPage>("users_list", { clusterId, marker, limit: PAGE_SIZE }));
     // A slower answer for a cluster the user already left must not overwrite the table.
-    if (mine === request.current) setUsers(loaded ? loaded.sort(byUid) : null);
+    if (mine !== request.current) return;
+    if (!page) {
+      if (marker === null) setUsers(null);
+      return;
+    }
+    setUsers((list) => [...(marker === null ? [] : (list ?? [])), ...page.users].sort(byUid));
+    setNextMarker(page.next_marker);
   }
   useEffect(() => {
     setUsers(null);
+    setNextMarker(null);
     setSelected(null);
-    load();
+    load(null);
   }, [clusterId]);
 
   function onCreated(user: UserInfo) {
@@ -90,7 +102,7 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
         </TextField>
         <TextField label="Tìm theo uid" value={filter} onChange={(e) => setFilter(e.target.value)} size="small" />
         <Box sx={{ flexGrow: 1 }} />
-        <Button onClick={load} disabled={busy}>
+        <Button onClick={() => load(null)} disabled={busy}>
           Làm mới
         </Button>
         <Button variant="contained" onClick={() => setCreateOpen(true)}>
@@ -152,9 +164,17 @@ export default function Users({ profiles, clusterId, onClusterChange }: Props) {
         </Table>
       </TableContainer>
       {users !== null && (
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-          Hiển thị {shown.length}/{users.length} user
-        </Typography>
+        <Stack direction="row" spacing={2} sx={{ mt: 1, alignItems: "center" }}>
+          <Typography variant="body2" color="text.secondary">
+            Hiển thị {shown.length}/{users.length} user đã tải
+            {nextMarker ? " — cluster còn user chưa tải; ô tìm kiếm chỉ lọc trong phần đã tải." : " — đã tải hết."}
+          </Typography>
+          {nextMarker && (
+            <Button size="small" variant="outlined" onClick={() => load(nextMarker)} disabled={busy}>
+              Tải thêm {PAGE_SIZE} user
+            </Button>
+          )}
+        </Stack>
       )}
       <CreateUserDialog
         clusterId={clusterId}
