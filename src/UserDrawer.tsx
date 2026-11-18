@@ -2,6 +2,7 @@ import { type ComponentType, useEffect, useState } from "react";
 import { Alert, Box, Button, Chip, Drawer, Stack, Tab, Tabs, Typography } from "@mui/material";
 import { invoke, uidOf, type UserInfo } from "./api";
 import InfoTab from "./InfoTab";
+import UsageTab from "./UsageTab";
 import QuotaTab from "./QuotaTab";
 import CapsTab from "./CapsTab";
 import KeysTab from "./KeysTab";
@@ -21,6 +22,7 @@ const tabs: { label: string; Panel: ComponentType<UserTabProps> }[] = [
   { label: "Keys", Panel: KeysTab },
   { label: "Caps", Panel: CapsTab },
   { label: "Quota", Panel: QuotaTab },
+  { label: "Usage", Panel: UsageTab },
 ];
 
 type Props = {
