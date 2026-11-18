@@ -149,7 +149,10 @@ async fn user_lifecycle() {
     assert_eq!(fetched.display_name, "renamed");
     assert_eq!(fetched.caps.len(), 1);
 
-    let usage = admin.get_usage(Some(uid)).await.expect("get_usage");
+    let usage = admin
+        .get_usage(Some(uid), None, None)
+        .await
+        .expect("get_usage");
     println!("get_usage -> {usage:?}");
 
     let caps = admin
@@ -234,7 +237,7 @@ async fn m1_flow_through_ops_is_audited() {
     );
     assert!(quotas.bucket.enabled && quotas.bucket.max_size < 0 && quotas.bucket.max_objects == 5);
 
-    let usage = ops.get_usage(uid).await.expect("get_usage");
+    let usage = ops.get_usage(uid, None, None).await.expect("get_usage");
     println!("get_usage -> {usage:?}");
 
     let second = ops.create_key(uid).await.expect("create_key");
@@ -720,4 +723,134 @@ async fn m3_bucket_quota() {
     assert!(log
         .iter()
         .all(|e| e.ok && e.target == bucket && e.detail.starts_with("owner=ba-m3-bq ")));
+}
+
+/// M3.8: usage for a date range, and trim. Real S3 traffic is generated first; whether RGW
+/// reports it depends on `rgw_enable_usage_log` on the cluster, so both outcomes are handled
+/// and the one that happened is printed.
+#[tokio::test]
+async fn m3_usage_range_and_trim() {
+    use bucketadmin_lib::rgw_admin::sigv4::amz_date;
+    use bucketadmin_lib::{audit::Audit, ops::Ops};
+    let Some(admin) = lab() else { return };
+    let (uid, bucket) = ("ba-m3-usage", "ba-m3-usage-data");
+    let _ = admin.delete_user(uid, true).await;
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+    let support = ops.usage_support().await.expect("usage_support");
+    println!("usage_support -> {support:?}");
+    assert!(support.supported, "the lab admin has usage caps");
+
+    let user = ops
+        .create_user(uid, "M3 usage", &None, &None, &None)
+        .await
+        .expect("create_user");
+    let key = &user.keys[0];
+    let path = format!("/{bucket}");
+    assert_eq!(s3(key, "PUT", &path, "", b"").await, 200);
+    assert_eq!(
+        s3(key, "PUT", &format!("{path}/a.txt"), "", b"0123456789").await,
+        200
+    );
+    assert_eq!(
+        s3(key, "PUT", &format!("{path}/b.txt"), "", b"abc").await,
+        200
+    );
+    assert_eq!(s3(key, "GET", &format!("{path}/a.txt"), "", b"").await, 200);
+
+    // [today, tomorrow) in UTC, as the UI sends it for "today".
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let day = |secs: u64| {
+        let d = amz_date(secs);
+        format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..8])
+    };
+    let (start, end) = (day(now), day(now + 86_400));
+
+    // RGW flushes its usage log about every 30 s.
+    let wait: u64 = std::env::var("RGW_USAGE_WAIT_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(45);
+    let mut usage = ops
+        .get_usage(uid, Some(&start), Some(&end))
+        .await
+        .expect("get_usage");
+    let mut waited = 0;
+    while usage.entries.is_empty() && waited < wait {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        waited += 5;
+        usage = ops
+            .get_usage(uid, Some(&start), Some(&end))
+            .await
+            .expect("get_usage");
+    }
+
+    if usage.entries.is_empty() {
+        println!(
+            "USAGE-DATA-MISSING: no usage {waited} s after 4 real S3 requests ({start}..{end}). \
+             The lab RGW is not logging usage (rgw_enable_usage_log); the data assertions were skipped."
+        );
+    } else {
+        let buckets = &usage.entries[0].buckets;
+        let categories: Vec<(&str, u64, u64, u64)> = buckets
+            .iter()
+            .flat_map(|b| &b.categories)
+            .map(|c| (c.category.as_str(), c.ops, c.bytes_sent, c.bytes_received))
+            .collect();
+        println!("get_usage {start}..{end} after {waited} s -> {categories:?}");
+        let ops_of = |name: &str| {
+            categories
+                .iter()
+                .filter(|c| c.0 == name)
+                .map(|c| c.1)
+                .sum::<u64>()
+        };
+        assert_eq!(ops_of("put_obj"), 2, "two object PUTs");
+        assert_eq!(ops_of("get_obj"), 1, "one object GET");
+        assert_eq!(ops_of("create_bucket"), 1);
+        let received: u64 = categories
+            .iter()
+            .filter(|c| c.0 == "put_obj")
+            .map(|c| c.3)
+            .sum();
+        assert_eq!(received, 13, "10 + 3 bytes uploaded");
+        // A range that ends before today has none of it.
+        let earlier = ops
+            .get_usage(uid, Some("2020-01-01"), Some(&start))
+            .await
+            .unwrap();
+        assert!(earlier.entries.is_empty());
+    }
+
+    let records: usize = usage.entries.iter().map(|e| e.buckets.len()).sum();
+    let trimmed = ops.trim_usage(uid, &start, &end).await.expect("trim_usage");
+    println!(
+        "trim_usage {start}..{end} -> {} records removed",
+        trimmed.records
+    );
+    assert_eq!(trimmed.records, records);
+    let after = ops.get_usage(uid, Some(&start), Some(&end)).await.unwrap();
+    assert!(
+        after.entries.is_empty(),
+        "nothing is left in the range after the trim"
+    );
+    assert!(
+        ops.trim_usage(uid, &end, &start).await.is_err(),
+        "reversed range is refused"
+    );
+
+    ops.delete_user(uid, true).await.expect("cleanup");
+    let log = audit.recent(Some("usage.trim"), None).unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(
+        log[0].detail,
+        format!("start={start} end={end} records={records}")
+    );
 }

@@ -1,11 +1,14 @@
 pub mod audit;
 pub mod clusters;
+pub mod export;
 pub mod ops;
 pub mod rgw_admin;
 
 use audit::{Audit, AuditEntry};
 use clusters::{ClusterProfile, ProfileStore};
-use ops::{BucketDetail, NewSubuser, Ops, Quotas, RotatedKey, UsersPage};
+use ops::{
+    BucketDetail, NewSubuser, Ops, Quotas, RotatedKey, TrimmedUsage, UsageSupport, UsersPage,
+};
 use rgw_admin::{
     BucketInfo, Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin,
     Usage, UserInfo,
@@ -263,8 +266,38 @@ async fn quota_set(
 }
 
 #[tauri::command]
-async fn usage_get(state: St<'_>, cluster_id: String, uid: String) -> Cmd<'_, Usage> {
-    state.ops(&cluster_id)?.get_usage(&uid).await
+async fn usage_get(
+    state: St<'_>,
+    cluster_id: String,
+    uid: String,
+    start: Option<String>,
+    end: Option<String>,
+) -> Cmd<'_, Usage> {
+    let ops = state.ops(&cluster_id)?;
+    ops.get_usage(&uid, start.as_deref(), end.as_deref()).await
+}
+
+#[tauri::command]
+async fn usage_trim(
+    state: St<'_>,
+    cluster_id: String,
+    uid: String,
+    start: String,
+    end: String,
+) -> Cmd<'_, TrimmedUsage> {
+    state.ops(&cluster_id)?.trim_usage(&uid, &start, &end).await
+}
+
+#[tauri::command]
+async fn usage_support(state: St<'_>, cluster_id: String) -> Cmd<'_, UsageSupport> {
+    state.ops(&cluster_id)?.usage_support().await
+}
+
+/// Writes an export next to the user's downloads and returns where it went.
+#[tauri::command(async)]
+fn export_save(file_name: String, content: String) -> Cmd<'static, String> {
+    let path = export::save(&export::export_dir()?, &file_name, &content)?;
+    Ok(path.display().to_string())
 }
 
 // ---- buckets --------------------------------------------------------------
@@ -362,6 +395,9 @@ pub fn run() {
             quota_get,
             quota_set,
             usage_get,
+            usage_trim,
+            usage_support,
+            export_save,
             buckets_list,
             bucket_get,
             bucket_delete,

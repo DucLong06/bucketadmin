@@ -36,6 +36,7 @@ const ACTIONS = [
   "quota.set",
   "bucket.quota.set",
   "bucket.delete",
+  "usage.trim",
 ];
 
 const native = { select: { native: true } };

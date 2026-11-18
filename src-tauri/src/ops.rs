@@ -36,6 +36,19 @@ pub struct RotatedKey {
 }
 
 #[derive(Debug, Serialize)]
+pub struct UsageSupport {
+    pub supported: bool,
+    /// Backend error that made the probe conclude "not supported".
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TrimmedUsage {
+    /// Bucket-hour records that were in the range just before the trim.
+    pub records: usize,
+}
+
+#[derive(Debug, Serialize)]
 pub struct BucketDetail {
     pub info: BucketInfo,
     /// The S3 bucket policy as JSON text; `None` when the bucket has none.
@@ -89,6 +102,27 @@ pub fn validate_cap(cap: &str) -> Result<String, String> {
         ));
     }
     Ok(compact)
+}
+
+/// Accepts exactly `YYYY-MM-DD` with a plausible month and day.
+pub fn validate_date(date: &str) -> Result<(), String> {
+    let b = date.as_bytes();
+    let shape_ok = b.len() == 10
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b.iter()
+            .enumerate()
+            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit());
+    let in_range = |from: usize, min: u32, max: u32| {
+        date.get(from..from + 2)
+            .and_then(|s| s.parse::<u32>().ok())
+            .is_some_and(|n| (min..=max).contains(&n))
+    };
+    if shape_ok && in_range(5, 1, 12) && in_range(8, 1, 31) {
+        Ok(())
+    } else {
+        Err(format!("invalid date {date:?}: expected YYYY-MM-DD"))
+    }
 }
 
 /// `access` is RGW's parameter value; anything else is answered with a bare 400 InvalidArgument.
@@ -432,9 +466,78 @@ impl<H: HttpClient> Ops<'_, H> {
         self.record("bucket.delete", bucket, "", result)
     }
 
-    pub async fn get_usage(&self, uid: &str) -> Result<Usage, String> {
-        let usage = self.admin.get_usage(Some(uid)).await;
+    /// Whether this cluster answers usage queries at all. `/admin/info` says nothing about
+    /// features, so this probes the usage endpoint with a tiny range. It cannot tell a cluster
+    /// whose usage log is switched off: that one answers normally, just with no data.
+    pub async fn usage_support(&self) -> Result<UsageSupport, String> {
+        let probe = self
+            .admin
+            .get_usage(None, Some("1970-01-02"), Some("1970-01-03"))
+            .await;
+        match probe {
+            Ok(_) => Ok(UsageSupport {
+                supported: true,
+                reason: None,
+            }),
+            Err(e @ RgwError::AccessDenied)
+            | Err(
+                e @ RgwError::Api {
+                    status: 404 | 405 | 501,
+                    ..
+                },
+            ) => Ok(UsageSupport {
+                supported: false,
+                reason: Some(e.to_string()),
+            }),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// Usage of one user. `start` / `end` are `YYYY-MM-DD` (UTC), `end` exclusive. Read-only.
+    pub async fn get_usage(
+        &self,
+        uid: &str,
+        start: Option<&str>,
+        end: Option<&str>,
+    ) -> Result<Usage, String> {
+        for date in [start, end].into_iter().flatten() {
+            validate_date(date)?;
+        }
+        let usage = self.admin.get_usage(Some(uid), start, end).await;
         usage.map_err(|e| e.to_string())
+    }
+
+    /// Deletes one user's usage records in `[start, end)` and reports how many there were.
+    pub async fn trim_usage(
+        &self,
+        uid: &str,
+        start: &str,
+        end: &str,
+    ) -> Result<TrimmedUsage, String> {
+        // Strict on purpose: RGW ignores a date it cannot parse and treats a missing uid as
+        // "all users", either of which would delete far more than was asked for.
+        if uid.trim().is_empty() {
+            return Err("uid is required to trim usage".into());
+        }
+        validate_date(start)?;
+        validate_date(end)?;
+        if start >= end {
+            return Err(format!("usage range is empty: {start} is not before {end}"));
+        }
+        let before = self
+            .admin
+            .get_usage(Some(uid), Some(start), Some(end))
+            .await;
+        let records = before
+            .map_err(|e| e.to_string())?
+            .entries
+            .iter()
+            .map(|entry| entry.buckets.len())
+            .sum();
+        let detail = format!("start={start} end={end} records={records}");
+        let result = self.admin.trim_usage(uid, start, end).await;
+        self.record("usage.trim", uid, &detail, result)?;
+        Ok(TrimmedUsage { records })
     }
 }
 
@@ -928,6 +1031,116 @@ mod tests {
                 true
             )]
         );
+    }
+
+    #[tokio::test]
+    async fn usage_dates_are_validated_and_trim_is_counted_and_audited() {
+        let two_records = r#"{"entries":[{"user":"alice","buckets":[
+            {"bucket":"a","time":"2026-11-18T13:00:00.000000Z","categories":[{"category":"put_obj","ops":2,"successful_ops":2}]},
+            {"bucket":"a","time":"2026-11-18T14:00:00.000000Z","categories":[{"category":"get_obj","ops":1,"successful_ops":1}]}]}],"summary":[]}"#;
+        let mock = Mock::reply(200, two_records)
+            .then(200, two_records)
+            .then(200, "");
+        let audit = Audit::in_memory().unwrap();
+        let ops = ops(&mock, &audit);
+
+        // Nothing malformed reaches RGW, which would ignore it and widen the range.
+        assert!(ops
+            .get_usage("alice", Some("18/11/2026"), None)
+            .await
+            .is_err());
+        assert!(ops
+            .trim_usage("alice", "2026-11-18", "not-a-date")
+            .await
+            .is_err());
+        assert!(ops
+            .trim_usage("alice", "2026-11-19", "2026-11-18")
+            .await
+            .is_err());
+        assert!(ops
+            .trim_usage("alice", "2026-11-18", "2026-11-18")
+            .await
+            .is_err());
+        assert!(ops
+            .trim_usage(" ", "2026-11-18", "2026-11-19")
+            .await
+            .is_err());
+        assert!(mock.calls().is_empty());
+
+        let usage = ops
+            .get_usage("alice", Some("2026-11-18"), Some("2026-11-19"))
+            .await
+            .unwrap();
+        assert_eq!(usage.entries[0].buckets.len(), 2);
+        let trimmed = ops
+            .trim_usage("alice", "2026-11-18", "2026-11-19")
+            .await
+            .unwrap();
+        assert_eq!(trimmed.records, 2);
+        assert_eq!(
+            mock.calls()[1..],
+            [
+                "GET /admin/usage?end=2026-11-19&format=json&start=2026-11-18&uid=alice",
+                "DELETE /admin/usage?end=2026-11-19&format=json&start=2026-11-18&uid=alice",
+            ]
+        );
+        assert_eq!(
+            rows(&audit),
+            [(
+                "usage.trim".into(),
+                "alice".into(),
+                "start=2026-11-18 end=2026-11-19 records=2".into(),
+                true
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn usage_support_probe() {
+        let audit = Audit::in_memory().unwrap();
+        let mock = Mock::reply(200, r#"{"entries":[],"summary":[]}"#);
+        let support = ops(&mock, &audit).usage_support().await.unwrap();
+        assert!(support.supported && support.reason.is_none());
+        assert_eq!(
+            mock.calls(),
+            ["GET /admin/usage?end=1970-01-03&format=json&start=1970-01-02"]
+        );
+
+        for (status, body) in [
+            (403, r#"{"Code":"AccessDenied"}"#),
+            (405, r#"{"Code":"MethodNotAllowed"}"#),
+            (404, ""),
+        ] {
+            let mock = Mock::reply(status, body);
+            let support = ops(&mock, &audit).usage_support().await.unwrap();
+            assert!(!support.supported, "HTTP {status} means: hide usage");
+            assert!(support.reason.is_some());
+        }
+        // A cluster that cannot be reached is an error, not "unsupported".
+        let mock = Mock::default();
+        assert!(ops(&mock, &audit).usage_support().await.is_err());
+        let mock = Mock::reply(500, r#"{"Code":"InternalError"}"#);
+        assert!(ops(&mock, &audit).usage_support().await.is_err());
+    }
+
+    #[test]
+    fn date_format_is_strict() {
+        for good in ["2026-11-18", "1970-01-02", "2028-02-29"] {
+            assert!(validate_date(good).is_ok(), "{good}");
+        }
+        for bad in [
+            "",
+            "2026-11-8",
+            "2026-13-01",
+            "2026-00-10",
+            "2026-11-32",
+            "18-11-2026",
+            "2026/11/18",
+            "2026-11-18 00:00:00",
+            "not-a-date",
+        ] {
+            assert!(validate_date(bad).is_err(), "{bad:?} should be rejected");
+        }
     }
 
     #[test]

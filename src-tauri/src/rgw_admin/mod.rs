@@ -456,9 +456,27 @@ impl<H: HttpClient> RgwAdmin<H> {
     }
 
     /// `GET /admin/usage` (caps: usage=read); `uid = None` covers all users.
-    pub async fn get_usage(&self, uid: Option<&str>) -> Result<Usage, RgwError> {
-        let params: Vec<(&str, &str)> = uid.map(|u| ("uid", u)).into_iter().collect();
+    /// `start` / `end` are `YYYY-MM-DD[ HH:MM:SS]` in UTC, `end` exclusive. RGW answers an empty
+    /// result, not an error, when its usage log is switched off (`rgw_enable_usage_log`).
+    pub async fn get_usage(
+        &self,
+        uid: Option<&str>,
+        start: Option<&str>,
+        end: Option<&str>,
+    ) -> Result<Usage, RgwError> {
+        let optional = [("uid", uid), ("start", start), ("end", end)];
+        let params: Vec<(&str, &str)> = optional
+            .iter()
+            .filter_map(|(k, v)| v.map(|v| (*k, v)))
+            .collect();
         self.json("GET", "usage", &params).await
+    }
+
+    /// `DELETE /admin/usage` (caps: usage=write) for one user and an explicit range.
+    /// The all-users form (`remove-all`) is deliberately not offered.
+    pub async fn trim_usage(&self, uid: &str, start: &str, end: &str) -> Result<(), RgwError> {
+        let params = [("uid", uid), ("start", start), ("end", end)];
+        self.send("DELETE", "usage", &params).await.map(|_| ())
     }
 }
 
@@ -681,7 +699,11 @@ mod tests {
                  "categories":[{"category":"put_obj","bytes_sent":0,"bytes_received":10,"ops":2,"successful_ops":1}]}]}],
                 "summary":[{"user":"u1","categories":[],"total":{"bytes_sent":0,"bytes_received":10,"ops":2,"successful_ops":1}}]}"#,
         );
-        let usage = mock.client().get_usage(Some("u1")).await.unwrap();
+        let usage = mock
+            .client()
+            .get_usage(Some("u1"), None, None)
+            .await
+            .unwrap();
         assert_eq!(
             usage.entries[0].buckets[0].categories[0].category,
             "put_obj"
@@ -900,5 +922,28 @@ mod tests {
             ..info
         };
         assert_eq!(tenanted.key(), "acme/photos");
+    }
+
+    #[tokio::test]
+    async fn usage_range_and_trim() {
+        let mock = Mock::reply(200, r#"{"entries":[],"summary":[]}"#);
+        mock.client()
+            .get_usage(Some("u1"), Some("2026-11-01"), Some("2026-11-19"))
+            .await
+            .unwrap();
+        assert_eq!(
+            mock.calls(),
+            ["GET /admin/usage?end=2026-11-19&format=json&start=2026-11-01&uid=u1"]
+        );
+
+        let mock = Mock::reply(200, "");
+        mock.client()
+            .trim_usage("u1", "2026-11-01", "2026-11-19")
+            .await
+            .unwrap();
+        assert_eq!(
+            mock.calls(),
+            ["DELETE /admin/usage?end=2026-11-19&format=json&start=2026-11-01&uid=u1"]
+        );
     }
 }
