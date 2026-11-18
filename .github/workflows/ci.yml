@@ -29,6 +29,9 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: No CJK characters in sources
+        run: python3 scripts/check-no-cjk.py
+
       - run: npm ci
       - run: npm test
       # Must run before cargo: tauri::generate_context! embeds ../dist at compile time.
