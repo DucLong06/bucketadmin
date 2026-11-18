@@ -12,6 +12,7 @@ import {
   createTheme,
 } from "@mui/material";
 import { invoke, type Profile } from "./api";
+import Audit from "./Audit";
 import Clusters from "./Clusters";
 import Users from "./Users";
 
@@ -46,6 +47,7 @@ export default function App() {
           <Tabs value={page} onChange={(_, value) => setPage(value)} aria-label="Điều hướng chính">
             <Tab value="users" label="Users" />
             <Tab value="clusters" label="Clusters" />
+            <Tab value="audit" label="Audit" />
           </Tabs>
         </Toolbar>
       </AppBar>
@@ -53,6 +55,7 @@ export default function App() {
         {error && <Alert severity="error">{error}</Alert>}
         {page === "users" && <Users profiles={profiles} clusterId={clusterId} onClusterChange={setClusterId} />}
         {page === "clusters" && <Clusters profiles={profiles} onChanged={reload} />}
+        {page === "audit" && <Audit profiles={profiles} />}
       </Container>
     </ThemeProvider>
   );
