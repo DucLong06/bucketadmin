@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod clusters;
 pub mod rgw_admin;
 

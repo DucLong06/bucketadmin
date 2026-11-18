@@ -62,15 +62,18 @@ pub struct ProfileStore<S = Keychain> {
     lock: Mutex<()>,
 }
 
+/// `$XDG_DATA_HOME/bucketadmin`, i.e. `~/.local/share/bucketadmin` by default.
+pub fn data_dir() -> Result<PathBuf, String> {
+    let base = match std::env::var_os("XDG_DATA_HOME").map(PathBuf::from) {
+        Some(p) if p.is_absolute() => p,
+        _ => PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?).join(".local/share"),
+    };
+    Ok(base.join("bucketadmin"))
+}
+
 impl ProfileStore<Keychain> {
-    /// `$XDG_DATA_HOME/bucketadmin`, i.e. `~/.local/share/bucketadmin` by default.
     pub fn open_default() -> Result<Self, String> {
-        let base = match std::env::var_os("XDG_DATA_HOME").map(PathBuf::from) {
-            Some(p) if p.is_absolute() => p,
-            _ => PathBuf::from(std::env::var_os("HOME").ok_or("HOME is not set")?)
-                .join(".local/share"),
-        };
-        Ok(Self::new(base.join("bucketadmin"), Keychain))
+        Ok(Self::new(data_dir()?, Keychain))
     }
 }
 
