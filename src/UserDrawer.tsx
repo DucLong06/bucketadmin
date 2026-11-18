@@ -2,6 +2,7 @@ import { type ComponentType, useEffect, useState } from "react";
 import { Alert, Box, Button, Chip, Drawer, Stack, Tab, Tabs, Typography } from "@mui/material";
 import { invoke, uidOf, type UserInfo } from "./api";
 import InfoTab from "./InfoTab";
+import KeysTab from "./KeysTab";
 
 export type UserTabProps = {
   clusterId: string;
@@ -15,6 +16,7 @@ export type UserTabProps = {
 
 const tabs: { label: string; Panel: ComponentType<UserTabProps> }[] = [
   { label: "Thông tin", Panel: InfoTab },
+  { label: "Keys", Panel: KeysTab },
 ];
 
 type Props = {
