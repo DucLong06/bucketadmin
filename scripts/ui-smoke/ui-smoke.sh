@@ -62,3 +62,12 @@ raw = open(db, "rb").read()
 print("admin secret key in audit.db:", raw.count(os.environ["RGW_SECRET_KEY"].encode()), "occurrences")
 PY
 echo "== app stdout/stderr (libEGL noise filtered)"; grep -v 'libEGL\|DRI3' /tmp/ba-m1/app.log
+# The driver ends with a banner in the bottom-left corner: green = every step passed, red = a step failed.
+python3 - <<'PY'
+import sys
+from PIL import Image
+r, g, b = Image.open("/tmp/ba-m1/99-final.png").convert("RGB").getpixel((4, 794))
+verdict = "DONE" if (g > 200 and r < 200) else "ERROR" if (r > 200 and g < 200) else "NO BANNER (driver did not finish)"
+print("== driver verdict:", verdict)
+sys.exit(0 if verdict == "DONE" else 1)
+PY
