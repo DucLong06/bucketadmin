@@ -4,3 +4,7 @@ REVIEW*.md
 .launch-*.sh
 claude-*.log
 *.deb
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
