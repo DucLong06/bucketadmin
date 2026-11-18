@@ -10,7 +10,8 @@ mkdir -p /tmp/ba-m1
 export XDG_DATA_HOME=/tmp/ba-m1/data
 rm -rf /tmp/ba-m1/data
 rm -f /tmp/ba-m1/*.png
-export STEP=5000 UID_T=ba-m1-ui
+# One slot per screenshot; long enough for the slowest step even when the lab is slow.
+export STEP=8000 UID_T=ba-m1-ui
 export NAMES="01-users-no-cluster 02-clusters 03-users 04-create-user 05-secret-once - 06-users-filter 07-drawer-info 08-suspend-confirm 09-keys 10-rotate-secret 11-caps 12-quota 13-usage-empty 14-audit 15-audit-filter 16-delete-confirm 17-users-after-delete 18-clusters-removed"
 export START=$(( $(date +%s%3N) + 15000 ))
 shot() {
@@ -62,12 +63,20 @@ raw = open(db, "rb").read()
 print("admin secret key in audit.db:", raw.count(os.environ["RGW_SECRET_KEY"].encode()), "occurrences")
 PY
 echo "== app stdout/stderr (libEGL noise filtered)"; grep -v 'libEGL\|DRI3' /tmp/ba-m1/app.log
-# The driver ends with a banner in the bottom-left corner: green = every step passed, red = a step failed.
+# The driver ends with a banner in the bottom-left corner: green = every step passed in time,
+# orange = all steps passed but some finished after their screenshot was taken, red = a step failed.
 python3 - <<'PY'
 import sys
 from PIL import Image
 r, g, b = Image.open("/tmp/ba-m1/99-final.png").convert("RGB").getpixel((4, 794))
-verdict = "DONE" if (g > 200 and r < 200) else "ERROR" if (r > 200 and g < 200) else "NO BANNER (driver did not finish)"
+if g > 240 and r < 200:
+    verdict, code = "DONE", 0
+elif r > 240 and 180 <= g <= 230:
+    verdict, code = "DONE, BUT LATE: some screenshots were taken before their step finished (see the banner in 99-final.png)", 2
+elif r > 240:
+    verdict, code = "ERROR (see the banner in 99-final.png)", 1
+else:
+    verdict, code = "NO BANNER (driver did not finish)", 1
 print("== driver verdict:", verdict)
-sys.exit(0 if verdict == "DONE" else 1)
+sys.exit(code)
 PY

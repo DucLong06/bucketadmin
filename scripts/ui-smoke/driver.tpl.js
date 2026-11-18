@@ -6,11 +6,11 @@
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const late = [];
   let n = 0;
-  function banner(text, ok) {
+  function banner(text, color) {
     const d = document.getElementById("smoke-banner") ?? document.body.appendChild(document.createElement("div"));
     d.id = "smoke-banner";
     d.textContent = text;
-    d.style.cssText = "position:fixed;left:0;bottom:0;z-index:99999;padding:4px 8px;font:12px monospace;color:#000;background:" + (ok ? "#8f8" : "#f88");
+    d.style.cssText = "position:fixed;left:0;bottom:0;z-index:99999;padding:4px 8px;font:12px monospace;color:#000;background:" + color;
   }
   // Holds the current screen until slot n ends; the shell photographs it 700 ms before that.
   async function shot(name) {
@@ -178,9 +178,9 @@
     await click("Clusters");
     await clickSel('[aria-label="Xoá cluster lab"]');
     await waitFor(() => hasText("Chưa có cluster nào."), "cluster removed");
-    banner(`SMOKE DONE: ${n + 1} slots, late: [${late.join(", ")}]`, true);
+    banner(`SMOKE DONE: ${n + 1} slots, late: [${late.join(", ")}]`, late.length ? "#fc6" : "#8f8");
     await shot("18-clusters-removed");
   } catch (e) {
-    banner(`SMOKE ERROR in slot ${n} (${NAMES[n]}): ${e.message}`, false);
+    banner(`SMOKE ERROR in slot ${n} (${NAMES[n]}): ${e.message}`, "#f88");
   }
 })();
