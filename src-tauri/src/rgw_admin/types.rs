@@ -66,7 +66,8 @@ pub struct Quota {
     pub max_objects: i64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum QuotaType {
     User,
     Bucket,
