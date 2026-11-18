@@ -56,7 +56,7 @@
 | Caps sai → API 403 | Test matrix caps cho từng endpoint ở Phase 1; ghi rõ README cần caps nào |
 | Ceph version cũ thiếu endpoint (usage, account) | Feature-detect qua `/admin/info`, ẩn feature không hỗ trợ |
 | Preview parquet schema phức tạp (nested) | v1: flat + list columns, nested hiển thị JSON của cell |
-| Proxy công ty | Tauri HTTP qua proxy env; test qua proxy-noi-bo:80 |
+| Proxy công ty | Tauri HTTP qua proxy env; test qua proxy nội bộ khi build |
 
 ## Definition of Done (v1)
 
