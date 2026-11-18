@@ -1,3 +1,4 @@
+pub mod clusters;
 pub mod rgw_admin;
 
 pub fn run() {
