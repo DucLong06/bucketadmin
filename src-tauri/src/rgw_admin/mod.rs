@@ -9,6 +9,7 @@ mod types;
 pub use sigv4::Credentials;
 pub use types::*;
 
+use crate::settings::Proxy;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use std::future::Future;
@@ -74,8 +75,14 @@ pub trait HttpClient: Send + Sync {
 pub struct ReqwestClient(reqwest::Client);
 
 impl ReqwestClient {
+    /// A client that follows the proxy variables of the environment.
     pub fn new() -> Result<Self, RgwError> {
-        reqwest::Client::builder()
+        Self::with_proxy(&Proxy::Auto)
+    }
+
+    pub fn with_proxy(proxy: &Proxy) -> Result<Self, RgwError> {
+        let builder = proxy.reqwest().map_err(RgwError::Transport)?;
+        builder
             .timeout(Duration::from_secs(30))
             .build()
             .map(Self)

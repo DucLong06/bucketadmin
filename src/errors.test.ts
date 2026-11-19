@@ -29,7 +29,7 @@ test("404 without a known code, unknown codes and bare statuses", () => {
   const unknown = explain("RGW returned HTTP 503 SlowDown please retry");
   expect(unknown.message).toBe("RGW báo lỗi HTTP 503 (SlowDown).");
   expect(unknown.code).toBe("SlowDown");
-  expect(explain("RGW returned HTTP 502  <html>Bad Gateway</html>").message).toBe("RGW báo lỗi HTTP 502.");
+  expect(explain("RGW returned HTTP 500  <html>Internal Server Error</html>").message).toBe("RGW báo lỗi HTTP 500.");
 });
 
 test("network failures: timeout is told apart from connection errors", () => {
@@ -74,4 +74,15 @@ test("a refusal tagged with caps names them and keeps the original text", () => 
   expect(e.detail).toBe(raw);
   // Untagged, as before M6: no caps to name.
   expect(explain("AccessDenied (403): the admin user lacks the caps for this operation").caps).toBeUndefined();
+});
+
+test("answers a proxy usually gives point at the proxy setting; a bad proxy URL is named", () => {
+  // Exactly what the Admin Ops and S3 clients report when a proxy answers 502 for a private endpoint.
+  const admin = explain("RGW returned HTTP 502  ");
+  expect(admin.message).toMatch(/^RGW báo lỗi HTTP 502\. Lỗi này thường do proxy/);
+  expect(admin.message).toMatch(/Không dùng proxy/);
+  expect(explain("S3 HTTP502 (502): no error document").message).toMatch(/^S3 báo lỗi HTTP 502 \(HTTP502\)\. Lỗi này thường do proxy/);
+  expect(explain("RGW returned HTTP 407  ").message).toMatch(/proxy/);
+  expect(explain("RGW returned HTTP 500  ").message).toBe("RGW báo lỗi HTTP 500.");
+  expect(explain('invalid proxy URL "nope": expected http://host:port').message).toBe("URL proxy không hợp lệ: cần dạng http://host:port.");
 });

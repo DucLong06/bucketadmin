@@ -11,6 +11,7 @@ use crate::s3::parquet::ParquetPage;
 use crate::s3::search::SearchResult;
 use crate::s3::transfer::{content_type_for, Cancel, Downloaded};
 use crate::s3::{BucketEntry, Listing, ObjectHead, LIST_PAGE, S3};
+use crate::settings::Proxy;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -26,6 +27,14 @@ type St<'a> = State<'a, AppState>;
 /// The empty uid is the session of the personal key ("my own key").
 #[derive(Default)]
 pub struct Sessions(Mutex<HashMap<(String, String), S3>>);
+
+impl Sessions {
+    pub(crate) fn clear(&self) {
+        if let Ok(mut sessions) = self.0.lock() {
+            sessions.clear();
+        }
+    }
+}
 
 /// Cancel flags of the transfers in flight, by the id the UI gave them.
 #[derive(Default)]
@@ -55,10 +64,11 @@ pub async fn connect<S: SecretStore, H: HttpClient>(
     http: H,
     cluster_id: &str,
     uid: &str,
+    proxy: &Proxy,
 ) -> Result<S3, String> {
     if uid.is_empty() {
         let (endpoint, mine) = profiles.browse_credentials(cluster_id)?;
-        return Ok(S3::new(&endpoint, &mine.access_key, &mine.secret_key));
+        return S3::with_proxy(&endpoint, &mine.access_key, &mine.secret_key, proxy);
     }
     let (endpoint, admin_creds) = profiles.credentials(cluster_id)?;
     let admin = RgwAdmin::new(&endpoint, admin_creds, http).map_err(|e| e.to_string())?;
@@ -69,7 +79,7 @@ pub async fn connect<S: SecretStore, H: HttpClient>(
         .keys
         .first()
         .ok_or_else(|| format!("user {uid} has no S3 key to browse with"))?;
-    Ok(S3::new(&endpoint, &key.access_key, &key.secret_key))
+    S3::with_proxy(&endpoint, &key.access_key, &key.secret_key, proxy)
 }
 
 /// What a command acts on, and as whom (`uid` empty: with the caller's own saved key).
@@ -109,7 +119,9 @@ impl AppState {
                 return Ok(s3.clone());
             }
         }
-        let s3 = connect(&self.profiles, self.http.clone(), cluster_id, uid).await?;
+        let proxy = self.proxy_of(cluster_id)?;
+        let http = self.http(&proxy)?;
+        let s3 = connect(&self.profiles, http, cluster_id, uid, &proxy).await?;
         let mut sessions = self.browse.0.lock().map_err(|e| e.to_string())?;
         sessions.insert(cache_key, s3.clone());
         Ok(s3)
@@ -700,17 +712,23 @@ mod tests {
         let p = store.add("lab", admin_endpoint, "AK", "SK").unwrap();
 
         let none = Mock::default();
-        let err = connect(&store, &none, &p.id, "").await.err().unwrap();
+        let auto = Proxy::Auto;
+        let err = connect(&store, &none, &p.id, "", &auto)
+            .await
+            .err()
+            .unwrap();
         assert_eq!(err, "no personal key saved for this cluster");
         store.set_browse_key(&p.id, "AKMINE", "my-secret").unwrap();
-        let s3 = connect(&store, &none, &p.id, "").await.unwrap();
+        let s3 = connect(&store, &none, &p.id, "", &auto).await.unwrap();
         assert_eq!(s3.access_key(), "AKMINE");
         assert_eq!(none.calls(), [] as [&str; 0], "own key: no Admin API call");
 
         // Browsing as another user is the one case that asks the Admin API (for that key).
         let user = r#"{"user_id":"alice","keys":[{"user":"alice","access_key":"AKALICE","secret_key":"s"}]}"#;
         let lookup = Mock::reply(200, user);
-        let s3 = connect(&store, &lookup, &p.id, "alice").await.unwrap();
+        let s3 = connect(&store, &lookup, &p.id, "alice", &auto)
+            .await
+            .unwrap();
         assert_eq!(s3.access_key(), "AKALICE");
         assert_eq!(lookup.calls(), ["GET /admin/user?format=json&uid=alice"]);
         std::fs::remove_dir_all(dir).unwrap();

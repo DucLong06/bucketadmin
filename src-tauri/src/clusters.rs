@@ -2,6 +2,7 @@
 //! only in the OS keychain (Secret Service on Linux), never on disk.
 
 use crate::rgw_admin::{parse_endpoint, Credentials};
+use crate::settings::Proxy;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -23,6 +24,9 @@ pub struct ClusterProfile {
     /// and never calls the Admin API for this profile.
     #[serde(default)]
     pub plain_user: bool,
+    /// This cluster's own proxy choice; absent = follow the app-wide setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<Proxy>,
 }
 
 /// Where secret keys go. The app uses [`Keychain`]; tests use an in-memory map.
@@ -145,6 +149,7 @@ impl<S: SecretStore> ProfileStore<S> {
             access_key: access_key.into(),
             browse_access_key: None,
             plain_user: false,
+            proxy: None,
         })?;
         let _guard = self.lock.lock().map_err(|e| e.to_string())?;
         let mut profiles = self.read()?;
@@ -214,6 +219,20 @@ impl<S: SecretStore> ProfileStore<S> {
             profile.plain_user = plain;
             Ok(())
         })
+    }
+
+    /// Sets this cluster's own proxy choice, or (`None`) puts it back on the app-wide setting.
+    pub fn set_proxy(&self, id: &str, proxy: Option<Proxy>) -> Result<ClusterProfile, String> {
+        let proxy = proxy.map(Proxy::validated).transpose()?;
+        self.change(id, |profile| {
+            profile.proxy = proxy;
+            Ok(())
+        })
+    }
+
+    /// The cluster's own proxy choice, if it has one.
+    pub fn proxy(&self, id: &str) -> Result<Option<Proxy>, String> {
+        Ok(self.find(id)?.proxy)
     }
 
     /// Forgets the personal key: the keychain entry and its access key in the profile.
@@ -386,10 +405,45 @@ pub(crate) mod tests {
             access_key: "AK".into(),
             browse_access_key: None,
             plain_user: false,
+            proxy: None,
         };
         assert!(store.update(ghost, Some("SK")).is_err());
         assert!(secrets.0.lock().unwrap().is_empty());
         assert!(!dir.join("profiles.json").exists());
+    }
+
+    #[test]
+    fn a_profile_can_override_the_proxy_and_go_back_to_the_shared_setting() {
+        let dir = temp_dir("proxy");
+        let secrets = MemorySecrets::default();
+        let store = ProfileStore::new(dir.clone(), &secrets);
+        let p = store.add("lab", "http://h:1", "AK", "SK").unwrap();
+        assert_eq!(store.proxy(&p.id).unwrap(), None);
+        let file = || std::fs::read_to_string(dir.join("profiles.json")).unwrap();
+        assert!(!file().contains("proxy"), "no override, nothing written");
+
+        let saved = store.set_proxy(&p.id, Some(Proxy::None)).unwrap();
+        assert_eq!(saved.proxy, Some(Proxy::None));
+        assert!(file().contains(r#""mode": "none""#));
+        let custom = Proxy::Custom {
+            url: " http://proxy.example:3128 ".into(),
+        };
+        store.set_proxy(&p.id, Some(custom)).unwrap();
+        let trimmed = Proxy::Custom {
+            url: "http://proxy.example:3128".into(),
+        };
+        assert_eq!(store.proxy(&p.id).unwrap(), Some(trimmed.clone()));
+        let junk = Proxy::Custom { url: "nope".into() };
+        assert!(store.set_proxy(&p.id, Some(junk)).is_err());
+        assert_eq!(
+            store.proxy(&p.id).unwrap(),
+            Some(trimmed),
+            "a refused URL changes nothing"
+        );
+        store.set_proxy(&p.id, None).unwrap();
+        assert_eq!(store.proxy(&p.id).unwrap(), None);
+        assert!(store.set_proxy("missing", None).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

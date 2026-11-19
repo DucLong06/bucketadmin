@@ -1,7 +1,8 @@
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { Alert, Button, Checkbox, FormControlLabel, Paper, Stack, TextField, Typography } from "@mui/material";
-import { invoke, maskKey, type ClusterInfo, type Profile } from "./api";
+import { invoke, isInternal, maskKey, type ClusterInfo, type EndpointKind, type Profile, type Proxy } from "./api";
 import { endpointError } from "./endpoint";
+import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
 import { ErrorAlert } from "./ui";
 
 type Outcome = { severity: "success" | "warning" | "error"; text: string };
@@ -10,6 +11,63 @@ const outcomeAlert = (o: Outcome, sx?: object) =>
   o.severity === "error" ? <ErrorAlert error={o.text} sx={sx} /> : <Alert severity={o.severity} sx={sx}>{o.text}</Alert>;
 
 const emptyForm = { label: "", endpoint: "", accessKey: "", secretKey: "" };
+const NO_PROXY: Proxy = { mode: "none" };
+const INTERNAL_HINT =
+  'Endpoint này nằm trong mạng nội bộ (địa chỉ private hoặc tên chỉ DNS nội bộ biết): proxy thường không tới được. Nên chọn "Không dùng proxy".';
+
+/** Asks the backend what the endpoint looks like; null while unknown, invalid or not asked. */
+function useEndpointKind(endpoint: string, wanted: boolean): EndpointKind | null {
+  const [kind, setKind] = useState<EndpointKind | null>(null);
+  useEffect(() => {
+    setKind(null);
+    if (!wanted || !endpoint || endpointError(endpoint)) return;
+    let stale = false;
+    // Typing: wait for a pause before resolving the name.
+    const timer = setTimeout(() => {
+      invoke<EndpointKind>("endpoint_kind", { endpoint }).then(
+        (answer) => stale || setKind(answer),
+        () => {},
+      );
+    }, 400);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [endpoint, wanted]);
+  return kind;
+}
+
+/** One saved cluster's own proxy choice: saved with a button, with the "no proxy" hint for internal endpoints. */
+function ProfileProxy({ profile, onChanged, fail }: { profile: Profile; onChanged: () => void; fail: (e: unknown) => void }) {
+  const saved = profile.proxy ?? null;
+  const [draft, setDraft] = useState<Proxy | null>(saved);
+  useEffect(() => setDraft(saved), [JSON.stringify(saved)]);
+  // Only a cluster that may still go through a proxy needs the hint.
+  const kind = useEndpointKind(profile.endpoint, saved === null || saved.mode === "auto");
+  const save = (proxy: Proxy | null) => invoke("profile_set_proxy", { id: profile.id, proxy }).then(onChanged).catch(fail);
+  return (
+    <Stack spacing={1} sx={{ mt: 1 }}>
+      <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+        <ProxyPicker value={draft} onChange={setDraft} inherit name={`của ${profile.label}`} />
+        <Button onClick={() => save(draft)} disabled={sameProxy(draft, saved) || !proxyReady(draft)} aria-label={`Lưu proxy của ${profile.label}`}>
+          Lưu proxy
+        </Button>
+      </Stack>
+      {isInternal(kind) && (
+        <Alert
+          severity="info"
+          action={
+            <Button color="inherit" size="small" onClick={() => save(NO_PROXY)} aria-label={`Chọn Không dùng proxy cho ${profile.label}`}>
+              Chọn Không dùng proxy
+            </Button>
+          }
+        >
+          {INTERNAL_HINT}
+        </Alert>
+      )}
+    </Stack>
+  );
+}
 const PLAIN_LABEL = "Tôi là user thường (key không có caps admin): ẩn các tab admin, chỉ dùng Browse";
 
 async function testOutcome(call: Promise<ClusterInfo>): Promise<Outcome> {
@@ -35,13 +93,39 @@ async function testOutcome(call: Promise<ClusterInfo>): Promise<Outcome> {
 export default function Clusters({ profiles, onChanged }: { profiles: Profile[]; onChanged: () => void }) {
   const [form, setForm] = useState(emptyForm);
   const [plain, setPlain] = useState(false);
+  // The new cluster's own proxy choice; null = follow the app-wide setting.
+  const [formProxy, setFormProxy] = useState<Proxy | null>(null);
+  // The app-wide choice: as saved, and as being edited.
+  const [network, setNetwork] = useState<Proxy>({ mode: "auto" });
+  const [networkDraft, setNetworkDraft] = useState<Proxy>({ mode: "auto" });
+  const [networkOutcome, setNetworkOutcome] = useState<Outcome | null>(null);
+  useEffect(() => {
+    invoke<Proxy>("network_get").then(
+      (saved) => {
+        setNetwork(saved);
+        setNetworkDraft(saved);
+      },
+      (e) => setNetworkOutcome({ severity: "error", text: String(e) }),
+    );
+  }, []);
+  async function saveNetwork() {
+    try {
+      const saved = await invoke<Proxy>("network_set", { proxy: networkDraft });
+      setNetwork(saved);
+      setNetworkDraft(saved);
+      setNetworkOutcome({ severity: "success", text: "Đã lưu. Áp dụng cho mọi cluster không có lựa chọn proxy riêng, và cho việc kiểm tra bản mới." });
+    } catch (e) {
+      setNetworkOutcome({ severity: "error", text: String(e) });
+    }
+  }
   const [formOutcome, setFormOutcome] = useState<Outcome | null>(null);
   const [rowOutcome, setRowOutcome] = useState<Record<string, Outcome>>({});
   const [busy, setBusy] = useState(false);
 
   const fail = (e: unknown) => setFormOutcome({ severity: "error", text: String(e) });
   const urlError = form.endpoint ? endpointError(form.endpoint) : null;
-  const canTest = !busy && !!form.endpoint && !urlError && !!form.accessKey && !!form.secretKey;
+  const canTest = !busy && !!form.endpoint && !urlError && !!form.accessKey && !!form.secretKey && proxyReady(formProxy);
+  const formKind = useEndpointKind(form.endpoint, formProxy === null || formProxy.mode === "auto");
 
   const field = (key: keyof typeof emptyForm, label: string, extra: object = {}) => (
     <TextField
@@ -58,7 +142,7 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
   async function testForm() {
     setBusy(true);
     const { endpoint, accessKey, secretKey } = form;
-    setFormOutcome(await testOutcome(invoke("test_connection", { endpoint, accessKey, secretKey })));
+    setFormOutcome(await testOutcome(invoke("test_connection", { endpoint, accessKey, secretKey, proxy: formProxy })));
     setBusy(false);
   }
 
@@ -69,9 +153,11 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
       const saved = await invoke<Profile>("add_profile", form);
       setForm(emptyForm);
       setPlain(false);
-      // The profile exists from here on. If ticking it fails, it is still listed (unticked)
-      // and the error says why; the box in its row can be ticked again.
+      setFormProxy(null);
+      // The profile exists from here on. If one of these fails, it is still listed (without
+      // the option) and the error says why; its row offers the same options again.
       try {
+        if (formProxy) await invoke("profile_set_proxy", { id: saved.id, proxy: formProxy });
         if (plain) await invoke("profile_set_plain", { id: saved.id, plain: true });
       } finally {
         onChanged();
@@ -111,6 +197,19 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
           {field("accessKey", "Access key", { autoComplete: "off" })}
           {field("secretKey", "Secret key", { type: "password", autoComplete: "off" })}
           <FormControlLabel control={<Checkbox checked={plain} onChange={(e) => setPlain(e.target.checked)} />} label={PLAIN_LABEL} />
+          <ProxyPicker value={formProxy} onChange={setFormProxy} inherit name="của cluster mới" />
+          {isInternal(formKind) && (
+            <Alert
+              severity="info"
+              action={
+                <Button color="inherit" size="small" onClick={() => setFormProxy(NO_PROXY)}>
+                  Chọn Không dùng proxy
+                </Button>
+              }
+            >
+              {INTERNAL_HINT}
+            </Alert>
+          )}
           <Stack direction="row" spacing={1}>
             <Button variant="outlined" onClick={testForm} disabled={!canTest}>
               Kiểm tra kết nối
@@ -158,10 +257,30 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
               }
               label={<Typography variant="body2">{PLAIN_LABEL}</Typography>}
             />
+            <ProfileProxy profile={p} onChanged={onChanged} fail={fail} />
             {rowOutcome[p.id] && outcomeAlert(rowOutcome[p.id], { mt: 1 })}
           </Paper>
         ))}
       </Stack>
+
+      <Paper variant="outlined" sx={{ p: 2, mt: 3 }}>
+        <Typography variant="h6" component="h2" gutterBottom>
+          Cài đặt chung — Mạng
+        </Typography>
+        <Stack spacing={2}>
+          <Typography variant="body2" color="text.secondary">
+            Cách app đi ra mạng khi một cluster không có lựa chọn riêng. "Tự động" dùng HTTP_PROXY / HTTPS_PROXY / NO_PROXY của môi
+            trường; "Không dùng proxy" luôn kết nối thẳng dù môi trường có đặt proxy; "Tùy chỉnh" luôn đi qua proxy bạn nhập.
+          </Typography>
+          <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+            <ProxyPicker value={networkDraft} onChange={(next) => next && setNetworkDraft(next)} name="chung" />
+            <Button variant="contained" onClick={saveNetwork} disabled={sameProxy(networkDraft, network) || !proxyReady(networkDraft)}>
+              Lưu cài đặt mạng
+            </Button>
+          </Stack>
+          {networkOutcome && outcomeAlert(networkOutcome)}
+        </Stack>
+      </Paper>
     </>
   );
 }

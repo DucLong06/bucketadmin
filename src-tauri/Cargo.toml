@@ -23,6 +23,8 @@ base64 = "0.22"
 futures-util = "0.3"
 # S3 browsing with a user's own key (path-style); rustls, no openssl
 aws-sdk-s3 = "1"
+# already in the tree via aws-sdk-s3 (same features); named here to choose the S3 client's proxy
+aws-smithy-http-client = { version = "1", features = ["rustls-aws-lc"] }
 # file streaming for transfers; the runtime itself is Tauri's
 tokio = { version = "1", features = ["fs", "io-util"] }
 # Parquet preview through ranged reads: footer + only the pages a view needs

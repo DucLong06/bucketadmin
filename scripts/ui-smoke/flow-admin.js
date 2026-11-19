@@ -7,10 +7,28 @@
     await type("Endpoint", CFG.ENDPOINT);
     await type("Access key", CFG.AK);
     await type("Secret key", CFG.SK);
+    // ---- network: the lab is a private address, so "no proxy" is suggested for it
+    const proxyOf = (name) => document.querySelector(`select[aria-label="Proxy ${name}"]`);
+    check(proxyOf("của cluster mới").value === "inherit" && proxyOf("chung").value === "auto", "defaults: follow the shared setting, which follows the environment");
+    await waitFor(() => hasText("Endpoint này nằm trong mạng nội bộ"), "no-proxy suggestion for a private endpoint");
+    await click("Chọn Không dùng proxy");
+    await waitFor(() => proxyOf("của cluster mới").value === "none" && !hasText("Endpoint này nằm trong mạng nội bộ"), "suggestion taken");
+    await click("Kiểm tra kết nối");
+    await waitFor(() => hasText("Kết nối thành công"), "form connection test without a proxy");
     await click("Lưu");
     await waitFor(() => hasText("Đã lưu"), "profile saved");
+    await waitFor(() => proxyOf("của lab")?.value === "none", "the saved cluster keeps its own proxy choice");
     await clickSel('[aria-label="Kiểm tra kết nối tới lab"]');
-    await waitFor(() => hasText("Kết nối thành công"), "connection ok");
+    await waitFor(() => all(".MuiAlert-root").filter((a) => a.textContent.includes("Kết nối thành công")).length === 1, "connection ok");
+    // The shared setting: a custom proxy needs a URL before it can be saved; saved, it does not touch this cluster.
+    setValue(proxyOf("chung"), "custom");
+    await waitFor(() => document.querySelector('input[aria-label="URL proxy chung"]'), "proxy URL field");
+    check(!button("Lưu cài đặt mạng"), "no URL yet: cannot save");
+    setValue(document.querySelector('input[aria-label="URL proxy chung"]'), "http://127.0.0.1:9");
+    await click("Lưu cài đặt mạng");
+    await waitFor(() => hasText("Đã lưu. Áp dụng cho mọi cluster không có lựa chọn proxy riêng"), "shared setting saved");
+    await clickSel('[aria-label="Kiểm tra kết nối tới lab"]');
+    await waitFor(() => all(".MuiAlert-root").filter((a) => a.textContent.includes("Kết nối thành công")).length === 1, "still connects: the cluster's own choice wins");
     await shot("02-clusters");
 
     // ---- Users: paging

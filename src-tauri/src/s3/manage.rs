@@ -386,10 +386,7 @@ impl S3 {
         let head = head.set_version_id(version.map(str::to_string));
         let presigned = head.presigned(config.map_err(|e| e.to_string())?).await;
         let url = presigned.map_err(s3_error)?.uri().to_string();
-        let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build();
-        let sent = http.map_err(|e| e.to_string())?.head(url).send().await;
+        let sent = self.http()?.head(url).send().await;
         let response = sent.map_err(|e| format!("cannot reach RGW: {e}"))?;
         let status = response.status().as_u16();
         if !response.status().is_success() {

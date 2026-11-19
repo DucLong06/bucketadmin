@@ -62,8 +62,17 @@ const S3_BY_CODE: Record<string, string> = {
   InvalidAccessKeyId: "Access key đang dùng để browse không tồn tại trên cluster này. Nếu là key của bạn, bấm Đổi key và nhập lại; nếu không, thử mở lại phiên browse.",
 };
 
+// A status a proxy in between answers with far more often than RGW itself does.
+const proxyHint = (status: string) =>
+  ["407", "502", "504"].includes(status)
+    ? ' Lỗi này thường do proxy ở giữa trả về: nếu cluster nằm trong mạng nội bộ, hãy chọn "Không dùng proxy" cho cluster ở tab Clusters.'
+    : "";
+
 export function explain(raw: string): Explained {
   const detail = raw;
+  if (raw.startsWith("invalid proxy URL")) {
+    return { message: "URL proxy không hợp lệ: cần dạng http://host:port.", code: null, detail };
+  }
   // "AccessDenied (403): ... [needs users=write]" (the tag is added by `invoke` in api.ts)
   const needs = / \[needs ([^\]]+)\]$/.exec(raw);
   if (needs) {
@@ -76,7 +85,7 @@ export function explain(raw: string): Explained {
     if (S3_BY_CODE[code]) return { message: S3_BY_CODE[code], code, detail };
     if (status === "403") return { message: S3_BY_CODE.AccessDenied, code, detail };
     if (status === "404") return { message: S3_BY_CODE.NotFound, code, detail };
-    return { message: `S3 báo lỗi HTTP ${status} (${code}).`, code, detail };
+    return { message: `S3 báo lỗi HTTP ${status} (${code}).${proxyHint(status)}`, code, detail };
   }
   // "NoSuchUser (404): user does not exist"
   const named = /^([A-Za-z]+) \((\d{3})\)/.exec(raw);
@@ -99,6 +108,6 @@ export function explain(raw: string): Explained {
   if (raw.startsWith("unexpected response from RGW")) {
     return { message: "RGW trả về dữ liệu không đúng định dạng. Endpoint có thể không phải RGW Admin API.", code: null, detail };
   }
-  if (status) return { message: `RGW báo lỗi HTTP ${status}${code ? ` (${code})` : ""}.`, code: code ?? status, detail };
+  if (status) return { message: `RGW báo lỗi HTTP ${status}${code ? ` (${code})` : ""}.${proxyHint(status)}`, code: code ?? status, detail };
   return { message: raw, code: null, detail };
 }

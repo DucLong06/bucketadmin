@@ -8,6 +8,7 @@ pub mod parquet;
 pub mod search;
 pub mod transfer;
 
+use crate::settings::Proxy;
 use aws_sdk_s3::config::{
     BehaviorVersion, Credentials, Region, RequestChecksumCalculation, ResponseChecksumValidation,
 };
@@ -26,6 +27,8 @@ pub struct S3 {
     access_key: String,
     /// The cluster endpoint this session talks to; presigned URLs must point at it.
     endpoint: String,
+    /// How this session's requests leave the machine (the HEAD of the Headers tab too).
+    proxy: Proxy,
     /// Footer of the Parquet object previewed last, so paging through it does not fetch it again.
     parquet_footer: parquet::FooterCache,
 }
@@ -93,9 +96,20 @@ pub(crate) fn range(start: u64, len: u64) -> String {
 }
 
 impl S3 {
+    /// A client that follows the proxy variables of the environment.
+    pub fn new(endpoint: &str, access_key: &str, secret_key: &str) -> Self {
+        Self::with_proxy(endpoint, access_key, secret_key, &Proxy::Auto)
+            .expect("the environment's proxy setting is read later, not parsed here")
+    }
+
     /// A client for one user's key against a path-style endpoint (RGW has no bucket subdomains
     /// unless DNS is set up for them).
-    pub fn new(endpoint: &str, access_key: &str, secret_key: &str) -> Self {
+    pub fn with_proxy(
+        endpoint: &str,
+        access_key: &str,
+        secret_key: &str,
+        proxy: &Proxy,
+    ) -> Result<Self, String> {
         let credentials = Credentials::new(access_key, secret_key, None, None, "bucketadmin");
         let timeouts = aws_sdk_s3::config::timeout::TimeoutConfig::builder()
             .connect_timeout(Duration::from_secs(10))
@@ -110,14 +124,22 @@ impl S3 {
             // Newer SDKs add CRC checksums to every request by default; older Ceph releases
             // reject the trailer form, so only send them where S3 requires one.
             .request_checksum_calculation(RequestChecksumCalculation::WhenRequired)
-            .response_checksum_validation(ResponseChecksumValidation::WhenRequired)
-            .build();
-        Self {
-            client: Client::from_conf(config),
+            .response_checksum_validation(ResponseChecksumValidation::WhenRequired);
+        let mut config = config;
+        config.set_http_client(proxy.s3_http_client()?);
+        Ok(Self {
+            client: Client::from_conf(config.build()),
             access_key: access_key.to_string(),
             endpoint: endpoint.trim_end_matches('/').to_string(),
+            proxy: proxy.clone(),
             parquet_footer: Default::default(),
-        }
+        })
+    }
+
+    /// A plain HTTP client that routes like this session (for requests the SDK only signs).
+    pub(crate) fn http(&self) -> Result<reqwest::Client, String> {
+        let builder = self.proxy.reqwest()?.timeout(Duration::from_secs(30));
+        builder.build().map_err(|e| e.to_string())
     }
 
     /// The access key this session signs with (never the secret).

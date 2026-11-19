@@ -5,6 +5,7 @@ pub mod export;
 pub mod ops;
 pub mod rgw_admin;
 pub mod s3;
+pub mod settings;
 
 use audit::{Audit, AuditEntry};
 /// How a browse session gets its S3 client; public so the lab tests build one the app's way.
@@ -19,6 +20,9 @@ use rgw_admin::{
     BucketInfo, Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin,
     Usage, UserInfo,
 };
+use settings::{EndpointKind, Proxy, SettingsStore};
+use std::collections::HashMap;
+use std::sync::Mutex;
 use tauri::{Manager, State};
 
 // Errors cross the IPC boundary as display strings; the UI shows them verbatim.
@@ -26,7 +30,9 @@ use tauri::{Manager, State};
 pub(crate) struct AppState {
     pub(crate) profiles: ProfileStore,
     pub(crate) audit: Audit,
-    pub(crate) http: ReqwestClient,
+    pub(crate) settings: SettingsStore,
+    /// One Admin Ops transport per proxy choice in use, built on first use.
+    http: Mutex<HashMap<Proxy, ReqwestClient>>,
     pub(crate) browse: browse::Sessions,
     pub(crate) transfers: browse::Transfers,
 }
@@ -35,8 +41,8 @@ impl AppState {
     /// Admin operations against a saved cluster; the secret comes from the keychain.
     fn ops(&self, cluster_id: &str) -> Result<Ops<'_>, String> {
         let (endpoint, creds) = self.profiles.credentials(cluster_id)?;
-        let admin =
-            RgwAdmin::new(&endpoint, creds, self.http.clone()).map_err(|e| e.to_string())?;
+        let http = self.http(&self.proxy_of(cluster_id)?)?;
+        let admin = RgwAdmin::new(&endpoint, creds, http).map_err(|e| e.to_string())?;
         Ok(Ops {
             admin,
             audit: &self.audit,
@@ -48,9 +54,33 @@ impl AppState {
         &self,
         endpoint: &str,
         creds: Credentials,
+        proxy: &Proxy,
     ) -> Result<ClusterInfo, String> {
-        let admin = RgwAdmin::new(endpoint, creds, self.http.clone()).map_err(|e| e.to_string())?;
+        let admin = RgwAdmin::new(endpoint, creds, self.http(proxy)?).map_err(|e| e.to_string())?;
         admin.get_info().await.map_err(|e| e.to_string())
+    }
+
+    /// How requests to a cluster leave the machine: its own choice, else the app-wide one.
+    pub(crate) fn proxy_of(&self, cluster_id: &str) -> Result<Proxy, String> {
+        match self.profiles.proxy(cluster_id)? {
+            Some(own) => Ok(own),
+            None => Ok(self.settings.get()?.proxy),
+        }
+    }
+
+    pub(crate) fn http(&self, proxy: &Proxy) -> Result<ReqwestClient, String> {
+        let mut clients = self.http.lock().map_err(|e| e.to_string())?;
+        if let Some(client) = clients.get(proxy) {
+            return Ok(client.clone());
+        }
+        let client = ReqwestClient::with_proxy(proxy).map_err(|e| e.to_string())?;
+        clients.insert(proxy.clone(), client.clone());
+        Ok(client)
+    }
+
+    /// Browse sessions were built with the proxy choice of their time: drop them.
+    fn forget_sessions(&self) {
+        self.browse.clear();
     }
 }
 
@@ -89,26 +119,62 @@ fn profile_set_plain(state: St<'_>, id: String, plain: bool) -> Cmd<'_, ClusterP
     state.profiles.set_plain_user(&id, plain)
 }
 
-/// Test credentials typed into the form, before anything is saved.
+/// The cluster's own proxy choice; `None` puts it back on the app-wide setting.
+#[tauri::command(async)]
+fn profile_set_proxy(state: St<'_>, id: String, proxy: Option<Proxy>) -> Cmd<'_, ClusterProfile> {
+    let saved = state.profiles.set_proxy(&id, proxy)?;
+    state.forget_sessions();
+    Ok(saved)
+}
+
+/// The app-wide proxy choice.
+#[tauri::command(async)]
+fn network_get(state: St<'_>) -> Cmd<'_, Proxy> {
+    Ok(state.settings.get()?.proxy)
+}
+
+#[tauri::command(async)]
+fn network_set(state: St<'_>, proxy: Proxy) -> Cmd<'_, Proxy> {
+    let proxy = proxy.validated()?;
+    let saved = state.settings.change(|s| s.proxy = proxy)?;
+    state.forget_sessions();
+    Ok(saved.proxy)
+}
+
+/// What the endpoint's host looks like from here, to suggest "no proxy" for internal ones.
+/// Resolves the name, so it runs off the UI thread.
+#[tauri::command(async)]
+fn endpoint_kind(endpoint: String) -> Cmd<'static, EndpointKind> {
+    settings::endpoint_kind(&endpoint)
+}
+
+/// Test credentials typed into the form, before anything is saved. `proxy` is the choice
+/// made in the form; without one the app-wide setting applies.
 #[tauri::command]
 async fn test_connection(
     state: St<'_>,
     endpoint: String,
     access_key: String,
     secret_key: String,
+    proxy: Option<Proxy>,
 ) -> Cmd<'_, ClusterInfo> {
     let creds = Credentials {
         access_key: access_key.trim().to_string(),
         secret_key,
     };
-    state.cluster_info(&endpoint, creds).await
+    let proxy = match proxy {
+        Some(own) => own.validated()?,
+        None => state.settings.get()?.proxy,
+    };
+    state.cluster_info(&endpoint, creds, &proxy).await
 }
 
 /// Test a saved profile; the secret never leaves the Rust side.
 #[tauri::command]
 async fn test_profile(state: St<'_>, id: String) -> Cmd<'_, ClusterInfo> {
     let (endpoint, creds) = state.profiles.credentials(&id)?;
-    state.cluster_info(&endpoint, creds).await
+    let proxy = state.proxy_of(&id)?;
+    state.cluster_info(&endpoint, creds, &proxy).await
 }
 
 /// Who the saved key belongs to (asked over S3, which needs no cap) and what it may read on
@@ -116,7 +182,8 @@ async fn test_profile(state: St<'_>, id: String) -> Cmd<'_, ClusterInfo> {
 #[tauri::command]
 async fn caller_access(state: St<'_>, cluster_id: String) -> Cmd<'_, CallerAccess> {
     let (endpoint, creds) = state.profiles.credentials(&cluster_id)?;
-    let own = s3::S3::new(&endpoint, &creds.access_key, &creds.secret_key);
+    let proxy = state.proxy_of(&cluster_id)?;
+    let own = s3::S3::with_proxy(&endpoint, &creds.access_key, &creds.secret_key, &proxy)?;
     let uid = own.whoami().await?;
     state.ops(&cluster_id)?.caller_access(&uid).await
 }
@@ -404,7 +471,8 @@ pub fn run() {
             app.manage(AppState {
                 profiles: ProfileStore::open_default()?,
                 audit: Audit::open(&clusters::data_dir()?.join("audit.db"))?,
-                http: ReqwestClient::new().map_err(|e| e.to_string())?,
+                settings: SettingsStore::new(&clusters::data_dir()?),
+                http: Mutex::default(),
                 browse: browse::Sessions::default(),
                 transfers: browse::Transfers::default(),
             });
@@ -415,6 +483,10 @@ pub fn run() {
             add_profile,
             remove_profile,
             profile_set_plain,
+            profile_set_proxy,
+            network_get,
+            network_set,
+            endpoint_kind,
             test_connection,
             test_profile,
             caller_access,

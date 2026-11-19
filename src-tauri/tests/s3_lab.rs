@@ -1795,6 +1795,7 @@ impl bucketadmin_lib::rgw_admin::HttpClient for &NoAdminApi {
 #[tokio::test]
 async fn m6_browse_with_own_key_never_calls_the_admin_api() {
     use bucketadmin_lib::browse_connect as connect;
+    let auto = bucketadmin_lib::settings::Proxy::Auto;
     use bucketadmin_lib::clusters::ProfileStore;
     use bucketadmin_lib::rgw_admin::RgwError;
     use bucketadmin_lib::s3::acl::Grant;
@@ -1828,7 +1829,7 @@ async fn m6_browse_with_own_key_never_calls_the_admin_api() {
         .add("lab", &endpoint(), &key.access_key, &key.secret_key)
         .unwrap();
     let no_admin = NoAdminApi::default();
-    let before = connect(&store, &no_admin, &profile.id, "").await;
+    let before = connect(&store, &no_admin, &profile.id, "", &auto).await;
     assert_eq!(
         before.err().unwrap(),
         "no personal key saved for this cluster"
@@ -1844,7 +1845,7 @@ async fn m6_browse_with_own_key_never_calls_the_admin_api() {
     let on_disk = std::fs::read_to_string(dir.join("data/profiles.json")).unwrap();
     assert!(!on_disk.contains(&key.secret_key), "secret leaked to disk");
 
-    let s3 = connect(&store, &no_admin, &profile.id, "")
+    let s3 = connect(&store, &no_admin, &profile.id, "", &auto)
         .await
         .expect("own-key session");
     assert_eq!(s3.access_key(), key.access_key);
@@ -1949,7 +1950,9 @@ async fn m6_browse_with_own_key_never_calls_the_admin_api() {
     // The key is deleted again: no session, and still no Admin API request anywhere above.
     let cleared = store.clear_browse_key(&profile.id).unwrap();
     assert_eq!(cleared.browse_access_key, None);
-    assert!(connect(&store, &no_admin, &profile.id, "").await.is_err());
+    assert!(connect(&store, &no_admin, &profile.id, "", &auto)
+        .await
+        .is_err());
     println!(
         "own-key browse as {uid}: buckets, folders, upload (single + multipart), list, preview, \
          search, download, versions, ACL, tags, presign, delete -> Admin API requests: {}",
