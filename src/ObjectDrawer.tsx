@@ -1,5 +1,5 @@
 import { type ComponentType, useEffect, useState } from "react";
-import { Box, Button, Divider, Drawer, Stack, Tab, Tabs, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Divider, Drawer, Stack, Tab, Tabs, TextField, Typography } from "@mui/material";
 import { AclTab } from "./AclEditor";
 import { invoke, keyOwner, type ObjectEntry } from "./api";
 import { formatBytes, TZ, vnTime } from "./format";
@@ -14,6 +14,18 @@ import VersionsTab from "./VersionsTab";
 export type ObjectAt = { clusterId: string; uid: string; bucket: string; key: string; version?: string | null };
 /** Versioning state of the open bucket; `supported` false hides everything about versions. */
 export type Versioning = { supported: boolean; status: string; reason: string | null };
+/** Only with versioning on does a delete leave something to restore. */
+export const canUndelete = (v: Versioning) => v.supported && v.status === "Enabled";
+/** Why a delete in this bucket is final; shown in red before the delete is confirmed. */
+export const finalDeleteWarning = (v: Versioning) =>
+  `${
+    !v.supported
+      ? "Không đọc được trạng thái versioning của bucket"
+      : v.status === "Suspended"
+        ? "Versioning của bucket đang tạm dừng"
+        : "Bucket chưa bật versioning"
+  }: object bị xoá là mất vĩnh viễn, KHÔNG THỂ HOÀN TÁC.`;
+export const UNDELETE_HINT = "Bucket đang bật versioning: object chỉ bị đánh dấu xoá, khôi phục được từ tab Phiên bản.";
 export type ObjectTabProps = {
   at: ObjectAt;
   object: ObjectEntry;
@@ -21,6 +33,8 @@ export type ObjectTabProps = {
   startTransfer: StartTransfer;
   /** The object was changed or removed: the listing should reload. */
   onChanged: () => void;
+  /** The object was deleted; `marker` is the delete marker to remove for an undo (versioning on), else null. */
+  onDeleted: (key: string, marker: string | null) => void;
   onClose: () => void;
 };
 
@@ -49,7 +63,7 @@ const row = (label: string, value: string) => (
   </Stack>
 );
 
-function DetailsTab({ at, object, startTransfer, onChanged, onClose }: ObjectTabProps) {
+function DetailsTab({ at, object, startTransfer, versioning, onDeleted, onClose }: ObjectTabProps) {
   const [amount, setAmount] = useState("15");
   const [unit, setUnit] = useState<PresignUnit>("m");
   const [url, setUrl] = useState("");
@@ -71,9 +85,9 @@ function DetailsTab({ at, object, startTransfer, onChanged, onClose }: ObjectTab
     if (made) setUrl(made);
   }
   async function remove() {
-    const done = await run(() => invoke("browse_delete", { at }).then(() => true));
-    if (done) {
-      onChanged();
+    const deleted = await run(() => invoke<string | null>("browse_delete", { at }).then((marker) => ({ marker })));
+    if (deleted) {
+      onDeleted(at.key, deleted.marker);
       onClose();
     }
   }
@@ -155,7 +169,7 @@ function DetailsTab({ at, object, startTransfer, onChanged, onClose }: ObjectTab
       <ConfirmDialog
         open={confirming}
         title="Xoá object?"
-        text={`Xoá ${at.bucket}/${at.key}. Nếu bucket không bật versioning, dữ liệu mất vĩnh viễn.`}
+        text={`Xoá ${at.bucket}/${at.key}.`}
         confirmLabel="Xoá object"
         busy={busy}
         error={error}
@@ -164,7 +178,9 @@ function DetailsTab({ at, object, startTransfer, onChanged, onClose }: ObjectTab
           setConfirming(false);
           setError(null);
         }}
-      />
+      >
+        {canUndelete(versioning) ? <Alert severity="info">{UNDELETE_HINT}</Alert> : <Alert severity="error">{finalDeleteWarning(versioning)}</Alert>}
+      </ConfirmDialog>
     </Stack>
   );
 }
@@ -174,7 +190,7 @@ const allTabs: { label: string; Panel: ComponentType<ObjectTabProps> }[] = [
   { label: "Properties", Panel: DetailsTab },
   { label: "Headers", Panel: HeadersTab },
   { label: "Tags", Panel: TagsTab },
-  { label: "Versions", Panel: VersionsTab },
+  { label: "Phiên bản", Panel: VersionsTab },
   { label: "ACL", Panel: AclTab },
 ];
 
@@ -188,7 +204,8 @@ type Props = Omit<ObjectTabProps, "at" | "object"> & {
 export default function ObjectDrawer({ clusterId, uid, bucket, object, ...rest }: Props) {
   const [tab, setTab] = useState(0);
   useEffect(() => setTab(0), [object?.key]);
-  const tabs = rest.versioning.supported ? allTabs : allTabs.filter((t) => t.Panel !== VersionsTab);
+  // A deleted key has nothing but its versions; without versioning there is no such tab.
+  const tabs = allTabs.filter((t) => (object?.deleted ? t.Panel === VersionsTab : rest.versioning.supported || t.Panel !== VersionsTab));
   const Panel = (tabs[tab] ?? tabs[0]).Panel;
   return (
     <Drawer anchor="right" open={object !== null} onClose={rest.onClose}>

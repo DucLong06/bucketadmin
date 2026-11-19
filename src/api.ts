@@ -99,5 +99,9 @@ export type ObjectEntry = {
   storage_class: string;
   etag: string;
   owner: string;
+  /** A key whose latest version is a delete marker (shown on request in a versioned bucket); `last_modified` is then when it was deleted. */
+  deleted?: boolean;
 };
+/** A delete marker left by a delete in a versioned bucket: removing it undoes the delete. */
+export type Marker = { key: string; version: string };
 export type Listing = { prefixes: string[]; objects: ObjectEntry[]; next_token: string | null };

@@ -41,6 +41,8 @@ const ACTIONS = [
   "object.upload",
   "object.delete",
   "object.delete_many",
+  "object.undelete",
+  "bucket.versioning.set",
   "object.presign",
   "object.tags.set",
   "version.restore",

@@ -1,7 +1,7 @@
 //! Bucket and object management as the browsed user: create bucket and folder, delete many,
 //! object tags, and the raw headers of a HEAD request.
 
-use super::{s3_error, S3};
+use super::{s3_error, time, ObjectEntry, S3};
 use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{BucketVersioningStatus, Tag, Tagging, VersioningConfiguration};
@@ -28,13 +28,36 @@ pub struct FailedDelete {
     pub error: String,
 }
 
+/// A delete marker: the version to delete to bring `key` back.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Marker {
+    pub key: String,
+    pub version: String,
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct DeleteReport {
     /// Objects the selection expands to (selected objects plus everything under selected folders).
     pub objects: usize,
     pub deleted: usize,
     pub failed: Vec<FailedDelete>,
+    /// Delete markers the deletes left behind (versioning on): what an undo removes.
+    pub markers: Vec<Marker>,
 }
+
+/// What a versioned bucket still holds of deleted content, one level below a prefix.
+#[derive(Debug, Default, Serialize)]
+pub struct Deleted {
+    /// Folders with versions in them, including those whose every object is deleted.
+    pub prefixes: Vec<String>,
+    /// Keys whose latest version is a delete marker; `last_modified` is when they were deleted.
+    pub objects: Vec<ObjectEntry>,
+    /// The listing was cut short: there may be more deleted keys than shown.
+    pub truncated: bool,
+}
+
+/// Versions looked at by one "show deleted objects" request.
+const DELETED_SCAN: usize = 5000;
 
 /// S3 bucket naming rules: 3-63 characters; lowercase letters, digits, dots and hyphens;
 /// starts and ends with a letter or digit; no adjacent dots or dot-hyphen pairs; not an IP address.
@@ -203,12 +226,27 @@ impl S3 {
     }
 
     /// Deletes the given keys, several at a time, and reports what could not be deleted.
+    pub async fn delete_many(&self, bucket: &str, keys: Vec<String>) -> DeleteReport {
+        let all = keys.into_iter().map(|key| (key, None)).collect();
+        self.delete_each(bucket, all).await
+    }
+
+    /// Removes delete markers, which makes the objects under them current again.
+    pub async fn undelete(&self, bucket: &str, markers: Vec<Marker>) -> DeleteReport {
+        let all = markers.into_iter().map(|m| (m.key, Some(m.version)));
+        self.delete_each(bucket, all.collect()).await
+    }
+
     // shortcut: one DeleteObject per key instead of DeleteObjects batches, because a batch of
     // 1000 can outlast the HTTP timeout on a slow cluster; switch if round trips become the cost.
-    pub async fn delete_many(&self, bucket: &str, keys: Vec<String>) -> DeleteReport {
-        let objects = keys.len();
-        let deletes = keys.into_iter().map(|key| async move {
-            let result = self.delete(bucket, &key, None).await;
+    async fn delete_each(
+        &self,
+        bucket: &str,
+        items: Vec<(String, Option<String>)>,
+    ) -> DeleteReport {
+        let objects = items.len();
+        let deletes = items.into_iter().map(|(key, version)| async move {
+            let result = self.delete(bucket, &key, version.as_deref()).await;
             (key, result)
         });
         let results: Vec<_> = stream::iter(deletes)
@@ -221,12 +259,72 @@ impl S3 {
         };
         for (key, result) in results {
             match result {
-                Ok(()) => report.deleted += 1,
+                Ok(marker) => {
+                    report.deleted += 1;
+                    report
+                        .markers
+                        .extend(marker.map(|version| Marker { key, version }));
+                }
                 Err(error) => report.failed.push(FailedDelete { key, error }),
             }
         }
         report.failed.sort_by(|a, b| a.key.cmp(&b.key));
         report
+    }
+
+    /// Switches the bucket's versioning on, or suspends it (S3 has no way back to "never on":
+    /// suspended keeps the old versions and stops making new ones). Only the owner may.
+    pub async fn set_versioning(&self, bucket: &str, on: bool) -> Result<(), String> {
+        let status = match on {
+            true => BucketVersioningStatus::Enabled,
+            false => BucketVersioningStatus::Suspended,
+        };
+        let config = VersioningConfiguration::builder().status(status).build();
+        let put = self.client.put_bucket_versioning().bucket(bucket);
+        let sent = put.versioning_configuration(config).send().await;
+        sent.map(|_| ()).map_err(s3_error)
+    }
+
+    /// Deleted keys directly under `prefix` that can still be restored: those whose latest
+    /// version is a delete marker.
+    // shortcut: looks at the first DELETED_SCAN versions under the prefix and says so when
+    // there are more; page through them if folders with that many versions turn out to matter.
+    pub async fn list_deleted(&self, bucket: &str, prefix: &str) -> Result<Deleted, String> {
+        let mut found = Deleted::default();
+        let (mut key_marker, mut version_marker) = (None::<String>, None::<String>);
+        let mut seen = 0;
+        loop {
+            let page = self.client.list_object_versions().bucket(bucket);
+            let page = page.prefix(prefix).delimiter("/");
+            let page = page
+                .set_key_marker(key_marker)
+                .set_version_id_marker(version_marker);
+            let out = page.send().await.map_err(s3_error)?;
+            let prefixes = out.common_prefixes().iter();
+            found
+                .prefixes
+                .extend(prefixes.filter_map(|p| p.prefix().map(str::to_string)));
+            let latest = out.delete_markers().iter();
+            for marker in latest.filter(|m| m.is_latest() == Some(true)) {
+                found.objects.push(ObjectEntry {
+                    key: marker.key().unwrap_or_default().to_string(),
+                    last_modified: time(marker.last_modified()),
+                    ..Default::default()
+                });
+            }
+            seen += out.versions().len() + out.delete_markers().len();
+            if out.is_truncated() != Some(true) {
+                break;
+            }
+            if seen >= DELETED_SCAN {
+                found.truncated = true;
+                break;
+            }
+            key_marker = out.next_key_marker().map(str::to_string);
+            version_marker = out.next_version_id_marker().map(str::to_string);
+        }
+        found.prefixes.dedup();
+        Ok(found)
     }
 
     pub async fn get_tags(

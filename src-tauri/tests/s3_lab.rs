@@ -2084,3 +2084,136 @@ async fn m7_acl_applied_to_a_whole_folder() {
     remove_user(&admin, "ba-m7-acl-x").await;
     remove_user(&admin, uid).await;
 }
+
+/// M7a.4: versioning switched on from the app, a delete that can be undone, deleted objects
+/// that can be found again and restored; and the plain bucket where a delete is final.
+#[tokio::test]
+async fn m7_versioning_delete_undo_restore() {
+    let Some(admin) = lab() else { return };
+    let (uid, bucket) = ("ba-m7-ver", "ba-m7-ver-bucket");
+    let (_, owner) = user(&admin, uid).await;
+    let (_, stranger) = user(&admin, "ba-m7-ver-x").await;
+    owner.create_bucket(bucket, false).await.expect("bucket");
+    let text = |key: &'static str| {
+        let s3 = owner.clone();
+        async move {
+            let bytes = s3.read_range(bucket, key, None, 0, 64).await;
+            bytes.map(|b| String::from_utf8_lossy(&b).into_owned())
+        }
+    };
+
+    // ---- versioning never switched on: a delete is final
+    put(&owner, bucket, "plain.txt", b"gone for good")
+        .await
+        .unwrap();
+    let marker = owner.delete(bucket, "plain.txt", None).await.unwrap();
+    let left = owner.list_versions(bucket, "plain.txt").await.unwrap();
+    println!(
+        "delete without versioning -> marker {marker:?}, versions left {}",
+        left.len()
+    );
+    assert!(marker.is_none() && left.is_empty());
+
+    // ---- switch it on (owner only)
+    let refused = stranger.set_versioning(bucket, true).await.unwrap_err();
+    println!("set_versioning by a stranger -> {refused}");
+    assert!(refused.starts_with("S3 AccessDenied (403)"), "{refused}");
+    owner.set_versioning(bucket, true).await.expect("enable");
+    let status = owner.versioning(bucket).await.status;
+    println!("versioning after enabling -> {status:?}");
+    assert_eq!(status, "Enabled");
+
+    // ---- delete = delete marker; undo = remove the marker
+    put(&owner, bucket, "doc.txt", b"one").await.unwrap();
+    put(&owner, bucket, "doc.txt", b"two").await.unwrap();
+    put(&owner, bucket, "dir/inner.txt", b"inner")
+        .await
+        .unwrap();
+    let marker = owner.delete(bucket, "doc.txt", None).await.unwrap();
+    println!("delete with versioning -> marker {marker:?}");
+    let marker = marker.expect("a delete marker id");
+    assert!(text("doc.txt").await.is_err(), "looks deleted");
+    let listed = owner.list(bucket, "", None, 100).await.unwrap();
+    assert!(listed.objects.is_empty(), "not in the normal listing");
+    let gone = owner.list_deleted(bucket, "").await.unwrap();
+    let keys: Vec<&str> = gone.objects.iter().map(|o| o.key.as_str()).collect();
+    println!(
+        "list_deleted -> objects {keys:?}, prefixes {:?}",
+        gone.prefixes
+    );
+    assert_eq!(keys, ["doc.txt"]);
+    assert_eq!(gone.prefixes, ["dir/"]);
+    assert!(!gone.objects[0].last_modified.is_empty() && !gone.truncated);
+
+    let undo = bucketadmin_lib::s3::manage::Marker {
+        key: "doc.txt".into(),
+        version: marker,
+    };
+    let undone = owner.undelete(bucket, vec![undo]).await;
+    println!(
+        "undelete -> restored {}/{}, failed {}; doc.txt reads {:?}",
+        undone.deleted,
+        undone.objects,
+        undone.failed.len(),
+        text("doc.txt").await
+    );
+    assert_eq!((undone.deleted, undone.failed.len()), (1, 0));
+    assert_eq!(text("doc.txt").await.unwrap(), "two");
+    assert!(owner
+        .list_deleted(bucket, "")
+        .await
+        .unwrap()
+        .objects
+        .is_empty());
+
+    // ---- delete several (a folder too): every marker comes back for the undo
+    let all = owner
+        .expand(bucket, &["doc.txt".into()], &["dir/".into()], 100)
+        .await
+        .unwrap();
+    let report = owner.delete_many(bucket, all).await;
+    println!(
+        "delete_many -> deleted {}, markers {}",
+        report.deleted,
+        report.markers.len()
+    );
+    assert_eq!((report.deleted, report.markers.len()), (2, 2));
+    let gone = owner.list_deleted(bucket, "").await.unwrap();
+    assert_eq!(gone.objects.len(), 1);
+    assert_eq!(
+        gone.prefixes,
+        ["dir/"],
+        "a folder holding only deleted objects is still found"
+    );
+    let inside = owner.list_deleted(bucket, "dir/").await.unwrap();
+    assert_eq!(inside.objects[0].key, "dir/inner.txt");
+
+    // ---- restore an old version of a deleted object from its version list
+    let versions = owner.list_versions(bucket, "doc.txt").await.unwrap();
+    assert!(versions[0].delete_marker && versions[0].is_latest);
+    let oldest = versions.last().unwrap();
+    owner
+        .restore_version(bucket, "doc.txt", &oldest.version_id)
+        .await
+        .expect("restore");
+    println!(
+        "restore of the oldest version of a deleted object -> doc.txt reads {:?}, versions now {}",
+        text("doc.txt").await,
+        owner.list_versions(bucket, "doc.txt").await.unwrap().len()
+    );
+    assert_eq!(text("doc.txt").await.unwrap(), "one");
+    let undone = owner.undelete(bucket, report.markers).await;
+    assert_eq!(undone.deleted, 2, "the rest of the undo still works");
+    assert_eq!(text("dir/inner.txt").await.unwrap(), "inner");
+
+    // ---- switching off suspends: old versions stay, a delete no longer leaves a real marker
+    owner.set_versioning(bucket, false).await.expect("suspend");
+    let status = owner.versioning(bucket).await.status;
+    let marker = owner.delete(bucket, "dir/inner.txt", None).await.unwrap();
+    println!("versioning after switching off -> {status:?}; delete then -> marker {marker:?}");
+    assert_eq!(status, "Suspended");
+    assert!(marker.is_none(), "nothing the undo could remove");
+
+    remove_user(&admin, "ba-m7-ver-x").await;
+    remove_user(&admin, uid).await;
+}

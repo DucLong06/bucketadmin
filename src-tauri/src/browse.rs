@@ -6,7 +6,7 @@
 use crate::clusters::{ClusterProfile, ProfileStore, SecretStore};
 use crate::rgw_admin::{HttpClient, RgwAdmin};
 use crate::s3::acl::{Acl, AclReport, AppliedAcl, Grant, VersionEntry, Versioning};
-use crate::s3::manage::{DeleteReport, ObjectTag, MAX_DELETE};
+use crate::s3::manage::{DeleteReport, Deleted, Marker, ObjectTag, MAX_DELETE};
 use crate::s3::parquet::ParquetPage;
 use crate::s3::search::SearchResult;
 use crate::s3::transfer::{content_type_for, Cancel, Downloaded};
@@ -341,9 +341,10 @@ pub async fn browse_presign(state: St<'_>, at: ObjectRef, expires_secs: u64) -> 
     result
 }
 
-/// Deletes the object, or exactly one version of it when `at.version` is set.
+/// Deletes the object, or exactly one version of it when `at.version` is set. Returns the
+/// version id of the delete marker when the bucket's versioning turned the delete into one.
 #[tauri::command]
-pub async fn browse_delete(state: St<'_>, at: ObjectRef) -> Cmd<()> {
+pub async fn browse_delete(state: St<'_>, at: ObjectRef) -> Cmd<Option<String>> {
     at.require_key()?;
     let s3 = state.session(&at).await?;
     let result = s3.delete(&at.bucket, &at.key, at.version()).await;
@@ -351,8 +352,53 @@ pub async fn browse_delete(state: St<'_>, at: ObjectRef) -> Cmd<()> {
         Some(_) => "version.delete",
         None => "object.delete",
     };
-    state.audit_s3(&at, action, "", &result);
+    let detail = match &result {
+        Ok(Some(marker)) => format!("delete_marker={marker}"),
+        _ => String::new(),
+    };
+    state.audit_s3(&at, action, &detail, &result);
     result
+}
+
+/// Undo of a delete in a bucket with versioning on: removes the delete markers it left.
+#[tauri::command]
+pub async fn browse_undelete(
+    state: St<'_>,
+    at: ObjectRef,
+    markers: Vec<Marker>,
+) -> Cmd<DeleteReport> {
+    let s3 = state.session(&at).await?;
+    let report = s3.undelete(&at.bucket, markers).await;
+    let detail = format!(
+        "objects={} restored={} failed={}",
+        report.objects,
+        report.deleted,
+        report.failed.len()
+    );
+    let outcome = match report.failed.first() {
+        None => Ok(()),
+        Some(first) => Err(format!("{}: {}", first.key, first.error)),
+    };
+    state.audit_s3(&at, "object.undelete", &detail, &outcome);
+    Ok(report)
+}
+
+/// Deleted but restorable keys one level below the prefix `at.key`.
+#[tauri::command]
+pub async fn browse_deleted(state: St<'_>, at: ObjectRef) -> Cmd<Deleted> {
+    let s3 = state.session(&at).await?;
+    s3.list_deleted(&at.bucket, &at.key).await
+}
+
+/// Switches the bucket's versioning on or suspends it, and reports the state that reads back.
+#[tauri::command]
+pub async fn browse_set_versioning(state: St<'_>, at: ObjectRef, enabled: bool) -> Cmd<Versioning> {
+    let s3 = state.session(&at).await?;
+    let result = s3.set_versioning(&at.bucket, enabled).await;
+    let detail = format!("status={}", if enabled { "Enabled" } else { "Suspended" });
+    state.audit_s3(&at, "bucket.versioning.set", &detail, &result);
+    result?;
+    Ok(s3.versioning(&at.bucket).await)
 }
 
 // ---- preview ----------------------------------------------------------------
@@ -585,10 +631,11 @@ pub async fn browse_delete_many(
     }
     let report = s3.delete_many(&at.bucket, all).await;
     let detail = format!(
-        "objects={} deleted={} failed={} folders={}",
+        "objects={} deleted={} failed={} delete_markers={} folders={}",
         report.objects,
         report.deleted,
         report.failed.len(),
+        report.markers.len(),
         prefixes.join(",")
     );
     let outcome = match report.failed.first() {

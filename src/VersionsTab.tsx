@@ -24,6 +24,7 @@ const STATUS: Record<string, string> = {
 export default function VersionsTab({ at, startTransfer, onChanged, versioning }: ObjectTabProps) {
   const [versions, setVersions] = useState<Version[] | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  const [restored, setRestored] = useState<string | null>(null);
   const { busy, error, run, setError } = useAction();
 
   const load = async () => {
@@ -40,6 +41,7 @@ export default function VersionsTab({ at, startTransfer, onChanged, versioning }
     const command = pending.kind === "restore" ? "browse_restore" : "browse_delete";
     const done = await run(() => invoke(command, { at: target }).then(() => true));
     if (!done) return;
+    setRestored(pending.kind === "restore" ? pending.version.version_id : null);
     setPending(null);
     await load();
     onChanged();
@@ -54,9 +56,17 @@ export default function VersionsTab({ at, startTransfer, onChanged, versioning }
         ? `Gỡ delete marker ${v.version_id}. Object ${at.key} sẽ hiện lại với version ngay trước đó.`
         : `Xoá vĩnh viễn version ${v.version_id} (${formatBytes(v.size)}) của ${at.key}. Không khôi phục được.`;
 
+  const deleted = versions?.[0]?.delete_marker === true;
   return (
     <Stack spacing={2}>
       <Alert severity="info">{STATUS[versioning.status] ?? `Versioning: ${versioning.status}`}</Alert>
+      {deleted && (
+        <Alert severity="warning">
+          Object này đang ở trạng thái đã xoá: version mới nhất là một delete marker. Bấm Khôi phục ở version muốn lấy lại, hoặc
+          Gỡ marker để quay về version ngay trước khi xoá.
+        </Alert>
+      )}
+      {restored && <Alert severity="success">Đã khôi phục: version {restored} giờ là nội dung hiện tại của object (dưới dạng một version mới).</Alert>}
       <Box>
         <Button onClick={load} disabled={busy}>
           Làm mới
@@ -88,6 +98,7 @@ export default function VersionsTab({ at, startTransfer, onChanged, versioning }
               {!ver.delete_marker && !ver.is_latest && (
                 <Button
                   size="small"
+                  variant="contained"
                   onClick={() => setPending({ kind: "restore", version: ver })}
                   aria-label={`Khôi phục version ${ver.version_id}`}
                 >

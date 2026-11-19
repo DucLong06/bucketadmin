@@ -35,7 +35,7 @@
     await shot("01-browse-session");
     await clickSel('[aria-label="Danh sách bucket"] [role=button]');
     await waitFor(() => hasText("4 thư mục, 0 object đã tải"), "bucket root");
-    await waitFor(() => hasText("Versioning: Enabled"), "versioning chip");
+    await waitFor(() => hasText("Versioning: Bật"), "versioning chip");
     await shot("02-bucket-root");
 
     // ---- text: line numbers, Ctrl-F, find
@@ -173,7 +173,7 @@
     // ---- versions
     await openFolder("notes/");
     await openObject("notes/versioned.txt");
-    await click("Versions");
+    await click("Phiên bản");
     await waitFor(() => versions() === 3, "three versions");
     await shot("14-versions");
     last(all('[aria-label^="Khôi phục version"]')).click();
@@ -231,10 +231,21 @@
     await openObject("bin/upload-20m.bin");
     await click("Properties");
     await click("Xoá object");
-    await waitFor(() => hasText("Xoá object?"), "delete confirmation");
+    await waitFor(() => hasText("Xoá object?") && hasText("khôi phục được từ tab Phiên bản"), "delete confirmation says it can be undone");
     await click("Xoá object");
     await drawersGone();
-    await waitFor(() => !objectLink("bin/upload-20m.bin"), "object gone from the listing");
+    await waitFor(() => hasText("Đã đánh dấu xoá 1 object") && button("Hoàn tác") && !objectLink("bin/upload-20m.bin"), "object gone, undo offered");
+    // ---- the deleted object can still be found, with nothing but its versions
+    await click("Hiện object đã xoá");
+    await waitFor(() => hasText("1 object đã xoá còn khôi phục được") && objectLink("bin/upload-20m.bin"), "deleted object listed");
+    check(!document.querySelector('input[aria-label="Chọn upload-20m.bin"]'), "a deleted object cannot be ticked");
+    await openObject("bin/upload-20m.bin");
+    await waitFor(() => hasText("đang ở trạng thái đã xoá") && all('[aria-label^="Gỡ marker"]').length === 1, "versions of the deleted object");
+    check(all(".MuiDrawer-paper [role=tab]").length === 1, "a deleted object only has its versions tab");
+    await shot("17a-deleted-shown");
+    await closeDrawer();
+    await click("Ẩn object đã xoá");
+    await waitFor(() => !objectLink("bin/upload-20m.bin"), "deleted objects hidden again");
 
     // ---- Copy URL of the one ticked object (a real Enter from the shell: the clipboard ignores synthetic clicks)
     await openFolder("notes/");
@@ -256,7 +267,7 @@
     await shot("17c-create-bucket");
     await click("Tạo bucket");
     await dialogsGone();
-    await waitFor(() => hasText("Versioning: Enabled") && hasText("Thư mục trống.") && button("ba-m5-ui-new"), "new versioned bucket opened");
+    await waitFor(() => hasText("Versioning: Bật") && hasText("Thư mục trống.") && button("ba-m5-ui-new"), "new versioned bucket opened");
     await click("Tạo thư mục");
     await type("Tên thư mục", "reports");
     await click("Tạo thư mục");
@@ -274,11 +285,30 @@
     await waitFor(() => all('[aria-label="Mở thư mục reports/"]').length === 1, "bucket root");
     last(all('input[aria-label="Chọn tất cả các dòng đang hiện"]')).click();
     await click("Xoá (1)");
-    await waitFor(() => hasText("Xoá vĩnh viễn 2 object") && hasText("toàn bộ nội dung của 1 thư mục (reports/)"), "confirmation counts the folder's content");
+    await waitFor(
+      () => hasText("Xoá 2 object trong bucket ba-m5-ui-new") && hasText("toàn bộ nội dung của 1 thư mục (reports/)") && hasText("khôi phục được từ tab Phiên bản"),
+      "confirmation counts the folder's content",
+    );
     await shot("17e-delete-confirm");
     await click("Xoá 2 object");
     await dialogsGone();
-    await waitFor(() => hasText("Đã xoá 2 object.") && hasText("Thư mục trống."), "selection deleted");
+    await waitFor(() => hasText("Đã đánh dấu xoá 2 object") && hasText("Thư mục trống."), "selection deleted");
+    // ---- undo from the toast, then versioning off: the same delete is now final
+    await click("Hoàn tác");
+    await waitFor(() => hasText("Đã khôi phục 2 object.") && all('[aria-label="Mở thư mục reports/"]').length === 1, "delete undone");
+    await shot("17f-undone");
+    await click("Tắt versioning");
+    await waitFor(() => hasText("Tắt versioning?"), "versioning confirmation");
+    await click("Tắt versioning");
+    await dialogsGone();
+    await waitFor(() => hasText("Versioning: Tạm dừng") && button("Bật versioning"), "versioning suspended");
+    last(all('input[aria-label="Chọn tất cả các dòng đang hiện"]')).click();
+    await click("Xoá (1)");
+    await waitFor(() => hasText("KHÔNG THỂ HOÀN TÁC"), "red warning: this delete is final");
+    await shot("17g-final-delete");
+    await click("Xoá 2 object");
+    await dialogsGone();
+    await waitFor(() => hasText("Đã xoá 2 object.") && hasText("Thư mục trống.") && !button("Hoàn tác"), "deleted for good, no undo offered");
     all('[aria-label="Danh sách bucket"] [role=button]')[0].click(); // the first of the two buckets now listed
     await waitFor(() => hasText("4 thư mục, 0 object đã tải"), "back in the fixture bucket");
 
@@ -300,10 +330,12 @@
     await waitFor(() => rows() === 1 && hasText("verified=true"), "acl.set row");
     await type("Action", "acl.set_many");
     await waitFor(() => rows() === 1 && hasText("objects=3 applied=3 unverified=0 failed=0"), "acl.set_many row");
-    for (const action of ["bucket.create", "folder.create", "object.delete_many", "object.tags.set"]) {
+    for (const action of ["bucket.create", "folder.create", "object.undelete", "bucket.versioning.set", "object.tags.set"]) {
       await type("Action", action);
       await waitFor(() => rows() === 1, `one ${action} row`);
     }
+    await type("Action", "object.delete_many");
+    await waitFor(() => rows() === 2 && hasText("delete_markers=2") && hasText("delete_markers=0"), "two object.delete_many rows");
 
     await click("Clusters");
     await clickSel('[aria-label="Xoá cluster lab"]');
