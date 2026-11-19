@@ -15,6 +15,14 @@ pub struct ClusterProfile {
     pub label: String,
     pub endpoint: String,
     pub access_key: String,
+    /// Access key of the personal S3 key saved for "browse with my own key"; its secret is
+    /// in the keychain under `<id>.browse`. Absent in files written before M6.
+    #[serde(default)]
+    pub browse_access_key: Option<String>,
+    /// "I am a normal user": the key has no admin caps, so the UI hides the admin screens
+    /// and never calls the Admin API for this profile.
+    #[serde(default)]
+    pub plain_user: bool,
 }
 
 /// Where secret keys go. The app uses [`Keychain`]; tests use an in-memory map.
@@ -135,6 +143,8 @@ impl<S: SecretStore> ProfileStore<S> {
             label: label.into(),
             endpoint: endpoint.into(),
             access_key: access_key.into(),
+            browse_access_key: None,
+            plain_user: false,
         })?;
         let _guard = self.lock.lock().map_err(|e| e.to_string())?;
         let mut profiles = self.read()?;
@@ -168,22 +178,104 @@ impl<S: SecretStore> ProfileStore<S> {
         let mut profiles = self.read()?;
         profiles.retain(|p| p.id != id);
         self.write(&profiles)?;
+        self.secrets.delete(&browse_secret_id(id))?;
         self.secrets.delete(id)
+    }
+
+    /// Saves (or replaces) the personal S3 key the Browse page signs with in "my own key"
+    /// mode. Nothing is checked against the cluster here: no Admin API call is involved.
+    pub fn set_browse_key(
+        &self,
+        id: &str,
+        access_key: &str,
+        secret_key: &str,
+    ) -> Result<ClusterProfile, String> {
+        // Pasted keys often carry a trailing newline or space; S3 keys never contain one.
+        let (access_key, secret_key) = (access_key.trim(), secret_key.trim());
+        if access_key.is_empty() || secret_key.is_empty() {
+            return Err("access key and secret key are required".into());
+        }
+        self.change(id, |profile| {
+            self.secrets.set(&browse_secret_id(id), secret_key)?;
+            profile.browse_access_key = Some(access_key.to_string());
+            Ok(())
+        })
+    }
+
+    /// Marks the profile as a normal user's (or back). A normal user's cluster key is their
+    /// personal key, so it also becomes the browse key unless one was already entered.
+    pub fn set_plain_user(&self, id: &str, plain: bool) -> Result<ClusterProfile, String> {
+        self.change(id, |profile| {
+            if plain && profile.browse_access_key.is_none() {
+                let secret = self.secrets.get(id)?;
+                self.secrets.set(&browse_secret_id(id), &secret)?;
+                profile.browse_access_key = Some(profile.access_key.clone());
+            }
+            profile.plain_user = plain;
+            Ok(())
+        })
+    }
+
+    /// Forgets the personal key: the keychain entry and its access key in the profile.
+    pub fn clear_browse_key(&self, id: &str) -> Result<ClusterProfile, String> {
+        self.change(id, |profile| {
+            self.secrets.delete(&browse_secret_id(id))?;
+            profile.browse_access_key = None;
+            Ok(())
+        })
+    }
+
+    /// Endpoint plus the personal key saved by [`Self::set_browse_key`].
+    pub fn browse_credentials(&self, id: &str) -> Result<(String, Credentials), String> {
+        let profile = self.find(id)?;
+        let access_key = profile
+            .browse_access_key
+            .ok_or("no personal key saved for this cluster")?;
+        let secret_key = self.secrets.get(&browse_secret_id(id))?;
+        let creds = Credentials {
+            access_key,
+            secret_key,
+        };
+        Ok((profile.endpoint, creds))
+    }
+
+    fn find(&self, id: &str) -> Result<ClusterProfile, String> {
+        let found = self.list()?.into_iter().find(|p| p.id == id);
+        found.ok_or_else(|| format!("no cluster profile with id {id}"))
+    }
+
+    /// Read-modify-write of one profile under the lock; returns the profile as saved.
+    fn change(
+        &self,
+        id: &str,
+        edit: impl FnOnce(&mut ClusterProfile) -> Result<(), String>,
+    ) -> Result<ClusterProfile, String> {
+        let _guard = self.lock.lock().map_err(|e| e.to_string())?;
+        let mut profiles = self.read()?;
+        let slot = profiles
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or_else(|| format!("no cluster profile with id {id}"))?;
+        edit(slot)?;
+        let saved = slot.clone();
+        self.write(&profiles)?;
+        Ok(saved)
     }
 
     /// Endpoint plus full credentials (secret read from the keychain) for a saved profile.
     pub fn credentials(&self, id: &str) -> Result<(String, Credentials), String> {
-        let profile = self
-            .list()?
-            .into_iter()
-            .find(|p| p.id == id)
-            .ok_or_else(|| format!("no cluster profile with id {id}"))?;
+        let profile = self.find(id)?;
         let creds = Credentials {
             access_key: profile.access_key,
             secret_key: self.secrets.get(id)?,
         };
         Ok((profile.endpoint, creds))
     }
+}
+
+/// Keychain entry of a profile's personal browse key (the admin secret is under the bare id).
+fn browse_secret_id(id: &str) -> String {
+    format!("{id}.browse")
 }
 
 /// Trims the fields and rejects profiles that could never connect.
@@ -202,12 +294,12 @@ fn validated(mut p: ClusterProfile) -> Result<ClusterProfile, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::collections::HashMap;
 
     #[derive(Default)]
-    struct MemorySecrets(Mutex<HashMap<String, String>>);
+    pub(crate) struct MemorySecrets(pub(crate) Mutex<HashMap<String, String>>);
 
     impl SecretStore for &MemorySecrets {
         fn set(&self, id: &str, secret: &str) -> Result<(), String> {
@@ -224,7 +316,7 @@ mod tests {
         }
     }
 
-    fn temp_dir(name: &str) -> PathBuf {
+    pub(crate) fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("bucketadmin-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
@@ -292,10 +384,114 @@ mod tests {
             label: "x".into(),
             endpoint: "http://h:1".into(),
             access_key: "AK".into(),
+            browse_access_key: None,
+            plain_user: false,
         };
         assert!(store.update(ghost, Some("SK")).is_err());
         assert!(secrets.0.lock().unwrap().is_empty());
         assert!(!dir.join("profiles.json").exists());
+    }
+
+    #[test]
+    fn browse_key_is_kept_apart_from_the_admin_key() {
+        let dir = temp_dir("browsekey");
+        let secrets = MemorySecrets::default();
+        let store = ProfileStore::new(dir.clone(), &secrets);
+        let p = store
+            .add("lab", "http://h:1", "AKADMIN", "admin-secret")
+            .unwrap();
+        assert_eq!(p.browse_access_key, None);
+        assert!(
+            store.browse_credentials(&p.id).is_err(),
+            "nothing saved yet"
+        );
+        assert!(store.set_browse_key(&p.id, "AKMINE", " ").is_err());
+        assert!(store.set_browse_key("missing", "AKMINE", "s").is_err());
+
+        // Pasted with stray whitespace; saved trimmed.
+        let saved = store
+            .set_browse_key(&p.id, " AKMINE\n", "my-secret\n")
+            .unwrap();
+        assert_eq!(saved.browse_access_key.as_deref(), Some("AKMINE"));
+        let (endpoint, mine) = store.browse_credentials(&p.id).unwrap();
+        assert_eq!(
+            (endpoint.as_str(), mine.access_key.as_str()),
+            ("http://h:1", "AKMINE")
+        );
+        assert_eq!(mine.secret_key, "my-secret");
+        assert_eq!(
+            store.credentials(&p.id).unwrap().1.secret_key,
+            "admin-secret"
+        );
+        let on_disk = std::fs::read_to_string(dir.join("profiles.json")).unwrap();
+        assert!(on_disk.contains("AKMINE") && !on_disk.contains("my-secret"));
+
+        // Entered again: replaced. Deleted: gone from the file and the secret store.
+        store.set_browse_key(&p.id, "AKMINE2", "second").unwrap();
+        assert_eq!(
+            store.browse_credentials(&p.id).unwrap().1.secret_key,
+            "second"
+        );
+        assert_eq!(
+            store.clear_browse_key(&p.id).unwrap().browse_access_key,
+            None
+        );
+        assert!(store.browse_credentials(&p.id).is_err());
+        assert_eq!(
+            secrets.0.lock().unwrap().len(),
+            1,
+            "only the admin secret is left"
+        );
+
+        // Removing the profile takes a saved browse key with it.
+        store.set_browse_key(&p.id, "AKMINE", "my-secret").unwrap();
+        store.remove(&p.id).unwrap();
+        assert!(
+            secrets.0.lock().unwrap().is_empty(),
+            "browse secret left behind"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn plain_user_profile_browses_with_its_own_key() {
+        let dir = temp_dir("plain");
+        let secrets = MemorySecrets::default();
+        let store = ProfileStore::new(dir.clone(), &secrets);
+        let p = store
+            .add("mine", "http://h:1", "AKMINE", "my-secret")
+            .unwrap();
+        assert!(!p.plain_user);
+        let marked = store.set_plain_user(&p.id, true).unwrap();
+        assert!(marked.plain_user);
+        assert_eq!(marked.browse_access_key.as_deref(), Some("AKMINE"));
+        let mine = store.browse_credentials(&p.id).unwrap().1;
+        assert_eq!(mine.secret_key, "my-secret");
+
+        // Unmarking keeps the browse key; marking again does not overwrite one typed in since.
+        assert!(!store.set_plain_user(&p.id, false).unwrap().plain_user);
+        store
+            .set_browse_key(&p.id, "AKOTHER", "other-secret")
+            .unwrap();
+        let again = store.set_plain_user(&p.id, true).unwrap();
+        assert_eq!(again.browse_access_key.as_deref(), Some("AKOTHER"));
+        assert!(store.set_plain_user("missing", true).is_err());
+        store.remove(&p.id).unwrap();
+        assert!(secrets.0.lock().unwrap().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn profiles_written_before_m6_still_load() {
+        let dir = temp_dir("oldfile");
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = r#"[{"id":"1","label":"lab","endpoint":"http://h:1","access_key":"AK"}]"#;
+        std::fs::write(dir.join("profiles.json"), old).unwrap();
+        let secrets = MemorySecrets::default();
+        let listed = ProfileStore::new(dir.clone(), &secrets).list().unwrap();
+        assert_eq!(listed[0].browse_access_key, None);
+        assert!(!listed[0].plain_user);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// Talks to the real Secret Service, so it needs a desktop session with an

@@ -13,7 +13,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { invoke } from "./api";
+import { invoke, keyOwner } from "./api";
 import type { ObjectTabProps } from "./ObjectDrawer";
 import { ErrorAlert, useAction } from "./ui";
 
@@ -41,7 +41,7 @@ export function HeadersTab({ at }: ObjectTabProps) {
     <Stack spacing={2}>
       <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
         <Typography variant="body2" color="text.secondary" sx={{ flexGrow: 1 }}>
-          Header trả về từ một request HEAD thật tới RGW, ký bằng key của user {at.uid}.
+          Header trả về từ một request HEAD thật tới RGW, ký bằng key của {keyOwner(at.uid)}.
         </Typography>
         <Button size="small" onClick={load} disabled={busy}>
           Gửi lại HEAD

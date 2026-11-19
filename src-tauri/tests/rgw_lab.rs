@@ -1034,3 +1034,158 @@ async fn m5_bulk_onboard_20_users() {
             .expect("cleanup");
     }
 }
+
+/// M6.2: a user whose only caps are users=read and usage=read gets its own record, quota and
+/// usage through the app's read paths, and no list of other users. A user without caps gets
+/// nothing from the Admin API, and the app learns that without an error.
+#[tokio::test]
+async fn m6_caller_access_and_self_service() {
+    use bucketadmin_lib::{audit::Audit, ops::Ops, s3::S3};
+    let Some(admin) = lab() else { return };
+    let (me, plain) = ("ba-m6-self", "ba-m6-none");
+    let audit = Audit::in_memory().unwrap();
+    let mut keys = Vec::new();
+    for uid in [me, plain] {
+        let _ = admin.delete_user(uid, true).await; // leftover from an aborted run
+        let created = admin.create_user(uid, "M6 self-service", None, None, None);
+        keys.push(created.await.expect("create test user").keys[0].clone());
+    }
+    admin
+        .add_caps(me, "users=read;usage=read")
+        .await
+        .expect("add caps");
+    // The app's view of the cluster when the saved key is `key`.
+    let ops_as = |key: &KeyPair| {
+        let creds = Credentials {
+            access_key: key.access_key.clone(),
+            secret_key: key.secret_key.clone(),
+        };
+        Ops {
+            admin: RgwAdmin::new(&endpoint(), creds, ReqwestClient::new().unwrap()).unwrap(),
+            audit: &audit,
+            cluster_id: "lab".into(),
+        }
+    };
+    let whoami = |key: &KeyPair| S3::new(&endpoint(), &key.access_key, &key.secret_key);
+
+    // ---- users=read + usage=read: "my own info"
+    let ops = ops_as(&keys[0]);
+    let uid = whoami(&keys[0]).whoami().await.expect("whoami over S3");
+    assert_eq!(uid, me);
+    let access = ops.caller_access(&uid).await.expect("caller_access");
+    println!("{me}: {access:?}");
+    let flags =
+        |a: &bucketadmin_lib::ops::CallerAccess| [a.info, a.users, a.metadata, a.buckets, a.usage];
+    assert_eq!(flags(&access), [false, true, false, false, true]);
+    let caps: Vec<String> = access
+        .caps
+        .iter()
+        .map(|c| format!("{}={}", c.cap_type, c.perm))
+        .collect();
+    assert_eq!(caps, ["usage=read", "users=read"]);
+
+    let info = ops.get_user(me).await.expect("own record");
+    assert_eq!(info.user_id, me);
+    assert!(
+        info.keys[0].secret_key.is_empty(),
+        "secret stays in the backend"
+    );
+    let quotas = ops.get_quotas(me).await.expect("own quota");
+    assert!(!quotas.user.enabled && !quotas.bucket.enabled);
+    let usage = ops.get_usage(me, None, None).await.expect("own usage");
+    println!(
+        "{me}: own usage entries = {} (the lab's usage log is off)",
+        usage.entries.len()
+    );
+    // Other users are not listed for this key, neither are buckets.
+    let listed = ops.list_users_page(None, 10).await.unwrap_err();
+    assert!(listed.starts_with("AccessDenied"), "{listed}");
+    let buckets = ops.list_buckets(None).await.unwrap_err();
+    assert!(buckets.starts_with("AccessDenied"), "{buckets}");
+
+    // ---- no caps: five refusals, reported as "nothing", not as an error
+    let uid = whoami(&keys[1]).whoami().await.expect("whoami over S3");
+    assert_eq!(uid, plain);
+    let access = ops_as(&keys[1]).caller_access(&uid).await.unwrap();
+    println!("{plain}: {access:?}");
+    assert_eq!((flags(&access), access.caps.len()), ([false; 5], 0));
+
+    // ---- the lab's admin key, for the record
+    let creds = (
+        std::env::var("RGW_ACCESS_KEY").unwrap(),
+        std::env::var("RGW_SECRET_KEY").unwrap(),
+    );
+    let uid = S3::new(&endpoint(), &creds.0, &creds.1)
+        .whoami()
+        .await
+        .unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+    let access = ops.caller_access(&uid).await.unwrap();
+    println!(
+        "lab admin {uid}: flags {:?} caps {:?}",
+        flags(&access),
+        access.caps
+    );
+    assert_eq!(flags(&access), [true; 5]);
+    assert_eq!(
+        audit.recent(None, None).unwrap().len(),
+        0,
+        "nothing here is a mutation"
+    );
+
+    for uid in [me, plain] {
+        ops.admin.delete_user(uid, true).await.expect("cleanup");
+    }
+}
+
+// ---- users for FLOW=selfservice of scripts/ui-smoke/ui-smoke.sh ----
+
+/// (uid, caps). Their keys are fixed (`BAM6UISMOKEKEY00000<n>`), so the driver can type them.
+const M6_UI_USERS: [(&str, &str); 3] = [
+    ("ba-m6-ui-plain", ""),
+    ("ba-m6-ui-self", "users=read;usage=read"),
+    (
+        "ba-m6-ui-ro",
+        "users=read;metadata=read;buckets=read;usage=read;info=read",
+    ),
+];
+
+async fn ui_smoke_m6_cleanup(admin: &RgwAdmin) {
+    for uid in M6_UI_USERS
+        .map(|(uid, _)| uid)
+        .into_iter()
+        .chain(["ba-m6-ui-new"])
+    {
+        let _ = admin.delete_user(uid, true).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
+async fn ui_smoke_m6_fixture_create() {
+    let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
+    ui_smoke_m6_cleanup(&admin).await;
+    for (n, (uid, caps)) in M6_UI_USERS.into_iter().enumerate() {
+        let n = n + 1;
+        let access = format!("BAM6UISMOKEKEY00000{n}");
+        let secret = format!("bam6uismokesecret00000000000000000000000{n}");
+        admin
+            .create_user(uid, "M6 UI smoke", None, Some(&access), Some(&secret))
+            .await
+            .expect("create fixture user");
+        if !caps.is_empty() {
+            admin.add_caps(uid, caps).await.expect("add caps");
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
+async fn ui_smoke_m6_fixture_remove() {
+    let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
+    ui_smoke_m6_cleanup(&admin).await;
+}

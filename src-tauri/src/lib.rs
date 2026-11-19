@@ -7,9 +7,12 @@ pub mod rgw_admin;
 pub mod s3;
 
 use audit::{Audit, AuditEntry};
+/// How a browse session gets its S3 client; public so the lab tests build one the app's way.
+pub use browse::connect as browse_connect;
 use clusters::{ClusterProfile, ProfileStore};
 use ops::{
-    BucketDetail, NewSubuser, Ops, Quotas, RotatedKey, TrimmedUsage, UsageSupport, UsersPage,
+    BucketDetail, CallerAccess, NewSubuser, Ops, Quotas, RotatedKey, TrimmedUsage, UsageSupport,
+    UsersPage,
 };
 use ops::{OnboardResult, OnboardRow};
 use rgw_admin::{
@@ -80,6 +83,12 @@ fn remove_profile(state: St<'_>, id: String) -> Cmd<'_, ()> {
     state.profiles.remove(&id)
 }
 
+/// Ticks or clears "I am a normal user" on a saved profile.
+#[tauri::command(async)]
+fn profile_set_plain(state: St<'_>, id: String, plain: bool) -> Cmd<'_, ClusterProfile> {
+    state.profiles.set_plain_user(&id, plain)
+}
+
 /// Test credentials typed into the form, before anything is saved.
 #[tauri::command]
 async fn test_connection(
@@ -100,6 +109,16 @@ async fn test_connection(
 async fn test_profile(state: St<'_>, id: String) -> Cmd<'_, ClusterInfo> {
     let (endpoint, creds) = state.profiles.credentials(&id)?;
     state.cluster_info(&endpoint, creds).await
+}
+
+/// Who the saved key belongs to (asked over S3, which needs no cap) and what it may read on
+/// the Admin API. Decides which admin screens the UI offers.
+#[tauri::command]
+async fn caller_access(state: St<'_>, cluster_id: String) -> Cmd<'_, CallerAccess> {
+    let (endpoint, creds) = state.profiles.credentials(&cluster_id)?;
+    let own = s3::S3::new(&endpoint, &creds.access_key, &creds.secret_key);
+    let uid = own.whoami().await?;
+    state.ops(&cluster_id)?.caller_access(&uid).await
 }
 
 // ---- users ----------------------------------------------------------------
@@ -395,8 +414,10 @@ pub fn run() {
             list_profiles,
             add_profile,
             remove_profile,
+            profile_set_plain,
             test_connection,
             test_profile,
+            caller_access,
             users_list,
             user_get,
             user_create,
@@ -423,6 +444,8 @@ pub fn run() {
             bucket_quota_set,
             audit_recent,
             bulk_onboard,
+            browse::browse_key_set,
+            browse::browse_key_clear,
             browse::browse_open,
             browse::browse_list,
             browse::browse_pick_upload,

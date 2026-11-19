@@ -1,7 +1,10 @@
 //! The Browse page's commands. Every S3 call here is signed with the key of the user being
 //! browsed as. The admin credentials are used for exactly one thing: looking up that key.
+//! In "my own key" mode (an empty `uid`) they are not used at all: the session signs with
+//! the personal key the user typed in, and no Admin API request is made.
 
-use crate::rgw_admin::RgwAdmin;
+use crate::clusters::{ClusterProfile, ProfileStore, SecretStore};
+use crate::rgw_admin::{HttpClient, RgwAdmin};
 use crate::s3::acl::{Acl, AppliedAcl, Grant, VersionEntry, Versioning};
 use crate::s3::manage::{DeleteReport, ObjectTag, MAX_DELETE};
 use crate::s3::parquet::ParquetPage;
@@ -20,6 +23,7 @@ type Cmd<T> = Result<T, String>;
 type St<'a> = State<'a, AppState>;
 
 /// One S3 client per (cluster, uid), so the user's key is looked up once, not per request.
+/// The empty uid is the session of the personal key ("my own key").
 #[derive(Default)]
 pub struct Sessions(Mutex<HashMap<(String, String), S3>>);
 
@@ -43,7 +47,33 @@ impl Transfers {
     }
 }
 
-/// What a command acts on, and as whom. `key` is empty for bucket-level commands.
+/// The S3 client a browse session signs with. An empty `uid` means "my own key": the personal
+/// key saved for the cluster, without any Admin API request. Any other `uid` is looked up
+/// with the admin credentials to get that user's key.
+pub async fn connect<S: SecretStore, H: HttpClient>(
+    profiles: &ProfileStore<S>,
+    http: H,
+    cluster_id: &str,
+    uid: &str,
+) -> Result<S3, String> {
+    if uid.is_empty() {
+        let (endpoint, mine) = profiles.browse_credentials(cluster_id)?;
+        return Ok(S3::new(&endpoint, &mine.access_key, &mine.secret_key));
+    }
+    let (endpoint, admin_creds) = profiles.credentials(cluster_id)?;
+    let admin = RgwAdmin::new(&endpoint, admin_creds, http).map_err(|e| e.to_string())?;
+    let user = admin.get_user(uid).await.map_err(|e| e.to_string())?;
+    // shortcut: always the user's first S3 key; let the admin pick one if users with
+    // several keys of different reach turn out to matter.
+    let key = user
+        .keys
+        .first()
+        .ok_or_else(|| format!("user {uid} has no S3 key to browse with"))?;
+    Ok(S3::new(&endpoint, &key.access_key, &key.secret_key))
+}
+
+/// What a command acts on, and as whom (`uid` empty: with the caller's own saved key).
+/// `key` is empty for bucket-level commands.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ObjectRef {
@@ -79,17 +109,7 @@ impl AppState {
                 return Ok(s3.clone());
             }
         }
-        let (endpoint, admin_creds) = self.profiles.credentials(cluster_id)?;
-        let admin = RgwAdmin::new(&endpoint, admin_creds, self.http.clone());
-        let user = admin.map_err(|e| e.to_string())?.get_user(uid).await;
-        let user = user.map_err(|e| e.to_string())?;
-        // shortcut: always the user's first S3 key; let the admin pick one if users with
-        // several keys of different reach turn out to matter.
-        let key = user
-            .keys
-            .first()
-            .ok_or_else(|| format!("user {uid} has no S3 key to browse with"))?;
-        let s3 = S3::new(&endpoint, &key.access_key, &key.secret_key);
+        let s3 = connect(&self.profiles, self.http.clone(), cluster_id, uid).await?;
         let mut sessions = self.browse.0.lock().map_err(|e| e.to_string())?;
         sessions.insert(cache_key, s3.clone());
         Ok(s3)
@@ -112,7 +132,11 @@ impl AppState {
             "" => at.bucket.clone(),
             key => format!("{}/{key}", at.bucket),
         };
-        let mut full = format!("as={}", at.uid);
+        let who = match at.uid.as_str() {
+            "" => "own-key", // never the key itself
+            uid => uid,
+        };
+        let mut full = format!("as={who}");
         if let Some(version) = at.version() {
             full.push_str(&format!(" version={version}"));
         }
@@ -130,6 +154,35 @@ impl AppState {
     }
 }
 
+/// Drops the cached own-key session, so a replaced or deleted key stops being used at once.
+fn forget_own_session(state: &AppState, cluster_id: &str) {
+    if let Ok(mut sessions) = state.browse.0.lock() {
+        sessions.remove(&(cluster_id.to_string(), String::new()));
+    }
+}
+
+/// Saves the personal S3 key for "browse with my own key": the secret goes to the OS
+/// keychain, the access key to the profile. Entering a key again replaces the old one.
+#[tauri::command(async)]
+pub fn browse_key_set(
+    state: St<'_>,
+    cluster_id: String,
+    access_key: String,
+    secret_key: String,
+) -> Cmd<ClusterProfile> {
+    forget_own_session(&state, &cluster_id);
+    state
+        .profiles
+        .set_browse_key(&cluster_id, &access_key, &secret_key)
+}
+
+/// Deletes the personal key from the keychain and the profile.
+#[tauri::command(async)]
+pub fn browse_key_clear(state: St<'_>, cluster_id: String) -> Cmd<ClusterProfile> {
+    forget_own_session(&state, &cluster_id);
+    state.profiles.clear_browse_key(&cluster_id)
+}
+
 #[derive(Serialize)]
 pub struct Opened {
     /// Which of the user's keys the session signs with (the secret stays in the backend).
@@ -137,7 +190,8 @@ pub struct Opened {
     buckets: Vec<BucketEntry>,
 }
 
-/// Starts (or restarts) browsing as `uid` and lists the buckets that user owns.
+/// Starts (or restarts) browsing as `uid` (empty: with the caller's own saved key) and lists
+/// the buckets that key's user owns.
 #[tauri::command]
 pub async fn browse_open(state: St<'_>, cluster_id: String, uid: String) -> Cmd<Opened> {
     let s3 = state.s3(&cluster_id, &uid, true).await?;
@@ -526,4 +580,38 @@ pub async fn browse_tags_put(state: St<'_>, at: ObjectRef, tags: Vec<ObjectTag>)
     let detail = format!("tags={}", keys.join(","));
     state.audit_s3(&at, "object.tags.set", &detail, &result);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::clusters::tests::{temp_dir, MemorySecrets};
+    use crate::rgw_admin::mock::Mock;
+
+    /// M6.1: the session of "my own key" is built from the saved key alone. The mock transport
+    /// stands where the Admin API would be: it must see nothing.
+    #[tokio::test]
+    async fn own_key_session_makes_no_admin_request() {
+        let dir = temp_dir("ownkey");
+        let secrets = MemorySecrets::default();
+        let store = ProfileStore::new(dir.clone(), &secrets);
+        let admin_endpoint = "http://rgw.test:7480";
+        let p = store.add("lab", admin_endpoint, "AK", "SK").unwrap();
+
+        let none = Mock::default();
+        let err = connect(&store, &none, &p.id, "").await.err().unwrap();
+        assert_eq!(err, "no personal key saved for this cluster");
+        store.set_browse_key(&p.id, "AKMINE", "my-secret").unwrap();
+        let s3 = connect(&store, &none, &p.id, "").await.unwrap();
+        assert_eq!(s3.access_key(), "AKMINE");
+        assert_eq!(none.calls(), [] as [&str; 0], "own key: no Admin API call");
+
+        // Browsing as another user is the one case that asks the Admin API (for that key).
+        let user = r#"{"user_id":"alice","keys":[{"user":"alice","access_key":"AKALICE","secret_key":"s"}]}"#;
+        let lookup = Mock::reply(200, user);
+        let s3 = connect(&store, &lookup, &p.id, "alice").await.unwrap();
+        assert_eq!(s3.access_key(), "AKALICE");
+        assert_eq!(lookup.calls(), ["GET /admin/user?format=json&uid=alice"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

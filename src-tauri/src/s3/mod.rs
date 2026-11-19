@@ -130,6 +130,15 @@ impl S3 {
         &self.client
     }
 
+    /// The uid this key belongs to: the owner RGW names in its ListBuckets answer. Any valid
+    /// key may ask; no admin cap is involved.
+    pub async fn whoami(&self) -> Result<String, String> {
+        let out = self.client.list_buckets().send().await.map_err(s3_error)?;
+        let id = out.owner().and_then(|owner| owner.id());
+        id.map(str::to_string)
+            .ok_or_else(|| "RGW did not say which user this key belongs to".to_string())
+    }
+
     /// Buckets owned by the user. Buckets shared with the user by policy or ACL are not
     /// listed by S3; they can still be opened by name.
     pub async fn list_buckets(&self) -> Result<Vec<BucketEntry>, String> {

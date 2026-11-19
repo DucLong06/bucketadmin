@@ -1,7 +1,7 @@
 import { type ComponentType, useEffect, useState } from "react";
 import { Box, Button, Divider, Drawer, Stack, Tab, Tabs, TextField, Typography } from "@mui/material";
 import { AclTab } from "./AclEditor";
-import { invoke, type ObjectEntry } from "./api";
+import { invoke, keyOwner, type ObjectEntry } from "./api";
 import { formatBytes, shortTime } from "./format";
 import { HeadersTab, TagsTab, type Inspected } from "./InspectTabs";
 import PreviewTab from "./preview/Preview";
@@ -101,7 +101,7 @@ function DetailsTab({ at, object, startTransfer, onChanged, onClose }: ObjectTab
           Presigned URL
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Ai có URL này đều tải được object cho đến khi hết hạn, không cần key. URL ký bằng key của user {at.uid}.
+          Ai có URL này đều tải được object cho đến khi hết hạn, không cần key. URL ký bằng key của {keyOwner(at.uid)}.
         </Typography>
         <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
           <TextField

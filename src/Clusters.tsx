@@ -1,15 +1,16 @@
 import { type FormEvent, useState } from "react";
-import { Alert, Button, Paper, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Button, Checkbox, FormControlLabel, Paper, Stack, TextField, Typography } from "@mui/material";
 import { invoke, maskKey, type ClusterInfo, type Profile } from "./api";
 import { endpointError } from "./endpoint";
 import { ErrorAlert } from "./ui";
 
-type Outcome = { severity: "success" | "error"; text: string };
+type Outcome = { severity: "success" | "warning" | "error"; text: string };
 
 const outcomeAlert = (o: Outcome, sx?: object) =>
-  o.severity === "error" ? <ErrorAlert error={o.text} sx={sx} /> : <Alert severity="success" sx={sx}>{o.text}</Alert>;
+  o.severity === "error" ? <ErrorAlert error={o.text} sx={sx} /> : <Alert severity={o.severity} sx={sx}>{o.text}</Alert>;
 
 const emptyForm = { label: "", endpoint: "", accessKey: "", secretKey: "" };
+const PLAIN_LABEL = "Tôi là user thường (key không có caps admin): ẩn các tab admin, chỉ dùng Browse";
 
 async function testOutcome(call: Promise<ClusterInfo>): Promise<Outcome> {
   try {
@@ -19,12 +20,21 @@ async function testOutcome(call: Promise<ClusterInfo>): Promise<Outcome> {
       text: `Kết nối thành công. cluster_id: ${info.cluster_id} · version: ${info.version ?? "không rõ"}`,
     };
   } catch (e) {
-    return { severity: "error", text: String(e) };
+    const text = String(e);
+    // RGW checks the signature before the caps: a refusal for caps means the key itself is good.
+    if (text.startsWith("AccessDenied (403)")) {
+      return {
+        severity: "warning",
+        text: "Endpoint trả lời và key hợp lệ, nhưng key này không có caps admin (info=read). Tab Browse vẫn dùng được bằng chính key này; nếu bạn là user thường, hãy tick \"Tôi là user thường\".",
+      };
+    }
+    return { severity: "error", text };
   }
 }
 
 export default function Clusters({ profiles, onChanged }: { profiles: Profile[]; onChanged: () => void }) {
   const [form, setForm] = useState(emptyForm);
+  const [plain, setPlain] = useState(false);
   const [formOutcome, setFormOutcome] = useState<Outcome | null>(null);
   const [rowOutcome, setRowOutcome] = useState<Record<string, Outcome>>({});
   const [busy, setBusy] = useState(false);
@@ -58,11 +68,18 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
     try {
       const saved = await invoke<Profile>("add_profile", form);
       setForm(emptyForm);
+      setPlain(false);
+      // The profile exists from here on. If ticking it fails, it is still listed (unticked)
+      // and the error says why; the box in its row can be ticked again.
+      try {
+        if (plain) await invoke("profile_set_plain", { id: saved.id, plain: true });
+      } finally {
+        onChanged();
+      }
       setFormOutcome({
         severity: "success",
         text: `Đã lưu "${saved.label}". Secret key được cất trong keychain của hệ thống.`,
       });
-      onChanged();
     } catch (err) {
       fail(err);
     }
@@ -93,6 +110,7 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
           })}
           {field("accessKey", "Access key", { autoComplete: "off" })}
           {field("secretKey", "Secret key", { type: "password", autoComplete: "off" })}
+          <FormControlLabel control={<Checkbox checked={plain} onChange={(e) => setPlain(e.target.checked)} />} label={PLAIN_LABEL} />
           <Stack direction="row" spacing={1}>
             <Button variant="outlined" onClick={testForm} disabled={!canTest}>
               Kiểm tra kết nối
@@ -130,6 +148,16 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
                 Xoá
               </Button>
             </Stack>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  size="small"
+                  checked={!!p.plain_user}
+                  onChange={(e) => invoke("profile_set_plain", { id: p.id, plain: e.target.checked }).then(onChanged).catch(fail)}
+                />
+              }
+              label={<Typography variant="body2">{PLAIN_LABEL}</Typography>}
+            />
             {rowOutcome[p.id] && outcomeAlert(rowOutcome[p.id], { mt: 1 })}
           </Paper>
         ))}

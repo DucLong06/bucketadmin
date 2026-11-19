@@ -1,7 +1,26 @@
 // Shapes returned by the Tauri commands (src-tauri/src/lib.rs).
-export { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { withNeededCaps } from "./caps";
 
-export type Profile = { id: string; label: string; endpoint: string; access_key: string };
+/** Calls a backend command. An Admin API refusal comes back naming the caps the command needs. */
+export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await tauriInvoke<T>(command, args);
+  } catch (e) {
+    throw withNeededCaps(command, String(e));
+  }
+}
+
+export type Profile = {
+  id: string;
+  label: string;
+  endpoint: string;
+  access_key: string;
+  /** Access key of the personal key saved for "browse with my own key" (its secret stays in the keychain). */
+  browse_access_key?: string | null;
+  /** "Tôi là user thường": no admin caps, so the admin screens are hidden and the Admin API is not called. */
+  plain_user?: boolean;
+};
 export type ClusterInfo = { cluster_id: string; version: string | null };
 /** `secret_key` is empty except in the response that creates the key. */
 export type KeyPair = { user: string; access_key: string; secret_key: string };
@@ -14,6 +33,7 @@ export type UserInfo = {
   display_name: string;
   email: string;
   suspended: number;
+  max_buckets?: number;
   keys: KeyPair[];
   caps: Capability[];
   subusers: Subuser[];
@@ -42,6 +62,9 @@ export type AuditEntry = {
 
 /** The uid RGW expects in requests: `tenant$uid` for tenanted users. */
 export const uidOf = (u: UserInfo) => (u.tenant ? `${u.tenant}$${u.user_id}` : u.user_id);
+
+/** Whose key a browse session signs with; the empty uid is the caller's own saved key. */
+export const keyOwner = (uid: string) => (uid ? `user ${uid}` : "bạn");
 
 /** Keeps the admin access key recognisable without showing it in full. */
 export const maskKey = (key: string) => (key.length > 8 ? `${key.slice(0, 4)}…${key.slice(-4)}` : key);

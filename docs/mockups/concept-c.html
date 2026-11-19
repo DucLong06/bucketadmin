@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BucketAdmin — Concept C: Lưới</title>
+<style>
+:root{color-scheme:dark;--bg:#0a0a0f;--tile:#14141b;--inset:#1c1c26;--line:#2c2c3b;--text:#ececf4;--muted:#a4a4ba;
+  --violet:#a78bfa;--green:#4ade80;--warn:#fbbf24;--danger:#fb7185;--r:16px;--ri:12px;
+  --sans:"Avenir Next","Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,Roboto,"Noto Sans",sans-serif;
+  --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:12px;min-width:1180px;padding:0 12px 12px;background:var(--bg);color:var(--text);font:14px/1.45 var(--sans)}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--violet);outline-offset:2px}
+h1,h2,h3,p,dl,dd,ol,ul{margin:0;padding:0}
+code,.mono{font-family:var(--mono);font-size:12.5px}
+svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.muted{color:var(--muted)}
+.grow{flex:1}
+
+.caption{margin:0 -12px -12px;padding:6px 16px;color:var(--muted);font-size:12px}
+.tile{display:flex;flex-direction:column;min-width:0;min-height:0;border:1px solid var(--line);border-radius:var(--r);background:var(--tile);overflow:hidden}
+.pad{padding:14px 16px}
+.label{color:var(--muted);font-size:12.5px}
+
+/* header tile */
+.top{flex-direction:row;align-items:center;gap:14px;height:56px;padding:0 12px 0 14px}
+.brand{display:flex;align-items:center;gap:10px;font-size:15px;font-weight:700;letter-spacing:-.01em}
+.mark{width:26px;height:26px;border-radius:9px;background:linear-gradient(135deg,var(--violet),var(--green))}
+.top nav{display:flex;gap:4px;padding:4px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg)}
+.top nav button{height:30px;padding:0 14px;border:1px solid transparent;border-radius:var(--ri);background:none;color:var(--muted)}
+.top nav button:hover{color:var(--text)}
+.top nav button[aria-current="true"]{background:var(--inset);border-color:var(--line);color:var(--violet);font-weight:600}
+.field{height:36px;padding:0 12px;border:1px solid var(--line);border-radius:var(--ri);background:var(--bg)}
+.badge{display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:999px;background:var(--inset);border:1px solid var(--line);font-size:12.5px;font-weight:600;white-space:nowrap}
+.badge::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.badge.warn{color:var(--warn)} .badge.ok{color:var(--green)}
+
+/* shared */
+.view{display:flex;gap:12px;min-height:0}
+.grid{flex:1;display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:12px;min-width:0;min-height:0}
+.bar{display:flex;align-items:center;gap:8px;padding:12px 14px}
+.bar h1,.bar h2{font-size:15px;font-weight:650;letter-spacing:-.01em}
+.btn{display:inline-flex;align-items:center;gap:7px;height:36px;padding:0 14px;border:1px solid var(--line);border-radius:var(--ri);background:var(--inset);white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--violet);border-color:var(--violet);color:#1b1038;font-weight:650}
+.btn.danger{color:var(--danger)}
+.btn.sm{height:30px;padding:0 12px;font-size:13px}
+.icon{display:grid;place-items:center;width:32px;height:32px;border:1px solid var(--line);border-radius:var(--ri);background:var(--inset);color:var(--muted)}
+.icon:hover{color:var(--text)}
+.link{padding:0;border:0;background:none;color:var(--violet);font-family:var(--mono);font-size:13px;font-weight:600}
+.link:hover{text-decoration:underline}
+.chip{display:inline-flex;align-items:center;height:26px;padding:0 11px;border:1px solid var(--line);border-radius:999px;background:var(--tile);font-family:var(--mono);font-size:12px;white-space:nowrap}
+.chip.miss{border-style:dashed;border-color:var(--warn);color:var(--warn)}
+
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+th,td{padding:0 14px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+th{height:34px;border-block:1px solid var(--line);background:var(--inset);color:var(--muted);font-size:12.5px;font-weight:500}
+td{height:46px;border-bottom:1px solid var(--line)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+tr.sel{background:var(--inset);box-shadow:inset 3px 0 var(--violet)}
+.foot{padding:10px 14px;color:var(--muted);font-size:12.5px}
+
+/* users bento */
+.users .grid{grid-template-rows:auto auto minmax(0,1fr) auto}
+.stat{grid-column:span 2;gap:2px}
+.stat b{font-size:28px;font-weight:650;line-height:1.15;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.stat small{color:var(--muted);font-size:12.5px}
+.s8{grid-column:span 8} .s5{grid-column:span 5} .s3{grid-column:span 3}
+.meter{height:8px;border-radius:999px;background:var(--bg);border:1px solid var(--line);overflow:hidden}
+.meter i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--violet),var(--green))}
+.bars{flex:1;display:flex;align-items:flex-end;gap:10px;min-height:60px;margin-top:10px}
+.bars div{flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:4px;height:100%;color:var(--muted);font-size:11.5px;text-align:center}
+.bars i{display:block;border-radius:8px 8px 4px 4px;background:var(--line)}
+.bars div:last-child i{background:var(--violet)}
+.caps{list-style:none;margin-top:8px}
+.caps li{display:flex;justify-content:space-between;align-items:center;height:30px;border-top:1px solid var(--line)}
+.yes{color:var(--green)} .no{color:var(--warn);font-weight:600}
+.toast{flex-direction:row;gap:12px;align-items:flex-start;padding:14px;border-color:var(--danger);box-shadow:0 8px 24px rgba(0,0,0,.3)}
+.toast>svg{margin-top:2px;color:var(--danger)}
+.toast strong{font-size:14px}
+.toast p{margin:2px 0 10px;color:var(--muted);font-size:13px}
+.cmd{display:flex;align-items:center;gap:8px;padding:5px 5px 5px 12px;border:1px solid var(--line);border-radius:var(--ri);background:var(--bg)}
+.cmd code{flex:1;overflow-x:auto;white-space:nowrap}
+
+/* drawer tile */
+.drawer{flex:none;width:404px}
+.avatar{display:grid;place-items:center;width:40px;height:40px;border:1px solid var(--violet);border-radius:var(--ri);color:var(--violet);font-weight:700}
+.tabs{display:flex;gap:4px;margin:0 14px;padding:4px;border:1px solid var(--line);border-radius:var(--r);background:var(--bg)}
+.tabs button{flex:1;height:30px;padding:0;border:1px solid transparent;border-radius:var(--ri);background:none;color:var(--muted);font-size:13px}
+.tabs button:hover{color:var(--text)}
+.tabs button[aria-selected="true"]{background:var(--inset);border-color:var(--line);color:var(--violet);font-weight:600}
+.pane{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-content:start;padding:14px;overflow:auto}
+.mini{padding:12px 14px;border:1px solid var(--line);border-radius:var(--ri);background:var(--inset)}
+.mini.wide{grid-column:span 2}
+.mini .label{display:block;margin-bottom:6px}
+.keyrow{display:flex;align-items:center;gap:10px}
+.keyrow+.keyrow{margin-top:8px}
+.keyrow code{flex:1;font-size:13px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.split{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.split b{font-size:20px;font-weight:650}
+
+/* browse: two panes + docked preview */
+.side{flex:none;display:flex;flex-direction:column;gap:12px;width:216px}
+.side ul{list-style:none;padding:0 8px 8px}
+.side li button{display:flex;justify-content:space-between;align-items:center;width:100%;height:36px;padding:0 10px;border:1px solid transparent;border-radius:var(--ri);background:none}
+.side li button:hover{background:var(--inset)}
+.side li button[aria-current="true"]{background:var(--inset);border-color:var(--line);color:var(--violet);font-weight:600}
+.side small{color:var(--muted);font-family:var(--sans);font-size:12px;font-weight:400}
+.objects{flex:1}
+.crumbs ol{display:flex;align-items:center;gap:6px;list-style:none}
+.crumbs li+li::before{content:"/";margin-right:6px;color:var(--muted)}
+.crumbs button{height:30px;padding:0 11px;border:1px solid var(--line);border-radius:var(--ri);background:var(--inset);font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+.crumbs [aria-current]{color:var(--text);border-color:var(--violet)}
+.objects td:first-child,.objects th:first-child{width:40px;padding-right:0}
+.name{display:flex;align-items:center;gap:9px;min-width:0}
+.name span{overflow:hidden;text-overflow:ellipsis}
+.name svg{color:var(--muted)}
+.preview{flex:none;width:336px}
+.shot{position:relative;display:flex;align-items:flex-end;gap:7px;height:176px;margin:0 14px;padding:18px 18px 34px;border:1px solid var(--line);border-radius:var(--ri);
+  background:linear-gradient(var(--line) 1px,transparent 1px) 0 0/100% 32px,var(--bg)}
+.shot i{flex:1;border-radius:5px 5px 0 0;background:var(--line)}
+.shot i:nth-child(3n){background:var(--violet)}
+.shot span{position:absolute;left:12px;bottom:8px;color:var(--muted);font-size:12px}
+dl.kv{display:grid;grid-template-columns:116px minmax(0,1fr);gap:8px 12px}
+dl.kv dt{color:var(--muted)}
+dl.kv dd{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.empty{align-items:center;justify-content:center}
+.empty .tile{max-width:460px;gap:6px}
+.empty h1{font-size:16px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.500A1.500 1.500 0 0 1 4.500 6h4.300l2 2.500h8.700A1.500 1.500 0 0 1 21 10v8a1.500 1.500 0 0 1-1.500 1.500h-15A1.500 1.500 0 0 1 3 18z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3.500h7l4.500 4.500v12a.5.5 0 0 1-.5.5H7a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5zM14 3.500V8h4.500"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.500" y="8.500" width="11" height="11" rx="2.500"/><path d="M15.500 5.500V5A1.500 1.500 0 0 0 14 3.500H6A1.500 1.500 0 0 0 4.500 5v8A1.500 1.500 0 0 0 6 14.500h.5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 15.500H3zM12 10v4.500M12 17.300h.01"/></symbol>
+</svg>
+
+<p class="caption">Concept C — Lưới: bảng điều khiển dạng ô xếp (bento); mỗi khối là một ô bo tròn, cặp màu tím và xanh lá dùng tiết chế, Browse là trình quản lý tệp hai khung với ô xem trước neo bên phải.</p>
+
+<header class="tile top">
+  <div class="brand"><span class="mark" aria-hidden="true"></span>BucketAdmin</div>
+  <nav aria-label="Điều hướng chính">
+    <button data-tab="view:users" aria-current="true">Users</button>
+    <button data-tab="view:buckets">Buckets</button>
+    <button data-tab="view:browse">Browse</button>
+    <button data-tab="view:clusters">Clusters</button>
+    <button data-tab="view:audit">Audit</button>
+  </nav>
+  <span class="grow"></span>
+  <select class="field" aria-label="Chọn cluster">
+    <option>lab-hn · https://rgw.example.vn</option>
+    <option>prod-hcm · https://rgw-hcm.example.vn</option>
+  </select>
+  <span class="badge warn" title="Tài khoản admin còn thiếu caps users=write">Thiếu caps</span>
+</header>
+
+<!-- Users bento + drawer tile + toast tile -->
+<main class="view users" data-pane="view:users">
+  <div class="grid">
+    <div class="tile pad stat"><span class="label">Users</span><b>1</b><small>trên cluster lab-hn</small></div>
+    <div class="tile pad stat"><span class="label">Keys đang dùng</span><b>2</b><small>key mới nhất 21/09/2026</small></div>
+    <div class="tile pad stat"><span class="label">Buckets</span><b>4</b><small>418.250 object</small></div>
+    <div class="tile pad stat"><span class="label">Quota đã dùng</span><b>72%</b>
+      <div class="meter" role="img" aria-label="Đã dùng 214,6 trên 300 GiB" style="margin-top:6px"><i style="width:72%"></i></div></div>
+
+    <section class="tile s8" aria-label="Danh sách user">
+      <div class="bar">
+        <h1>Users</h1><span class="grow"></span>
+        <input class="field" type="search" placeholder="Lọc theo uid hoặc email…" aria-label="Lọc user" style="width:230px">
+        <button class="btn">Nhập CSV</button>
+        <button class="btn primary">Tạo user</button>
+      </div>
+      <table>
+        <thead><tr><th style="width:100px">uid</th><th>Tên hiển thị</th><th>Email</th><th style="width:136px">Trạng thái</th><th style="width:160px">Caps</th><th class="num" style="width:84px">Số key</th></tr></thead>
+        <tbody>
+          <tr class="sel">
+            <td><button class="link" data-toggle="drawer" aria-label="Mở chi tiết user longhd">longhd</button></td>
+            <td>Hồ Đình Long</td>
+            <td class="muted">longhd@example.vn</td>
+            <td><span class="badge ok">Hoạt động</span></td>
+            <td><span class="chip">users=read</span> <span class="muted">+2</span></td>
+            <td class="num">2</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="tile pad s5" aria-label="Lượt gọi API">
+      <span class="label">Lượt gọi API · 7 ngày gần nhất</span>
+      <b style="font-size:22px;letter-spacing:-.02em">1.284.300</b>
+      <div class="bars" role="img" aria-label="Biểu đồ cột theo ngày, cao nhất vào thứ Tư 18/11">
+        <div><i style="height:38%"></i>T5</div><div><i style="height:52%"></i>T6</div><div><i style="height:47%"></i>T7</div><div><i style="height:30%"></i>CN</div><div><i style="height:58%"></i>T2</div><div><i style="height:70%"></i>T3</div><div><i style="height:84%"></i>T4</div>
+      </div>
+    </section>
+
+    <section class="tile pad s3" aria-label="Quyền của bạn">
+      <span class="label">Quyền của bạn</span>
+      <b style="font-size:16px;color:var(--warn)">Thiếu caps</b>
+      <ul class="caps">
+        <li><code>users=read</code><span class="yes">có</span></li>
+        <li><code>users=write</code><span class="no">thiếu</span></li>
+        <li><code>buckets=*</code><span class="yes">có</span></li>
+        <li><code>usage=read</code><span class="yes">có</span></li>
+      </ul>
+    </section>
+
+    <div class="tile toast s8" id="toast" role="alert">
+      <svg aria-hidden="true"><use href="#i-alert"/></svg>
+      <div class="grow" style="min-width:0">
+        <strong>Không đủ quyền: thiếu caps users=write</strong>
+        <p>Chưa lưu được thay đổi cho user <code>longhd</code>. Chạy lệnh sau trên node quản trị rồi thử lại.</p>
+        <div class="cmd"><code>radosgw-admin caps add --uid=longhd --caps="users=write"</code><button class="btn sm">Copy</button></div>
+      </div>
+      <button class="icon" aria-label="Đóng thông báo" data-toggle="toast"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+    </div>
+  </div>
+
+  <aside class="tile drawer" id="drawer" aria-label="Chi tiết user longhd">
+    <div class="bar" style="gap:12px;padding:14px">
+      <span class="avatar" aria-hidden="true">L</span>
+      <div class="grow"><h2>Hồ Đình Long</h2><code class="muted">longhd</code></div>
+      <button class="icon" aria-label="Đóng bảng chi tiết" data-toggle="drawer"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Mục của user">
+      <button role="tab" data-tab="user:info" aria-selected="true">Thông tin</button>
+      <button role="tab" data-tab="user:keys" aria-selected="false">Keys</button>
+      <button role="tab" data-tab="user:caps" aria-selected="false">Caps</button>
+      <button role="tab" data-tab="user:quota" aria-selected="false">Quota</button>
+      <button role="tab" data-tab="user:usage" aria-selected="false">Usage</button>
+    </div>
+
+    <div class="pane" role="tabpanel" data-pane="user:info">
+      <div class="mini"><span class="label">Trạng thái</span><span class="badge ok">Hoạt động</span></div>
+      <div class="mini"><span class="label">Tạo lúc</span>03/02/2026 14:20</div>
+      <div class="mini wide"><span class="label">Email</span>longhd@example.vn</div>
+      <div class="mini wide"><span class="label">Access key</span>
+        <div class="keyrow"><code>7K2M••••••••••••Q9XD</code><button class="icon" aria-label="Copy access key"><svg aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+      </div>
+      <div class="mini wide"><span class="label">Caps</span>
+        <div class="chips"><span class="chip">users=read</span><span class="chip">buckets=*</span><span class="chip">usage=read</span><span class="chip miss">thiếu users=write</span></div>
+      </div>
+      <div class="mini wide"><span class="label">Quota</span>
+        <div class="split"><b>72%</b><span class="muted">214,6 / 300 GiB</span></div>
+        <div class="meter" role="img" aria-label="Đã dùng 72% dung lượng"><i style="width:72%"></i></div>
+      </div>
+    </div>
+
+    <div class="pane" role="tabpanel" data-pane="user:keys" hidden>
+      <div class="mini wide"><span class="label">S3 keys (2)</span>
+        <div class="keyrow"><code>7K2M••••••••••••Q9XD</code><span class="muted">03/02/2026</span><button class="icon" aria-label="Copy access key thứ nhất"><svg aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+        <div class="keyrow"><code>P4TN••••••••••••W8LA</code><span class="muted">21/09/2026</span><button class="icon" aria-label="Copy access key thứ hai"><svg aria-hidden="true"><use href="#i-copy"/></svg></button></div>
+      </div>
+      <p class="muted" style="grid-column:span 2">Secret key chỉ hiện một lần khi tạo và không được ghi vào log.</p>
+      <button class="btn primary">Tạo key mới</button><button class="btn danger">Thu hồi key</button>
+    </div>
+
+    <div class="pane" role="tabpanel" data-pane="user:caps" hidden>
+      <div class="mini wide"><span class="label">Caps đang có</span>
+        <div class="chips"><span class="chip">users=read</span><span class="chip">buckets=*</span><span class="chip">usage=read</span></div>
+      </div>
+      <div class="mini wide"><span class="label">Còn thiếu để quản trị đầy đủ</span>
+        <div class="chips"><span class="chip miss">users=write</span><span class="chip miss">metadata=read</span></div>
+      </div>
+      <button class="btn">Thêm cap</button>
+    </div>
+
+    <div class="pane" role="tabpanel" data-pane="user:quota" hidden>
+      <div class="mini wide"><span class="label">Dung lượng</span>
+        <div class="split"><b>72%</b><span class="muted">214,6 / 300 GiB</span></div>
+        <div class="meter" role="img" aria-label="Đã dùng 72% dung lượng"><i style="width:72%"></i></div>
+      </div>
+      <div class="mini wide"><span class="label">Số object</span>
+        <div class="split"><b>42%</b><span class="muted">418.250 / 1.000.000</span></div>
+        <div class="meter" role="img" aria-label="Đã dùng 42% số object"><i style="width:42%"></i></div>
+      </div>
+      <button class="btn">Sửa quota</button>
+    </div>
+
+    <div class="pane" role="tabpanel" data-pane="user:usage" hidden>
+      <div class="mini"><span class="label">Lượt gọi</span><b>1.284.300</b></div>
+      <div class="mini"><span class="label">Tải lên</span><b>96,4 GiB</b></div>
+      <div class="mini"><span class="label">Tải xuống</span><b>12,8 GiB</b></div>
+      <div class="mini"><span class="label">Lỗi 4xx</span><b>0,3%</b></div>
+    </div>
+  </aside>
+</main>
+
+<!-- Browse: buckets pane + objects pane + docked preview -->
+<main class="view" data-pane="view:browse" hidden>
+  <div class="side">
+    <section class="tile" aria-label="Danh sách bucket">
+      <div class="bar"><h2>Buckets</h2><span class="muted">4</span></div>
+      <ul>
+        <li><button class="mono" aria-current="true">csoc-logs <small>62,0 GiB</small></button></li>
+        <li><button class="mono">csoc-backup <small>118,4 GiB</small></button></li>
+        <li><button class="mono">hr-archive <small>30,5 GiB</small></button></li>
+        <li><button class="mono">web-assets <small>3,7 GiB</small></button></li>
+      </ul>
+    </section>
+    <section class="tile pad grow" aria-label="Dung lượng bucket csoc-logs" style="gap:4px">
+      <span class="label">csoc-logs</span>
+      <b style="font-size:26px;letter-spacing:-.02em">62,0 GiB</b>
+      <span class="muted" style="font-size:12.5px">212.400 object · quota 100 GiB</span>
+      <div class="meter" role="img" aria-label="Đã dùng 62% quota của bucket" style="margin-top:8px"><i style="width:62%"></i></div>
+      <span class="grow"></span>
+      <dl class="kv" style="grid-template-columns:auto 1fr;font-size:13px"><dt>Chủ sở hữu</dt><dd class="mono">longhd</dd><dt>ACL</dt><dd>Riêng tư</dd><dt>Versioning</dt><dd>Tắt</dd></dl>
+    </section>
+  </div>
+
+  <section class="tile objects" aria-label="Object trong thư mục">
+    <div class="bar">
+      <nav class="crumbs" aria-label="Đường dẫn"><ol>
+        <li><button>csoc-logs</button></li><li><button>firewall</button></li><li><button aria-current="page">2026-11</button></li>
+      </ol></nav>
+      <span class="grow"></span><span class="muted" style="font-size:12.5px">6 mục · đã chọn 1</span>
+    </div>
+    <div class="bar" style="padding-top:0">
+      <button class="btn primary">Upload</button>
+      <button class="btn">Tạo thư mục</button>
+      <button class="btn">Copy URL</button>
+      <span class="grow"></span>
+      <button class="btn danger">Xoá</button>
+    </div>
+    <table>
+      <thead><tr><th><input type="checkbox" aria-label="Chọn tất cả"></th><th>Tên</th><th class="num" style="width:100px">Kích thước</th><th style="width:142px">Sửa lần cuối</th><th style="width:120px">Storage class</th></tr></thead>
+      <tbody>
+        <tr><td><input type="checkbox" aria-label="Chọn bao-cao"></td><td><div class="name mono"><svg aria-hidden="true"><use href="#i-folder"/></svg><span>bao-cao/</span></div></td><td class="num muted">—</td><td class="muted">—</td><td class="muted">—</td></tr>
+        <tr><td><input type="checkbox" aria-label="Chọn fw-edge-2026-11-18.json.gz"></td><td><div class="name mono"><svg aria-hidden="true"><use href="#i-file"/></svg><span>fw-edge-2026-11-18.json.gz</span></div></td><td class="num">48,2 MiB</td><td>18/11/2026 23:59</td><td class="mono">STANDARD</td></tr>
+        <tr><td><input type="checkbox" aria-label="Chọn fw-edge-2026-11-17.json.gz"></td><td><div class="name mono"><svg aria-hidden="true"><use href="#i-file"/></svg><span>fw-edge-2026-11-17.json.gz</span></div></td><td class="num">51,7 MiB</td><td>17/11/2026 23:59</td><td class="mono">STANDARD</td></tr>
+        <tr><td><input type="checkbox" aria-label="Chọn tong-hop-tuan-46.csv"></td><td><div class="name mono"><svg aria-hidden="true"><use href="#i-file"/></svg><span>tong-hop-tuan-46.csv</span></div></td><td class="num">1,3 MiB</td><td>16/11/2026 08:12</td><td class="mono">STANDARD</td></tr>
+        <tr class="sel"><td><input type="checkbox" checked aria-label="Chọn so-do-luu-luong.png"></td><td><div class="name mono"><svg aria-hidden="true"><use href="#i-file"/></svg><span>so-do-luu-luong.png</span></div></td><td class="num">842 KiB</td><td>14/11/2026 15:40</td><td class="mono">STANDARD_IA</td></tr>
+        <tr><td><input type="checkbox" aria-label="Chọn canh-bao-mau.json"></td><td><div class="name mono"><svg aria-hidden="true"><use href="#i-file"/></svg><span>canh-bao-mau.json</span></div></td><td class="num">2,4 KiB</td><td>12/11/2026 10:05</td><td class="mono">STANDARD</td></tr>
+      </tbody>
+    </table>
+    <p class="foot">5 object, 1 thư mục · 102,1 MiB · presigned URL mặc định hết hạn sau 1 giờ</p>
+  </section>
+
+  <aside class="tile preview" aria-label="Xem trước so-do-luu-luong.png">
+    <div class="bar"><div class="grow"><span class="label">Xem trước · ảnh</span><h2 class="mono" style="font-size:13.5px">so-do-luu-luong.png</h2></div>
+      <button class="icon" aria-label="Đóng xem trước"><svg aria-hidden="true"><use href="#i-x"/></svg></button></div>
+    <div class="shot" role="img" aria-label="Ảnh minh hoạ: biểu đồ cột lưu lượng theo giờ">
+      <i style="height:34%"></i><i style="height:48%"></i><i style="height:42%"></i><i style="height:66%"></i><i style="height:58%"></i><i style="height:88%"></i><i style="height:74%"></i><i style="height:52%"></i><i style="height:95%"></i><i style="height:61%"></i><i style="height:44%"></i><i style="height:70%"></i>
+      <span>1600 × 900 · PNG</span>
+    </div>
+    <div class="pad">
+      <dl class="kv">
+        <dt>Kích thước</dt><dd>842 KiB</dd>
+        <dt>Content-Type</dt><dd class="mono">image/png</dd>
+        <dt>ETag</dt><dd class="mono">c07a51e9d3b84f20</dd>
+        <dt>Sửa lần cuối</dt><dd>14/11/2026 15:40</dd>
+        <dt>Storage class</dt><dd class="mono">STANDARD_IA</dd>
+        <dt>ACL</dt><dd>Riêng tư</dd>
+      </dl>
+    </div>
+    <span class="grow"></span>
+    <div class="bar" style="border-top:1px solid var(--line)"><button class="btn grow" style="justify-content:center">Tải xuống</button><button class="btn grow" style="justify-content:center">Copy URL</button></div>
+  </aside>
+</main>
+
+<!-- Screens outside this concept's scope -->
+<main class="view empty" data-pane="view:buckets" hidden><div class="tile pad"><h1>Buckets</h1><p class="muted">Màn hình này chưa vẽ trong concept. Sẽ là lưới ô, mỗi bucket một ô với dung lượng, số object và quota.</p></div></main>
+<main class="view empty" data-pane="view:clusters" hidden><div class="tile pad"><h1>Clusters</h1><p class="muted">Màn hình này chưa vẽ trong concept. Sẽ là mỗi cluster một ô với endpoint, vùng và trạng thái kết nối.</p></div></main>
+<main class="view empty" data-pane="view:audit" hidden><div class="tile pad"><h1>Audit</h1><p class="muted">Màn hình này chưa vẽ trong concept. Sẽ là dòng thời gian thao tác, lọc theo uid và loại hành động.</p></div></main>
+
+<script>
+function show(g,n){
+  document.querySelectorAll('[data-pane^="'+g+':"]').forEach(p=>p.hidden=p.dataset.pane!==g+':'+n);
+  document.querySelectorAll('[data-tab^="'+g+':"]').forEach(b=>b.setAttribute(g==='view'?'aria-current':'aria-selected',b.dataset.tab===g+':'+n));
+}
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-tab],[data-toggle]');if(!b)return;
+  if(b.dataset.tab)show(...b.dataset.tab.split(':'));else{const t=document.getElementById(b.dataset.toggle);t.hidden=!t.hidden}
+});
+// Optional start screen from the hash, e.g. #view:browse or #user:keys
+location.hash.slice(1).split(',').filter(Boolean).forEach(s=>show(...s.split(':')));
+</script>
+</body>
+</html>

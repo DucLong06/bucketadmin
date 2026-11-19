@@ -11,13 +11,13 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { invoke } from "./api";
+import { invoke, keyOwner, type Profile } from "./api";
 import { bucketNameError, folderNameError } from "./names";
 import { ErrorAlert, useAction } from "./ui";
 
 type BucketProps = {
   clusterId: string;
-  /** The user who will own the bucket (the one being browsed as). */
+  /** The user who will own the bucket (the one being browsed as; empty: the caller's own key). */
   uid: string;
   open: boolean;
   onClose: () => void;
@@ -53,7 +53,7 @@ export function CreateBucketDialog({ clusterId, uid, open, onClose, onCreated }:
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
             <Typography variant="body2" color="text.secondary">
-              Bucket mới thuộc về user {uid} và được tạo bằng key của chính user đó.
+              Bucket mới thuộc về {keyOwner(uid)} và được tạo bằng key của chính {keyOwner(uid)}.
             </Typography>
             <TextField
               label="Tên bucket"
@@ -148,6 +148,74 @@ export function CreateFolderDialog({ clusterId, uid, bucket, prefix, open, onClo
           <Button onClick={close}>Huỷ</Button>
           <Button type="submit" variant="contained" disabled={busy || !name.trim() || !!nameError}>
             Tạo thư mục
+          </Button>
+        </DialogActions>
+      </form>
+    </Dialog>
+  );
+}
+
+/** Asks for the caller's personal S3 key. It goes straight to the backend, which keeps the
+ *  secret in the OS keychain; no Admin API call is made with it or for it. */
+export function OwnKeyDialog(props: { clusterId: string; open: boolean; onClose: () => void; onSaved: (p: Profile) => void }) {
+  const [accessKey, setAccessKey] = useState("");
+  const [secretKey, setSecretKey] = useState("");
+  const { busy, error, run, setError } = useAction();
+
+  const close = () => {
+    setAccessKey("");
+    setSecretKey("");
+    setError(null);
+    props.onClose();
+  };
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const { clusterId } = props;
+    const saved = await run(() => invoke<Profile>("browse_key_set", { clusterId, accessKey, secretKey }));
+    if (saved) {
+      close();
+      props.onSaved(saved);
+    }
+  }
+
+  return (
+    <Dialog open={props.open} onClose={close} maxWidth="sm" fullWidth aria-labelledby="own-key-title">
+      <form onSubmit={submit}>
+        <DialogTitle id="own-key-title">Duyệt bằng key của tôi</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              Dán S3 key cá nhân của bạn (giống key đang dùng với rclone, s3cmd…). Secret key được cất trong keychain của hệ
+              thống, không ghi ra file và không hiển thị lại. Chế độ này không gọi Admin API nên không cần caps nào.
+            </Typography>
+            <TextField
+              label="Access key của tôi"
+              value={accessKey}
+              onChange={(e) => setAccessKey(e.target.value)}
+              size="small"
+              fullWidth
+              required
+              autoFocus
+              autoComplete="off"
+              slotProps={{ htmlInput: { style: { fontFamily: "monospace" } } }}
+            />
+            <TextField
+              label="Secret key của tôi"
+              value={secretKey}
+              onChange={(e) => setSecretKey(e.target.value)}
+              type="password"
+              size="small"
+              fullWidth
+              required
+              autoComplete="off"
+            />
+            <ErrorAlert error={error} />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={close}>Huỷ</Button>
+          <Button type="submit" variant="contained" disabled={busy || !accessKey.trim() || !secretKey.trim()}>
+            Lưu và duyệt
           </Button>
         </DialogActions>
       </form>
