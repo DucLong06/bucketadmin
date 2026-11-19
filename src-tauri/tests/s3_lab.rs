@@ -293,14 +293,8 @@ async fn m4_browse_with_user_credentials() {
         .iter()
         .all(|o| o.key != "by-reader-2.txt"));
 
-    admin
-        .delete_user("ba-m4-reader", true)
-        .await
-        .expect("cleanup reader");
-    admin
-        .delete_user("ba-m4-owner", true)
-        .await
-        .expect("cleanup owner");
+    remove_user(&admin, "ba-m4-reader").await;
+    remove_user(&admin, "ba-m4-owner").await;
 }
 
 fn temp_dir(name: &str) -> std::path::PathBuf {
@@ -528,14 +522,8 @@ async fn m4_upload_download_presign() {
         .starts_with("cannot read"));
 
     std::fs::remove_dir_all(&dir).unwrap();
-    admin
-        .delete_user("ba-m4-xfer-ro", true)
-        .await
-        .expect("cleanup");
-    admin
-        .delete_user("ba-m4-xfer", true)
-        .await
-        .expect("cleanup");
+    remove_user(&admin, "ba-m4-xfer-ro").await;
+    remove_user(&admin, "ba-m4-xfer").await;
 }
 
 /// Writes a Parquet file of about `megabytes` MB with flat, nullable and nested columns and a
@@ -830,7 +818,7 @@ async fn m4_parquet_ranged_preview() {
         "{wrong}"
     );
 
-    admin.delete_user("ba-m4-pq", true).await.expect("cleanup");
+    remove_user(&admin, "ba-m4-pq").await;
 }
 
 /// M4.4: versions (list, read, restore, delete, delete markers) and the ACL editor's calls.
@@ -1135,11 +1123,8 @@ async fn m4_versions_and_acl() {
         .unwrap_err()
         .contains("invalid ACL permission"));
 
-    admin
-        .delete_user("ba-m4-ver-other", true)
-        .await
-        .expect("cleanup");
-    admin.delete_user("ba-m4-ver", true).await.expect("cleanup");
+    remove_user(&admin, "ba-m4-ver-other").await;
+    remove_user(&admin, "ba-m4-ver").await;
 }
 
 /// M4.5: recursive search with result and time limits.
