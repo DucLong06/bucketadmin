@@ -7,6 +7,8 @@ pub mod rgw_admin;
 pub mod s3;
 
 use audit::{Audit, AuditEntry};
+/// How a browse session gets its S3 client; public so the lab tests build one the app's way.
+pub use browse::connect as browse_connect;
 use clusters::{ClusterProfile, ProfileStore};
 use ops::{
     BucketDetail, NewSubuser, Ops, Quotas, RotatedKey, TrimmedUsage, UsageSupport, UsersPage,
@@ -423,6 +425,8 @@ pub fn run() {
             bucket_quota_set,
             audit_recent,
             bulk_onboard,
+            browse::browse_key_set,
+            browse::browse_key_clear,
             browse::browse_open,
             browse::browse_list,
             browse::browse_pick_upload,

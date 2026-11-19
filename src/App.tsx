@@ -74,6 +74,7 @@ export default function App() {
             onClusterChange={setClusterId}
             uid={browseUid}
             onUid={setBrowseUid}
+            onProfilesChanged={reload}
           />
         )}
         {page === "buckets" && <Buckets profiles={profiles} clusterId={clusterId} onClusterChange={setClusterId} />}

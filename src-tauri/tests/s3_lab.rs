@@ -1753,3 +1753,210 @@ async fn m5_transfers_can_be_cancelled() {
     std::fs::remove_dir_all(&dir).unwrap();
     remove_user(&admin, "ba-m5-cancel").await;
 }
+
+// ---- M6.1: browsing with a key typed in by hand ("my own key") ----
+
+/// The profile store's secrets in memory (the app keeps them in the OS keychain).
+#[derive(Default)]
+struct MemorySecrets(std::sync::Mutex<std::collections::HashMap<String, String>>);
+
+impl bucketadmin_lib::clusters::SecretStore for MemorySecrets {
+    fn set(&self, id: &str, secret: &str) -> Result<(), String> {
+        self.0.lock().unwrap().insert(id.into(), secret.into());
+        Ok(())
+    }
+    fn get(&self, id: &str) -> Result<String, String> {
+        let found = self.0.lock().unwrap().get(id).cloned();
+        found.ok_or_else(|| "no entry".to_string())
+    }
+    fn delete(&self, id: &str) -> Result<(), String> {
+        self.0.lock().unwrap().remove(id);
+        Ok(())
+    }
+}
+
+/// Stands where the Admin API transport is: counts the requests and refuses them.
+#[derive(Default)]
+struct NoAdminApi(std::sync::atomic::AtomicUsize);
+
+impl bucketadmin_lib::rgw_admin::HttpClient for &NoAdminApi {
+    async fn send(
+        &self,
+        _req: bucketadmin_lib::rgw_admin::HttpRequest,
+    ) -> Result<bucketadmin_lib::rgw_admin::HttpResponse, String> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err("the own-key flow must not call the Admin API".into())
+    }
+}
+
+/// M6.1: a normal user without any admin cap saves a personal key and gets the whole browse
+/// feature set with it. The session is built the way the app builds it (`browse::connect`),
+/// with a transport in the Admin API's place that counts requests: it must count none.
+#[tokio::test]
+async fn m6_browse_with_own_key_never_calls_the_admin_api() {
+    use bucketadmin_lib::browse_connect as connect;
+    use bucketadmin_lib::clusters::ProfileStore;
+    use bucketadmin_lib::rgw_admin::RgwError;
+    use bucketadmin_lib::s3::acl::Grant;
+    use bucketadmin_lib::s3::manage::ObjectTag;
+    use bucketadmin_lib::s3::transfer::PART_SIZE;
+    use bucketadmin_lib::s3::LIST_PAGE;
+    use std::sync::atomic::Ordering::SeqCst;
+
+    let Some(admin) = lab() else { return };
+    let (uid, bucket) = ("ba-m6-plain", "ba-m6-plain-bucket");
+    let (key, _) = user(&admin, uid).await; // asserts the user has no admin caps
+
+    // What this user gets from the Admin API: nothing. That is why M6.1 exists.
+    let creds = Credentials {
+        access_key: key.access_key.clone(),
+        secret_key: key.secret_key.clone(),
+    };
+    let as_user = RgwAdmin::new(&endpoint(), creds, ReqwestClient::new().unwrap()).unwrap();
+    let info = as_user.get_info().await.map(|i| i.cluster_id);
+    let users = as_user.list_users().await.map(|u| u.len());
+    println!(
+        "plain user on the Admin API: /admin/info -> {info:?}, /admin/metadata/user -> {users:?}"
+    );
+    assert_eq!(info, Err(RgwError::AccessDenied));
+    assert_eq!(users, Err(RgwError::AccessDenied));
+
+    // The profile as that user would save it, then the personal key (pasted with a newline).
+    let dir = temp_dir("ownkey");
+    let store = ProfileStore::new(dir.join("data"), MemorySecrets::default());
+    let profile = store
+        .add("lab", &endpoint(), &key.access_key, &key.secret_key)
+        .unwrap();
+    let no_admin = NoAdminApi::default();
+    let before = connect(&store, &no_admin, &profile.id, "").await;
+    assert_eq!(
+        before.err().unwrap(),
+        "no personal key saved for this cluster"
+    );
+    let pasted = format!("{}\n", key.secret_key);
+    let saved = store
+        .set_browse_key(&profile.id, &key.access_key, &pasted)
+        .unwrap();
+    assert_eq!(
+        saved.browse_access_key.as_deref(),
+        Some(key.access_key.as_str())
+    );
+    let on_disk = std::fs::read_to_string(dir.join("data/profiles.json")).unwrap();
+    assert!(!on_disk.contains(&key.secret_key), "secret leaked to disk");
+
+    let s3 = connect(&store, &no_admin, &profile.id, "")
+        .await
+        .expect("own-key session");
+    assert_eq!(s3.access_key(), key.access_key);
+
+    // ---- buckets, folders, listing
+    assert_eq!(s3.list_buckets().await.unwrap(), []);
+    s3.create_bucket(bucket, false)
+        .await
+        .expect("create bucket");
+    let names: Vec<String> = s3
+        .list_buckets()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|b| b.name)
+        .collect();
+    assert_eq!(names, [bucket]);
+    let folder = s3.create_folder(bucket, "", "docs").await.expect("folder");
+    assert_eq!(folder, "docs/");
+
+    // ---- upload: one request, and multipart
+    let small = dir.join("small.txt");
+    std::fs::write(&small, b"hello own key").unwrap();
+    let big = dir.join("big.bin");
+    let big_bytes = pattern(PART_SIZE as usize + 1024 * 1024);
+    std::fs::write(&big, &big_bytes).unwrap();
+    let up = s3.upload(bucket, "docs/small.txt", &small, |_, _| {}).await;
+    assert_eq!(up.expect("upload small"), 13);
+    let up = s3.upload(bucket, "docs/big.bin", &big, |_, _| {}).await;
+    assert_eq!(up.expect("upload multipart"), big_bytes.len() as u64);
+    let listing = s3.list(bucket, "", None, LIST_PAGE).await.unwrap();
+    assert_eq!(listing.prefixes, ["docs/"]);
+    let listing = s3.list(bucket, "docs/", None, LIST_PAGE).await.unwrap();
+    let keys: Vec<&str> = listing.objects.iter().map(|o| o.key.as_str()).collect();
+    assert_eq!(keys, ["docs/", "docs/big.bin", "docs/small.txt"]);
+
+    // ---- preview (ranged read), properties, search
+    let read = s3.read_range(bucket, "docs/small.txt", None, 6, 100).await;
+    assert_eq!(read.unwrap(), b"own key");
+    let head = s3.head(bucket, "docs/big.bin", None).await.unwrap();
+    assert_eq!(head.size, big_bytes.len() as u64);
+    let found = s3.search(bucket, "", "*.bin", 500, 20).await.unwrap();
+    assert_eq!((found.matches.len(), found.stopped), (1, "done"));
+
+    // ---- download, byte-identical
+    let dest = dir.join("big.copy");
+    s3.download(bucket, "docs/big.bin", None, &dest, |_, _| {})
+        .await
+        .expect("download");
+    assert!(std::fs::read(&dest).unwrap() == big_bytes);
+
+    // ---- versions, ACL, tags
+    assert!(s3.versioning(bucket).await.supported);
+    let versions = s3.list_versions(bucket, "docs/small.txt").await.unwrap();
+    assert_eq!(versions.len(), 1);
+    let acl = s3.get_acl(bucket, "docs/small.txt").await.unwrap();
+    assert_eq!(acl.owner_id, uid);
+    let grant = |kind: &str, grantee: &str, permission: &str| Grant {
+        kind: kind.into(),
+        grantee: grantee.into(),
+        display_name: String::new(),
+        permission: permission.into(),
+    };
+    let grants = [
+        grant("user", uid, "FULL_CONTROL"),
+        grant("group", "AuthenticatedUsers", "READ"),
+    ];
+    let applied = s3.put_acl(bucket, "docs/small.txt", &grants).await.unwrap();
+    assert!(applied.verified && applied.acl.grants.len() == 2);
+    let tags = [ObjectTag {
+        key: "team".into(),
+        value: "csoc".into(),
+    }];
+    s3.put_tags(bucket, "docs/small.txt", None, &tags)
+        .await
+        .expect("put tags");
+    let read_back = s3.get_tags(bucket, "docs/small.txt", None).await.unwrap();
+    assert_eq!(read_back.len(), 1);
+
+    // ---- presigned URL: fetched without any credentials
+    let url = s3
+        .presign_get(bucket, "docs/small.txt", None, 300, None)
+        .await
+        .expect("presign");
+    let answer = reqwest::Client::new().get(&url).send().await.unwrap();
+    assert_eq!(answer.status(), 200);
+    assert_eq!(answer.text().await.unwrap(), "hello own key");
+
+    // ---- delete: one object, then the rest of the folder
+    s3.delete(bucket, "docs/small.txt", None)
+        .await
+        .expect("delete");
+    let rest = s3
+        .expand(bucket, &[], &["docs/".to_string()], 1000)
+        .await
+        .unwrap();
+    let report = s3.delete_many(bucket, rest).await;
+    assert_eq!((report.deleted, report.failed.len()), (2, 0));
+    let listing = s3.list(bucket, "", None, LIST_PAGE).await.unwrap();
+    assert!(listing.prefixes.is_empty() && listing.objects.is_empty());
+
+    // The key is deleted again: no session, and still no Admin API request anywhere above.
+    let cleared = store.clear_browse_key(&profile.id).unwrap();
+    assert_eq!(cleared.browse_access_key, None);
+    assert!(connect(&store, &no_admin, &profile.id, "").await.is_err());
+    println!(
+        "own-key browse as {uid}: buckets, folders, upload (single + multipart), list, preview, \
+         search, download, versions, ACL, tags, presign, delete -> Admin API requests: {}",
+        no_admin.0.load(SeqCst)
+    );
+    assert_eq!(no_admin.0.load(SeqCst), 0, "the Admin API was called");
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    remove_user(&admin, uid).await;
+}

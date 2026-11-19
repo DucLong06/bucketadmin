@@ -52,4 +52,7 @@ Trước khi trả URL nào ra, backend kiểm tra URL đó trỏ đúng scheme 
 - Secret key của admin cluster: chỉ nằm trong keychain của hệ điều hành.
 - Secret key của user được browse: backend lấy qua Admin API khi mở phiên browse, giữ trong bộ nhớ, không ghi ra đĩa,
   không gửi cho giao diện.
+- Key cá nhân ở chế độ "Duyệt bằng key của tôi": người dùng tự dán vào, secret nằm trong keychain (entry `<id profile>.browse`,
+  tách khỏi secret admin), access key nằm trong `profiles.json`. Chế độ này không gửi request nào tới Admin API; xoá key
+  hoặc xoá profile thì entry trong keychain bị xoá theo. Audit log ghi `as=own-key`, không ghi access key hay secret.
 - Audit log không bao giờ chứa secret key hay presigned URL.

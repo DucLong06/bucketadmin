@@ -37,7 +37,7 @@ const BY_CODE: Record<string, string> = {
 };
 
 // Errors of S3 calls made while browsing ("S3 <Code> (<status>): ..."): the key in question
-// is the browsed user's, so the advice differs from the admin API's.
+// is the browsed user's (or the caller's own saved key), so the advice differs from the admin API's.
 const S3_BY_CODE: Record<string, string> = {
   AccessDenied: "Key của user này không có quyền cho thao tác vừa làm (bị chặn bởi policy, ACL hoặc op-mask).",
   NoSuchBucket: "Bucket không tồn tại.",
@@ -56,8 +56,8 @@ const S3_BY_CODE: Record<string, string> = {
   EntityTooSmall: "Một phần upload nhỏ hơn mức tối thiểu của S3.",
   MalformedACLError: "ACL không hợp lệ.",
   InvalidBucketState: "Bucket không ở trạng thái phù hợp cho thao tác này (ví dụ chưa bật versioning).",
-  SignatureDoesNotMatch: "Secret key của user này không khớp. Thử mở lại phiên browse.",
-  InvalidAccessKeyId: "Access key của user này không còn tồn tại. Thử mở lại phiên browse.",
+  SignatureDoesNotMatch: "Secret key đang dùng để browse không khớp. Nếu là key của bạn, bấm Đổi key và nhập lại; nếu không, thử mở lại phiên browse.",
+  InvalidAccessKeyId: "Access key đang dùng để browse không tồn tại trên cluster này. Nếu là key của bạn, bấm Đổi key và nhập lại; nếu không, thử mở lại phiên browse.",
 };
 
 export function explain(raw: string): Explained {
