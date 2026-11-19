@@ -29,7 +29,7 @@ import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import ObjectDrawer, { type Versioning } from "./ObjectDrawer";
 import { TransferList, useTransfers } from "./transfers";
 import { explain } from "./errors";
-import { ClusterSelect, ConfirmDialog, ErrorAlert, useAction } from "./ui";
+import { ClusterSelect, ConfirmDialog, copyText, ErrorAlert, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
 
 type Props = {
@@ -53,6 +53,8 @@ const STOPPED: Record<Found["stopped"], string> = {
   results: `dừng vì đủ ${SEARCH_RESULTS} kết quả`,
   time: `dừng vì hết ${SEARCH_SECONDS} giây`,
 };
+// Expiry of a URL made by the Copy URL button (the Properties tab offers other expiries).
+const COPY_URL_SECS = 900;
 const NO_VERSIONING: Versioning = { supported: false, status: "", reason: null };
 
 /** "a/b/c.txt" under prefix "a/b/" is shown as "c.txt". */
@@ -85,6 +87,17 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
       if (!next.delete(id)) next.add(id);
       return next;
     });
+
+  // A presigned GET URL of the one ticked object, straight to the clipboard.
+  async function copyUrl() {
+    if (!session) return;
+    const key = pickedOf("o")[0];
+    const at = { clusterId, uid: session.uid, bucket, key };
+    const url = await run(() => invoke<string>("browse_presign", { at, expiresSecs: COPY_URL_SECS }));
+    if (!url) return;
+    await copyText(url);
+    setNotice({ severity: "success", text: `Đã copy presigned URL của ${key}. URL hết hạn sau ${COPY_URL_SECS / 60} phút; ai có URL đều tải được object.` });
+  }
 
   // First a dry run: the confirmation states how many objects the selection really stands for.
   async function planDelete() {
@@ -369,6 +382,14 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                   )}
                   <Button size="small" onClick={() => setBucketAcl(true)}>
                     ACL của bucket
+                  </Button>
+                  <Button
+                    size="small"
+                    disabled={busy || picked.size !== 1 || pickedOf("o").length !== 1}
+                    onClick={copyUrl}
+                    title="Chọn đúng một object để copy presigned URL của nó"
+                  >
+                    Copy URL
                   </Button>
                   <Button size="small" color="error" disabled={busy || picked.size === 0} onClick={planDelete}>
                     Xoá ({picked.size})
