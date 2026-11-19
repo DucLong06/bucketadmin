@@ -4,6 +4,7 @@ import {
   Box,
   Breadcrumbs,
   Button,
+  Checkbox,
   Chip,
   Dialog,
   DialogActions,
@@ -15,6 +16,7 @@ import {
   ListItemButton,
   ListItemText,
   Paper,
+  Snackbar,
   Stack,
   TextField,
   Typography,
@@ -26,7 +28,8 @@ import AclEditor from "./AclEditor";
 import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import ObjectDrawer, { type Versioning } from "./ObjectDrawer";
 import { TransferList, useTransfers } from "./transfers";
-import { ClusterSelect, ErrorAlert, useAction } from "./ui";
+import { explain } from "./errors";
+import { ClusterSelect, ConfirmDialog, ErrorAlert, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
 
 type Props = {
@@ -39,6 +42,8 @@ type Props = {
 };
 type Session = { uid: string; access_key: string; buckets: BrowseBucket[] };
 type Row = { folder: string } | { object: ObjectEntry };
+type DeleteReport = { objects: number; deleted: number; failed: { key: string; error: string }[] };
+type Notice = { severity: "success" | "error" | "info"; text: string };
 type Found = { matches: ObjectEntry[]; scanned: number; stopped: "done" | "results" | "time" };
 // Limits of one search; the backend enforces its own caps on top.
 const SEARCH_RESULTS = 500;
@@ -68,6 +73,45 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   const [pattern, setPattern] = useState("");
   const [found, setFound] = useState<Found | null>(null);
   const [creating, setCreating] = useState<"bucket" | "folder" | null>(null);
+  // Ticked rows: "f:<prefix>" for folders, "o:<key>" for objects.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [plan, setPlan] = useState<{ objects: number; keys: string[]; prefixes: string[] } | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const rowId = (r: Row) => ("folder" in r ? `f:${r.folder}` : `o:${r.object.key}`);
+  const pickedOf = (kind: "f" | "o") => [...picked].filter((id) => id.startsWith(`${kind}:`)).map((id) => id.slice(2));
+  const toggle = (id: string) =>
+    setPicked((old) => {
+      const next = new Set(old);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+
+  // First a dry run: the confirmation states how many objects the selection really stands for.
+  async function planDelete() {
+    if (!session) return;
+    const [keys, prefixes] = [pickedOf("o"), pickedOf("f")];
+    const at = { clusterId, uid: session.uid, bucket };
+    const report = await run(() => invoke<DeleteReport>("browse_delete_many", { at, keys, prefixes, dryRun: true }));
+    if (report) setPlan({ objects: report.objects, keys, prefixes });
+  }
+  async function deletePicked() {
+    if (!session || !plan) return;
+    const at = { clusterId, uid: session.uid, bucket };
+    const { keys, prefixes } = plan;
+    const report = await run(() => invoke<DeleteReport>("browse_delete_many", { at, keys, prefixes, dryRun: false }));
+    if (!report) return;
+    setPlan(null);
+    const first = report.failed[0];
+    setNotice(
+      first
+        ? {
+            severity: "error",
+            text: `Đã xoá ${report.deleted}/${report.objects} object; ${report.failed.length} object không xoá được. Lỗi đầu tiên (${first.key}): ${explain(first.error).message}`,
+          }
+        : { severity: "success", text: `Đã xoá ${report.deleted} object.` },
+    );
+    load(bucket, prefix, null);
+  }
 
   async function search(e: FormEvent) {
     e.preventDefault();
@@ -139,6 +183,7 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
       setPrefix(toPrefix);
       setListing(null);
       setFound(null);
+      setPicked(new Set());
     }
     const page = await run(() =>
       invoke<Listing>("browse_list", { clusterId, uid: session.uid, bucket: toBucket, prefix: toPrefix, token }),
@@ -166,7 +211,31 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
     : listing
       ? [...listing.prefixes.map((folder) => ({ folder })), ...objects.map((object) => ({ object }))]
       : [];
+  const allPicked = rows.length > 0 && rows.every((r) => picked.has(rowId(r)));
+  const nameOf = (r: Row) => baseName("folder" in r ? r.folder : r.object.key, prefix);
   const columns: Column<Row>[] = [
+    {
+      header: (
+        <Checkbox
+          size="small"
+          sx={{ p: 0 }}
+          checked={allPicked}
+          indeterminate={picked.size > 0 && !allPicked}
+          onChange={(e) => setPicked(e.target.checked ? new Set(rows.map(rowId)) : new Set())}
+          slotProps={{ input: { "aria-label": "Chọn tất cả các dòng đang hiện" } }}
+        />
+      ),
+      width: "28px",
+      cell: (r) => (
+        <Checkbox
+          size="small"
+          sx={{ p: 0 }}
+          checked={picked.has(rowId(r))}
+          onChange={() => toggle(rowId(r))}
+          slotProps={{ input: { "aria-label": `Chọn ${nameOf(r)}` } }}
+        />
+      ),
+    },
     {
       header: "Tên",
       width: "minmax(240px, 4fr)",
@@ -234,7 +303,7 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         )}
       </Stack>
       {busy && <LinearProgress aria-label="Đang tải" />}
-      <ErrorAlert error={error} sx={{ mb: 2 }} />
+      {plan === null && <ErrorAlert error={error} sx={{ mb: 2 }} />}
       <TransferList items={transfers.items} onClear={transfers.clear} />
       {!session && !busy && !error && (
         <Alert severity="info">
@@ -300,6 +369,9 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                   )}
                   <Button size="small" onClick={() => setBucketAcl(true)}>
                     ACL của bucket
+                  </Button>
+                  <Button size="small" color="error" disabled={busy || picked.size === 0} onClick={planDelete}>
+                    Xoá ({picked.size})
                   </Button>
                   <Button size="small" onClick={() => setCreating("folder")}>
                     Tạo thư mục
@@ -374,6 +446,30 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
           </Box>
         </Stack>
       )}
+      <ConfirmDialog
+        open={plan !== null}
+        title="Xoá các mục đã chọn?"
+        text={
+          plan
+            ? `Xoá vĩnh viễn ${plan.objects} object trong bucket ${bucket}: ${plan.keys.length} object được chọn${
+                plan.prefixes.length ? ` và toàn bộ nội dung của ${plan.prefixes.length} thư mục (${plan.prefixes.join(", ")})` : ""
+              }. Nếu bucket không bật versioning thì không khôi phục được.`
+            : ""
+        }
+        confirmLabel={`Xoá ${plan?.objects ?? 0} object`}
+        busy={busy}
+        error={error}
+        onConfirm={deletePicked}
+        onClose={() => {
+          setPlan(null);
+          setError(null);
+        }}
+      />
+      <Snackbar open={notice !== null} autoHideDuration={8000} onClose={() => setNotice(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
+        <Alert severity={notice?.severity ?? "info"} variant="filled" onClose={() => setNotice(null)}>
+          {notice?.text}
+        </Alert>
+      </Snackbar>
       <CreateBucketDialog
         clusterId={clusterId}
         uid={session?.uid ?? ""}

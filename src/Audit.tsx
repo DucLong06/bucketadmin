@@ -39,6 +39,7 @@ const ACTIONS = [
   "usage.trim",
   "object.upload",
   "object.delete",
+  "object.delete_many",
   "object.presign",
   "version.restore",
   "version.delete",
