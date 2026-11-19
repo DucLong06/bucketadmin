@@ -44,7 +44,13 @@ STAGE="$ROOT/src-tauri/target/deb/$NAME"
 rm -rf "${STAGE:?}"
 install -Dm755 "$BIN" "$STAGE/usr/bin/bucketadmin"
 install -Dm644 packaging/bucketadmin.desktop "$STAGE/usr/share/applications/bucketadmin.desktop"
-install -Dm644 src-tauri/icons/128x128.png "$STAGE/usr/share/icons/hicolor/128x128/apps/bucketadmin.png"
+# Every size scripts/gen-icons.py renders, plus the SVG master, so each desktop finds a fitting one.
+for icon in src-tauri/icons/[0-9]*x[0-9]*.png; do
+  size="$(basename "$icon" .png)"
+  case "$size" in *@*) continue ;; esac
+  install -Dm644 "$icon" "$STAGE/usr/share/icons/hicolor/$size/apps/bucketadmin.png"
+done
+install -Dm644 src-tauri/icons/icon.svg "$STAGE/usr/share/icons/hicolor/scalable/apps/bucketadmin.svg"
 install -Dm644 LICENSE "$STAGE/usr/share/doc/bucketadmin/copyright"
 install -d -m755 "$STAGE/DEBIAN"
 cat > "$STAGE/DEBIAN/control" <<EOF
@@ -56,10 +62,11 @@ Architecture: $ARCH
 Depends: libc6 (>= $GLIBC), libwebkit2gtk-4.1-0, libgtk-3-0
 Installed-Size: $(du -sk --exclude=DEBIAN "$STAGE" | cut -f1)
 Maintainer: BucketAdmin maintainers <bucketadmin@localhost>
-Description: Ceph RGW admin desktop (users, keys, caps, quotas, audit)
- Desktop application for administering Ceph RADOS Gateway through the
- Admin Ops API: users, S3 keys, capabilities, quotas, usage and a local
- audit log. Admin secrets are kept in the system keychain.
+Description: S3 browser for Ceph RGW (tabs, previews, ACL, versions)
+ Desktop application for browsing S3 buckets on Ceph RADOS Gateway with
+ your own key: tabs, uploads and downloads, previews that fetch only what
+ they show (text, CSV, Parquet, images, media, PDF), ACL, versions and
+ presigned URLs. Secret keys are kept in the system keychain.
 EOF
 
 # 3. Build. A fixed timestamp makes two builds of the same commit byte-identical.
