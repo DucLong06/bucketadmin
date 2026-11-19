@@ -25,28 +25,19 @@ import { invoke, keyOwner, maskKey, type BrowseBucket, type Listing, type Marker
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { formatBytes, TZ, vnTime } from "./format";
 import AclEditor from "./AclEditor";
-import { CreateBucketDialog, CreateFolderDialog, OwnKeyDialog } from "./BrowseDialogs";
+import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import { accessLevel, type Access } from "./caps";
 import MyInfo from "./MyInfo";
 import ObjectDrawer, { canUndelete, finalDeleteWarning, UNDELETE_HINT, type Versioning } from "./ObjectDrawer";
 import { TaskPanel, useTransfers } from "./transfers";
 import { explain } from "./errors";
-import { ClusterSelect, ConfirmDialog, copyText, ErrorAlert, useAction } from "./ui";
+import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
 
 type Props = {
   profiles: Profile[];
   clusterId: string;
   onClusterChange: (id: string) => void;
-  /** uid to browse as, when the page was opened from a user's drawer. Empty: the caller's own key. */
-  uid: string;
-  onUid: (uid: string) => void;
-  /** A personal key was saved or deleted: the profile list has to be read again. */
-  onProfilesChanged: () => void;
-  /** What the cluster key may do on the Admin API; null while unknown or not asked. */
-  access: Access | null;
-  /** Whether the cluster key may look up another user's key (users=read): the uid box needs it. */
-  canBrowseAs: boolean;
 };
 /** `uid` is empty while browsing with the caller's own saved key. */
 type Session = { uid: string; access_key: string; buckets: BrowseBucket[] };
@@ -72,12 +63,25 @@ const NO_VERSIONING: Versioning = { supported: false, status: "", reason: null }
 /** "a/b/c.txt" under prefix "a/b/" is shown as "c.txt". */
 const baseName = (key: string, prefix: string) => key.slice(prefix.length);
 
-export default function Browse({ profiles, clusterId, onClusterChange, uid, onUid, onProfilesChanged, access, canBrowseAs }: Props) {
-  // The personal key saved for this cluster ("my own key" mode), by its access key.
-  const ownKey = profiles.find((p) => p.id === clusterId)?.browse_access_key ?? null;
-  const [keyDialog, setKeyDialog] = useState(false);
-  const [forgetting, setForgetting] = useState(false);
-  const [uidInput, setUidInput] = useState(uid);
+export default function Browse({ profiles, clusterId, onClusterChange }: Props) {
+  // What this connection's key may read on the Admin API, asked once per connection. It only
+  // decides two extras: the "Thông tin của tôi" box, and browsing with another user's key.
+  const [access, setAccess] = useState<Access | null>(null);
+  useEffect(() => {
+    setAccess(null);
+    if (!clusterId) return;
+    let stale = false;
+    // A key without caps (the normal case) or an unreachable cluster: no extras, no error.
+    invoke<Access>("caller_access", { clusterId }).then(
+      (answer) => stale || setAccess(answer),
+      () => {},
+    );
+    return () => {
+      stale = true;
+    };
+  }, [clusterId]);
+  const canBrowseAs = access?.users === true;
+  const [uidInput, setUidInput] = useState("");
   const [session, setSession] = useState<Session | null>(null);
   const [bucket, setBucket] = useState("");
   const [bucketInput, setBucketInput] = useState("");
@@ -229,41 +233,24 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
     };
   }, []);
 
-  // Every S3 call is signed with this user's own key, looked up by the backend; the UI never sees a secret.
-  // With `own`, the target is empty and the backend signs with the caller's saved key: no Admin API call.
-  async function open(target: string, own = false) {
+  // An empty target is the connection's own key: the backend signs with it and makes no Admin
+  // API call. Any other target is a uid whose key the backend looks up (needs users=read).
+  // Either way the UI never sees a secret.
+  async function open(target: string) {
     const mine = ++opening.current;
     setSession(null);
     setBucket("");
     setListing(null);
-    if (!clusterId || (!target && !own)) return;
+    if (!clusterId) return;
     const opened = await run(() => invoke<Omit<Session, "uid">>("browse_open", { clusterId, uid: target }));
-    // An answer for a cluster or user that was left meanwhile must not become the session.
+    // An answer for a connection or user that was left meanwhile must not become the session.
     if (mine !== opening.current) return;
-    if (opened) {
-      setSession({ uid: target, ...opened });
-      onUid(target);
-    }
+    if (opened) setSession({ uid: target, ...opened });
   }
   useEffect(() => {
-    setUidInput(uid);
-    // No uid asked for: a saved personal key opens straight away.
-    open(uid, !uid && ownKey !== null);
-  }, [clusterId, uid]);
-
-  // With a saved key: open it. Without: ask for one first.
-  function browseOwn() {
-    if (!ownKey) return setKeyDialog(true);
-    onUid("");
-    open("", true);
-  }
-  async function forgetOwnKey() {
-    const cleared = await run(() => invoke("browse_key_clear", { clusterId }).then(() => true));
-    if (!cleared) return;
-    setForgetting(false);
-    onProfilesChanged();
-    if (session?.uid === "") open("");
-  }
+    setUidInput("");
+    open("");
+  }, [clusterId]);
 
   async function load(toBucket: string, toPrefix: string, token: string | null) {
     if (!session) return;
@@ -380,10 +367,10 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   }
 
   if (profiles.length === 0) {
-    return <Alert severity="info">Chưa có cluster nào. Hãy thêm cluster ở tab Clusters trước.</Alert>;
+    return <Alert severity="info">Chưa có kết nối nào. Hãy thêm một kết nối ở mục Kết nối trước.</Alert>;
   }
   return (
-    <>
+    <CallerContext.Provider value={access?.uid ?? ""}>
       <Typography variant="h5" component="h1" gutterBottom>
         Browse
       </Typography>
@@ -401,31 +388,29 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         <ClusterSelect profiles={profiles} value={clusterId} onChange={onClusterChange} />
         {canBrowseAs && (
           <>
-            <TextField label="Browse với user (uid)" value={uidInput} onChange={(e) => setUidInput(e.target.value)} size="small" />
-            <Button type="submit" variant="contained" disabled={busy || !uidInput.trim()}>
+            <TextField label="Duyệt thay user (uid)" value={uidInput} onChange={(e) => setUidInput(e.target.value)} size="small" />
+            <Button type="submit" variant="outlined" disabled={busy || !uidInput.trim()}>
               Mở
             </Button>
-          </>
-        )}
-        <Button variant="outlined" disabled={busy} onClick={browseOwn}>
-          Duyệt bằng key của tôi
-        </Button>
-        {ownKey && (
-          <>
-            <Button size="small" disabled={busy} onClick={() => setKeyDialog(true)}>
-              Đổi key
-            </Button>
-            <Button size="small" color="error" disabled={busy} onClick={() => setForgetting(true)}>
-              Xoá key
-            </Button>
+            {session?.uid && (
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  setUidInput("");
+                  open("");
+                }}
+              >
+                Về key của tôi
+              </Button>
+            )}
           </>
         )}
       </Stack>
       {session && (
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           {session.uid
-            ? `Đang dùng key ${maskKey(session.access_key)} của chính user ${session.uid}. Admin secret không được dùng để browse.`
-            : `Đang dùng key ${maskKey(session.access_key)} của bạn (lưu trong keychain). Chế độ này không gọi Admin API.`}
+            ? `Đang dùng key ${maskKey(session.access_key)} của chính user ${session.uid}.`
+            : `Đang dùng key ${maskKey(session.access_key)} của bạn (secret nằm trong keychain).`}
         </Typography>
       )}
       {access && (access.users || access.usage) && (
@@ -433,15 +418,8 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         <MyInfo key={clusterId} clusterId={clusterId} access={access} defaultOpen={accessLevel(access) === "self"} />
       )}
       {busy && <LinearProgress aria-label="Đang tải" />}
-      {plan === null && !forgetting && switching === null && <ErrorAlert error={error} sx={{ mb: 2 }} />}
+      {plan === null && switching === null && <ErrorAlert error={error} sx={{ mb: 2 }} />}
       <TaskPanel tasks={transfers} />
-      {!session && !busy && !error && (
-        <Alert severity="info">
-          Không có caps admin? Bấm "Duyệt bằng key của tôi" rồi dán S3 key cá nhân: mọi thao tác browse chạy bằng key đó,
-          không qua Admin API. Admin có thể nhập uid của user cần browse rồi bấm Mở, hoặc bấm "Browse" trong chi tiết user ở
-          tab Users. Bạn chỉ thấy và làm được đúng những gì key đang dùng được phép.
-        </Alert>
-      )}
 
       {session && (
         <Stack direction="row" spacing={2} sx={{ alignItems: "flex-start" }}>
@@ -672,29 +650,6 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
           {notice?.text}
         </Alert>
       </Snackbar>
-      <OwnKeyDialog
-        clusterId={clusterId}
-        open={keyDialog}
-        onClose={() => setKeyDialog(false)}
-        onSaved={() => {
-          onProfilesChanged();
-          onUid("");
-          open("", true);
-        }}
-      />
-      <ConfirmDialog
-        open={forgetting}
-        title="Xoá key của tôi?"
-        text={`Xoá key ${maskKey(ownKey ?? "")} khỏi keychain của máy này. Key trên cluster không bị ảnh hưởng; muốn duyệt lại thì nhập lại key.`}
-        confirmLabel="Xoá key"
-        busy={busy}
-        error={error}
-        onConfirm={forgetOwnKey}
-        onClose={() => {
-          setForgetting(false);
-          setError(null);
-        }}
-      />
       <CreateBucketDialog
         clusterId={clusterId}
         uid={session?.uid ?? ""}
@@ -734,6 +689,6 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         }}
         onClose={() => setSelected(null)}
       />
-    </>
+    </CallerContext.Provider>
   );
 }

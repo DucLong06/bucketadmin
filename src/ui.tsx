@@ -40,7 +40,7 @@ export function ClusterSelect(props: { profiles: Profile[]; value: string; onCha
   return (
     <TextField
       select
-      label="Cluster"
+      label="Kết nối"
       value={props.value}
       onChange={(e) => props.onChange(e.target.value)}
       size="small"
@@ -112,71 +112,6 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
     <Button size="small" onClick={copy} aria-label={label} sx={{ whiteSpace: "nowrap", minWidth: 88 }}>
       {copied ? "Đã copy" : "Copy"}
     </Button>
-  );
-}
-
-const readOnly = { input: { readOnly: true, sx: { fontFamily: "monospace" } } };
-
-/** Shows freshly created keys. The secret is not stored anywhere, so this is the only chance to copy it. */
-export function SecretDialog(props: {
-  keys: KeyPair[] | null;
-  warning?: string | null;
-  /** Label of the non-secret half; Swift keys are identified by their user, not an access key. */
-  accessLabel?: string;
-  onClose: () => void;
-}) {
-  const [show, setShow] = useState(false);
-  const keys = props.keys ?? [];
-  const close = () => {
-    setShow(false);
-    props.onClose();
-  };
-  return (
-    <Dialog open={props.keys !== null} maxWidth="sm" fullWidth aria-labelledby="secret-title">
-      <DialogTitle id="secret-title">Key mới — hãy lưu lại ngay</DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ pt: 1 }}>
-          <Alert severity="warning">
-            Secret key chỉ hiển thị một lần duy nhất. Sau khi đóng hộp thoại này sẽ không xem lại được.
-          </Alert>
-          <ErrorAlert error={props.warning} />
-          {keys.length === 0 && <Typography>User được tạo không kèm key nào.</Typography>}
-          {keys.map((k) => (
-            <Stack key={k.access_key} spacing={1}>
-              <Stack direction="row" spacing={1}>
-                <TextField
-                  label={props.accessLabel ?? "Access key"}
-                  value={k.access_key}
-                  size="small"
-                  fullWidth
-                  slotProps={readOnly}
-                />
-                <CopyButton value={k.access_key} label={`Copy ${(props.accessLabel ?? "access key").toLowerCase()}`} />
-              </Stack>
-              <Stack direction="row" spacing={1}>
-                <TextField
-                  label="Secret key"
-                  value={k.secret_key}
-                  type={show ? "text" : "password"}
-                  size="small"
-                  fullWidth
-                  slotProps={readOnly}
-                />
-                <Button size="small" onClick={() => setShow(!show)}>
-                  {show ? "Ẩn" : "Hiện"}
-                </Button>
-                <CopyButton value={k.secret_key} label="Copy secret key" />
-              </Stack>
-            </Stack>
-          ))}
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button variant="contained" onClick={close}>
-          Đã lưu, đóng
-        </Button>
-      </DialogActions>
-    </Dialog>
   );
 }
 

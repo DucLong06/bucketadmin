@@ -1829,11 +1829,9 @@ async fn m6_browse_with_own_key_never_calls_the_admin_api() {
         .add("lab", &endpoint(), &key.access_key, &key.secret_key)
         .unwrap();
     let no_admin = NoAdminApi::default();
+    // M7b: without a separate key the profile's own key browses (still no Admin API).
     let before = connect(&store, &no_admin, &profile.id, "", &auto).await;
-    assert_eq!(
-        before.err().unwrap(),
-        "no personal key saved for this cluster"
-    );
+    assert_eq!(before.unwrap().access_key(), key.access_key);
     let pasted = format!("{}\n", key.secret_key);
     let saved = store
         .set_browse_key(&profile.id, &key.access_key, &pasted)
@@ -1947,12 +1945,13 @@ async fn m6_browse_with_own_key_never_calls_the_admin_api() {
     let listing = s3.list(bucket, "", None, LIST_PAGE).await.unwrap();
     assert!(listing.prefixes.is_empty() && listing.objects.is_empty());
 
-    // The key is deleted again: no session, and still no Admin API request anywhere above.
+    // The separate key is deleted again: back on the profile's own key, and still no Admin
+    // API request anywhere above.
     let cleared = store.clear_browse_key(&profile.id).unwrap();
     assert_eq!(cleared.browse_access_key, None);
     assert!(connect(&store, &no_admin, &profile.id, "", &auto)
         .await
-        .is_err());
+        .is_ok());
     println!(
         "own-key browse as {uid}: buckets, folders, upload (single + multipart), list, preview, \
          search, download, versions, ACL, tags, presign, delete -> Admin API requests: {}",

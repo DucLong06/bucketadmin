@@ -244,12 +244,14 @@ impl<S: SecretStore> ProfileStore<S> {
         })
     }
 
-    /// Endpoint plus the personal key saved by [`Self::set_browse_key`].
+    /// Endpoint plus the key a browse session signs with: the personal key saved by
+    /// [`Self::set_browse_key`], or the profile's own key when no separate one was entered
+    /// (the usual case since the app became browse-only: the profile's key IS the user's key).
     pub fn browse_credentials(&self, id: &str) -> Result<(String, Credentials), String> {
         let profile = self.find(id)?;
-        let access_key = profile
-            .browse_access_key
-            .ok_or("no personal key saved for this cluster")?;
+        let Some(access_key) = profile.browse_access_key else {
+            return self.credentials(id);
+        };
         let secret_key = self.secrets.get(&browse_secret_id(id))?;
         let creds = Credentials {
             access_key,
@@ -455,9 +457,10 @@ pub(crate) mod tests {
             .add("lab", "http://h:1", "AKADMIN", "admin-secret")
             .unwrap();
         assert_eq!(p.browse_access_key, None);
-        assert!(
-            store.browse_credentials(&p.id).is_err(),
-            "nothing saved yet"
+        assert_eq!(
+            store.browse_credentials(&p.id).unwrap().1.access_key,
+            "AKADMIN",
+            "no separate key yet: the profile's own key browses"
         );
         assert!(store.set_browse_key(&p.id, "AKMINE", " ").is_err());
         assert!(store.set_browse_key("missing", "AKMINE", "s").is_err());
@@ -490,7 +493,11 @@ pub(crate) mod tests {
             store.clear_browse_key(&p.id).unwrap().browse_access_key,
             None
         );
-        assert!(store.browse_credentials(&p.id).is_err());
+        assert_eq!(
+            store.browse_credentials(&p.id).unwrap().1.secret_key,
+            "admin-secret",
+            "back on the profile's own key"
+        );
         assert_eq!(
             secrets.0.lock().unwrap().len(),
             1,
