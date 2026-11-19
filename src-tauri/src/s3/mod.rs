@@ -3,6 +3,7 @@
 //! exactly what that user's key is allowed to.
 
 pub mod acl;
+pub mod manage;
 pub mod parquet;
 pub mod search;
 pub mod transfer;

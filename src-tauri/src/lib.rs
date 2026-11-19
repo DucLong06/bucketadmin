@@ -24,6 +24,7 @@ pub(crate) struct AppState {
     pub(crate) audit: Audit,
     pub(crate) http: ReqwestClient,
     pub(crate) browse: browse::Sessions,
+    pub(crate) transfers: browse::Transfers,
 }
 
 impl AppState {
@@ -374,6 +375,7 @@ pub fn run() {
                 audit: Audit::open(&clusters::data_dir()?.join("audit.db"))?,
                 http: ReqwestClient::new().map_err(|e| e.to_string())?,
                 browse: browse::Sessions::default(),
+                transfers: browse::Transfers::default(),
             });
             Ok(())
         })
@@ -424,7 +426,14 @@ pub fn run() {
             browse::browse_restore,
             browse::browse_acl_get,
             browse::browse_acl_put,
-            browse::browse_search
+            browse::browse_search,
+            browse::browse_cancel,
+            browse::browse_create_bucket,
+            browse::browse_create_folder,
+            browse::browse_delete_many,
+            browse::browse_inspect,
+            browse::browse_tags_get,
+            browse::browse_tags_put
         ])
         .run(tauri::generate_context!())
         .expect("error while running BucketAdmin");
