@@ -45,6 +45,8 @@ type Props = {
   onProfilesChanged: () => void;
   /** What the cluster key may do on the Admin API; null while unknown or not asked. */
   access: Access | null;
+  /** Whether the cluster key may look up another user's key (users=read): the uid box needs it. */
+  canBrowseAs: boolean;
 };
 /** `uid` is empty while browsing with the caller's own saved key. */
 type Session = { uid: string; access_key: string; buckets: BrowseBucket[] };
@@ -67,7 +69,7 @@ const NO_VERSIONING: Versioning = { supported: false, status: "", reason: null }
 /** "a/b/c.txt" under prefix "a/b/" is shown as "c.txt". */
 const baseName = (key: string, prefix: string) => key.slice(prefix.length);
 
-export default function Browse({ profiles, clusterId, onClusterChange, uid, onUid, onProfilesChanged, access }: Props) {
+export default function Browse({ profiles, clusterId, onClusterChange, uid, onUid, onProfilesChanged, access, canBrowseAs }: Props) {
   // The personal key saved for this cluster ("my own key" mode), by its access key.
   const ownKey = profiles.find((p) => p.id === clusterId)?.browse_access_key ?? null;
   const [keyDialog, setKeyDialog] = useState(false);
@@ -80,6 +82,7 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   const [listing, setListing] = useState<Listing | null>(null);
   const { busy, error, run, setError } = useAction();
   const request = useRef(0);
+  const opening = useRef(0);
   const [selected, setSelected] = useState<ObjectEntry | null>(null);
   const [versioning, setVersioning] = useState<Versioning>(NO_VERSIONING);
   const [bucketAcl, setBucketAcl] = useState(false);
@@ -182,11 +185,14 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   // Every S3 call is signed with this user's own key, looked up by the backend; the UI never sees a secret.
   // With `own`, the target is empty and the backend signs with the caller's saved key: no Admin API call.
   async function open(target: string, own = false) {
+    const mine = ++opening.current;
     setSession(null);
     setBucket("");
     setListing(null);
     if (!clusterId || (!target && !own)) return;
     const opened = await run(() => invoke<Omit<Session, "uid">>("browse_open", { clusterId, uid: target }));
+    // An answer for a cluster or user that was left meanwhile must not become the session.
+    if (mine !== opening.current) return;
     if (opened) {
       setSession({ uid: target, ...opened });
       onUid(target);
@@ -335,10 +341,14 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         }}
       >
         <ClusterSelect profiles={profiles} value={clusterId} onChange={onClusterChange} />
-        <TextField label="Browse với user (uid)" value={uidInput} onChange={(e) => setUidInput(e.target.value)} size="small" />
-        <Button type="submit" variant="contained" disabled={busy || !uidInput.trim()}>
-          Mở
-        </Button>
+        {canBrowseAs && (
+          <>
+            <TextField label="Browse với user (uid)" value={uidInput} onChange={(e) => setUidInput(e.target.value)} size="small" />
+            <Button type="submit" variant="contained" disabled={busy || !uidInput.trim()}>
+              Mở
+            </Button>
+          </>
+        )}
         <Button variant="outlined" disabled={busy} onClick={browseOwn}>
           Duyệt bằng key của tôi
         </Button>

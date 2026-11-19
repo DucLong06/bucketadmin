@@ -64,3 +64,14 @@ test("S3 errors of bucket creation", () => {
   expect(explain("S3 BucketAlreadyExists (409): Cannot modify existing access control policy").message).toMatch(/đã được dùng/);
   expect(explain("S3 TooManyBuckets (400): ").message).toMatch(/số bucket tối đa/);
 });
+
+test("a refusal tagged with caps names them and keeps the original text", () => {
+  const raw = "AccessDenied (403): the admin user lacks the caps for this operation [needs metadata=read;users=read]";
+  const e = explain(raw);
+  expect(e.caps).toEqual(["metadata=read", "users=read"]);
+  expect(e.message).toBe("Không đủ quyền: key của cluster này thiếu caps metadata=read, users=read.");
+  expect(e.code).toBe("AccessDenied");
+  expect(e.detail).toBe(raw);
+  // Untagged, as before M6: no caps to name.
+  expect(explain("AccessDenied (403): the admin user lacks the caps for this operation").caps).toBeUndefined();
+});

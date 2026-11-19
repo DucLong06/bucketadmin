@@ -55,4 +55,8 @@ Trước khi trả URL nào ra, backend kiểm tra URL đó trỏ đúng scheme 
 - Key cá nhân ở chế độ "Duyệt bằng key của tôi": người dùng tự dán vào, secret nằm trong keychain (entry `<id profile>.browse`,
   tách khỏi secret admin), access key nằm trong `profiles.json`. Chế độ này không gửi request nào tới Admin API; xoá key
   hoặc xoá profile thì entry trong keychain bị xoá theo. Audit log ghi `as=own-key`, không ghi access key hay secret.
+- Profile được tick "Tôi là user thường": key của profile được dùng luôn làm key cá nhân (chép sang entry `.browse`), các tab
+  admin bị ẩn và app không gửi request nào tới Admin API cho profile đó.
+- Với profile không tick, mỗi lần kết nối app hỏi key thuộc user nào (S3 ListBuckets, không cần cap) rồi thử đọc đúng 5 endpoint
+  Admin API (info, user của chính mình, metadata, bucket, usage) để biết key có caps gì. Các lần thử này chỉ đọc, không ghi audit.
 - Audit log không bao giờ chứa secret key hay presigned URL.

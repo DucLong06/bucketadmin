@@ -88,3 +88,33 @@ export function accessLevel(access: Access): Level {
 /** The command a cluster administrator runs to grant `caps` to `uid`. */
 export const capsCommand = (uid: string, caps: string[]) =>
   `radosgw-admin caps add --uid=${uid || "<uid>"} --caps="${caps.join(";")}"`;
+
+// ---- which caps a refused command needed ----
+
+const USERS_WRITE = ["user_create", "user_modify", "user_set_suspended", "user_delete", "key_create", "key_remove", "key_add", "key_rotate", "subuser_create", "subuser_remove", "caps_add", "caps_remove", "quota_set", "bulk_onboard"];
+
+/** Caps each backend command needs on the Admin API (src-tauri/src/rgw_admin/mod.rs). */
+const COMMAND_CAPS: Record<string, string[]> = {
+  test_connection: ["info=read"],
+  test_profile: ["info=read"],
+  users_list: ["metadata=read", "users=read"],
+  user_get: ["users=read"],
+  quota_get: ["users=read"],
+  usage_get: ["usage=read"],
+  usage_trim: ["usage=read", "usage=write"],
+  buckets_list: ["buckets=read"],
+  bucket_get: ["buckets=read"],
+  bucket_delete: ["buckets=write"],
+  bucket_quota_set: ["buckets=read", "buckets=write"],
+  ...Object.fromEntries(USERS_WRITE.map((command) => [command, ["users=write"]])),
+};
+
+/** Browsing as another user looks that user's key up with the admin key. */
+const neededCaps = (command: string) => COMMAND_CAPS[command] ?? (command.startsWith("browse_") ? ["users=read"] : null);
+
+/** Appends ` [needs a=b;c=d]` to an Admin API AccessDenied, so the message can name the caps.
+ *  S3 refusals ("S3 AccessDenied ...") are about policies and ACLs, not caps: left alone. */
+export function withNeededCaps(command: string, error: string): string {
+  const caps = neededCaps(command);
+  return caps && error.startsWith("AccessDenied (403)") ? `${error} [needs ${caps.join(";")}]` : error;
+}

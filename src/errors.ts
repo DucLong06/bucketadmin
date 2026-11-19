@@ -8,6 +8,8 @@ export type Explained = {
   code: string | null;
   /** The untouched backend text. */
   detail: string;
+  /** Admin caps the refused command needs (only for an Admin API AccessDenied). */
+  caps?: string[];
 };
 
 const BY_CODE: Record<string, string> = {
@@ -62,6 +64,12 @@ const S3_BY_CODE: Record<string, string> = {
 
 export function explain(raw: string): Explained {
   const detail = raw;
+  // "AccessDenied (403): ... [needs users=write]" (the tag is added by `invoke` in api.ts)
+  const needs = / \[needs ([^\]]+)\]$/.exec(raw);
+  if (needs) {
+    const caps = needs[1].split(";");
+    return { message: `Không đủ quyền: key của cluster này thiếu caps ${caps.join(", ")}.`, code: "AccessDenied", detail, caps };
+  }
   const s3 = /^S3 ([A-Za-z0-9]+) \((\d{3})\)/.exec(raw);
   if (s3) {
     const [, code, status] = s3;

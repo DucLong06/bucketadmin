@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { accessLevel, capsCommand, hasCap, missingCaps, missingForFull, TAB_CAPS, type Access } from "./caps";
+import { accessLevel, capsCommand, hasCap, missingCaps, missingForFull, TAB_CAPS, withNeededCaps, type Access } from "./caps";
 
 const none: Access = { uid: "me", caps: [], info: false, users: false, metadata: false, buckets: false, usage: false };
 const full: Access = {
@@ -45,4 +45,17 @@ test("sample command", () => {
     'radosgw-admin caps add --uid=longhd --caps="users=read;metadata=read"',
   );
   expect(capsCommand("", ["usage=read"])).toBe('radosgw-admin caps add --uid=<uid> --caps="usage=read"');
+});
+
+test("an Admin API refusal is tagged with the caps its command needs", () => {
+  const denied = "AccessDenied (403): the admin user lacks the caps for this operation";
+  expect(withNeededCaps("user_create", denied)).toBe(`${denied} [needs users=write]`);
+  expect(withNeededCaps("users_list", denied)).toBe(`${denied} [needs metadata=read;users=read]`);
+  // Browsing as another user: the admin key looks that user's key up.
+  expect(withNeededCaps("browse_open", denied)).toBe(`${denied} [needs users=read]`);
+  // Not about caps: S3 refusals, other errors, commands that never reach the Admin API.
+  const s3 = "S3 AccessDenied (403): ";
+  expect(withNeededCaps("browse_list", s3)).toBe(s3);
+  expect(withNeededCaps("user_create", "UserAlreadyExists (409): user already exists")).toBe("UserAlreadyExists (409): user already exists");
+  expect(withNeededCaps("audit_recent", denied)).toBe(denied);
 });

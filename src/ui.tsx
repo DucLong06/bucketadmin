@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import { createContext, type ReactNode, useContext, useState } from "react";
 import {
   Alert,
   Button,
@@ -11,7 +11,11 @@ import {
   Typography,
 } from "@mui/material";
 import type { KeyPair, Profile } from "./api";
+import { capsCommand } from "./caps";
 import { explain } from "./errors";
+
+/** uid the connected cluster key belongs to ("" while unknown); App provides it. */
+export const CallerContext = createContext("");
 
 /** Runs backend calls with shared busy/error state; resolves to undefined when the call failed. */
 export function useAction() {
@@ -52,13 +56,26 @@ export function ClusterSelect(props: { profiles: Profile[]; value: string; onCha
   );
 }
 
-/** Backend error in Vietnamese, with the error code and the original text one click away. */
+/** Backend error in Vietnamese, with the error code and the original text one click away.
+ *  A refusal for missing admin caps also shows the command that grants them. */
 export function ErrorAlert({ error, sx }: { error: string | null | undefined; sx?: object }) {
+  const callerUid = useContext(CallerContext);
   if (!error) return null;
-  const { message, code, detail } = explain(error);
+  const { message, code, detail, caps } = explain(error);
+  const command = caps && capsCommand(callerUid, caps);
   return (
     <Alert severity="error" sx={sx}>
       {message}
+      {command && (
+        <>
+          <div style={{ marginTop: 4 }}>
+            Nhờ quản trị cluster chạy lệnh sau trên node Ceph{callerUid ? "" : " (thay <uid> bằng uid của bạn)"}, rồi kết nối lại:
+          </div>
+          {/* One line, scrolled when narrow: a wrapped command reads as two when retyped by hand. */}
+          <code style={{ display: "block", whiteSpace: "nowrap", overflowX: "auto" }}>{command}</code>
+          <CopyButton value={command} label="Copy lệnh cấp caps" />
+        </>
+      )}
       {message !== detail && (
         <details style={{ marginTop: 4 }}>
           <summary>Chi tiết kỹ thuật{code ? ` (${code})` : ""}</summary>

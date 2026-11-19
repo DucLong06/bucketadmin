@@ -1,5 +1,15 @@
 // Shapes returned by the Tauri commands (src-tauri/src/lib.rs).
-export { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { withNeededCaps } from "./caps";
+
+/** Calls a backend command. An Admin API refusal comes back naming the caps the command needs. */
+export async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await tauriInvoke<T>(command, args);
+  } catch (e) {
+    throw withNeededCaps(command, String(e));
+  }
+}
 
 export type Profile = {
   id: string;
@@ -8,6 +18,8 @@ export type Profile = {
   access_key: string;
   /** Access key of the personal key saved for "browse with my own key" (its secret stays in the keychain). */
   browse_access_key?: string | null;
+  /** "Tôi là user thường": no admin caps, so the admin screens are hidden and the Admin API is not called. */
+  plain_user?: boolean;
 };
 export type ClusterInfo = { cluster_id: string; version: string | null };
 /** `secret_key` is empty except in the response that creates the key. */

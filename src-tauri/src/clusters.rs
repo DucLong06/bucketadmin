@@ -19,6 +19,10 @@ pub struct ClusterProfile {
     /// in the keychain under `<id>.browse`. Absent in files written before M6.
     #[serde(default)]
     pub browse_access_key: Option<String>,
+    /// "I am a normal user": the key has no admin caps, so the UI hides the admin screens
+    /// and never calls the Admin API for this profile.
+    #[serde(default)]
+    pub plain_user: bool,
 }
 
 /// Where secret keys go. The app uses [`Keychain`]; tests use an in-memory map.
@@ -140,6 +144,7 @@ impl<S: SecretStore> ProfileStore<S> {
             endpoint: endpoint.into(),
             access_key: access_key.into(),
             browse_access_key: None,
+            plain_user: false,
         })?;
         let _guard = self.lock.lock().map_err(|e| e.to_string())?;
         let mut profiles = self.read()?;
@@ -193,6 +198,20 @@ impl<S: SecretStore> ProfileStore<S> {
         self.change(id, |profile| {
             self.secrets.set(&browse_secret_id(id), secret_key)?;
             profile.browse_access_key = Some(access_key.to_string());
+            Ok(())
+        })
+    }
+
+    /// Marks the profile as a normal user's (or back). A normal user's cluster key is their
+    /// personal key, so it also becomes the browse key unless one was already entered.
+    pub fn set_plain_user(&self, id: &str, plain: bool) -> Result<ClusterProfile, String> {
+        self.change(id, |profile| {
+            if plain && profile.browse_access_key.is_none() {
+                let secret = self.secrets.get(id)?;
+                self.secrets.set(&browse_secret_id(id), &secret)?;
+                profile.browse_access_key = Some(profile.access_key.clone());
+            }
+            profile.plain_user = plain;
             Ok(())
         })
     }
@@ -366,6 +385,7 @@ pub(crate) mod tests {
             endpoint: "http://h:1".into(),
             access_key: "AK".into(),
             browse_access_key: None,
+            plain_user: false,
         };
         assert!(store.update(ghost, Some("SK")).is_err());
         assert!(secrets.0.lock().unwrap().is_empty());
@@ -434,6 +454,34 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn plain_user_profile_browses_with_its_own_key() {
+        let dir = temp_dir("plain");
+        let secrets = MemorySecrets::default();
+        let store = ProfileStore::new(dir.clone(), &secrets);
+        let p = store
+            .add("mine", "http://h:1", "AKMINE", "my-secret")
+            .unwrap();
+        assert!(!p.plain_user);
+        let marked = store.set_plain_user(&p.id, true).unwrap();
+        assert!(marked.plain_user);
+        assert_eq!(marked.browse_access_key.as_deref(), Some("AKMINE"));
+        let mine = store.browse_credentials(&p.id).unwrap().1;
+        assert_eq!(mine.secret_key, "my-secret");
+
+        // Unmarking keeps the browse key; marking again does not overwrite one typed in since.
+        assert!(!store.set_plain_user(&p.id, false).unwrap().plain_user);
+        store
+            .set_browse_key(&p.id, "AKOTHER", "other-secret")
+            .unwrap();
+        let again = store.set_plain_user(&p.id, true).unwrap();
+        assert_eq!(again.browse_access_key.as_deref(), Some("AKOTHER"));
+        assert!(store.set_plain_user("missing", true).is_err());
+        store.remove(&p.id).unwrap();
+        assert!(secrets.0.lock().unwrap().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn profiles_written_before_m6_still_load() {
         let dir = temp_dir("oldfile");
         std::fs::create_dir_all(&dir).unwrap();
@@ -442,6 +490,7 @@ pub(crate) mod tests {
         let secrets = MemorySecrets::default();
         let listed = ProfileStore::new(dir.clone(), &secrets).list().unwrap();
         assert_eq!(listed[0].browse_access_key, None);
+        assert!(!listed[0].plain_user);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

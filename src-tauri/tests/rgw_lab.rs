@@ -1141,3 +1141,51 @@ async fn m6_caller_access_and_self_service() {
         ops.admin.delete_user(uid, true).await.expect("cleanup");
     }
 }
+
+// ---- users for FLOW=selfservice of scripts/ui-smoke/ui-smoke.sh ----
+
+/// (uid, caps). Their keys are fixed (`BAM6UISMOKEKEY00000<n>`), so the driver can type them.
+const M6_UI_USERS: [(&str, &str); 3] = [
+    ("ba-m6-ui-plain", ""),
+    ("ba-m6-ui-self", "users=read;usage=read"),
+    (
+        "ba-m6-ui-ro",
+        "users=read;metadata=read;buckets=read;usage=read;info=read",
+    ),
+];
+
+async fn ui_smoke_m6_cleanup(admin: &RgwAdmin) {
+    for uid in M6_UI_USERS
+        .map(|(uid, _)| uid)
+        .into_iter()
+        .chain(["ba-m6-ui-new"])
+    {
+        let _ = admin.delete_user(uid, true).await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
+async fn ui_smoke_m6_fixture_create() {
+    let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
+    ui_smoke_m6_cleanup(&admin).await;
+    for (n, (uid, caps)) in M6_UI_USERS.into_iter().enumerate() {
+        let n = n + 1;
+        let access = format!("BAM6UISMOKEKEY00000{n}");
+        let secret = format!("bam6uismokesecret00000000000000000000000{n}");
+        admin
+            .create_user(uid, "M6 UI smoke", None, Some(&access), Some(&secret))
+            .await
+            .expect("create fixture user");
+        if !caps.is_empty() {
+            admin.add_caps(uid, caps).await.expect("add caps");
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
+async fn ui_smoke_m6_fixture_remove() {
+    let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
+    ui_smoke_m6_cleanup(&admin).await;
+}

@@ -83,6 +83,12 @@ fn remove_profile(state: St<'_>, id: String) -> Cmd<'_, ()> {
     state.profiles.remove(&id)
 }
 
+/// Ticks or clears "I am a normal user" on a saved profile.
+#[tauri::command(async)]
+fn profile_set_plain(state: St<'_>, id: String, plain: bool) -> Cmd<'_, ClusterProfile> {
+    state.profiles.set_plain_user(&id, plain)
+}
+
 /// Test credentials typed into the form, before anything is saved.
 #[tauri::command]
 async fn test_connection(
@@ -408,6 +414,7 @@ pub fn run() {
             list_profiles,
             add_profile,
             remove_profile,
+            profile_set_plain,
             test_connection,
             test_profile,
             caller_access,

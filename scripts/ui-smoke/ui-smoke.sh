@@ -5,7 +5,8 @@
 #   npx tauri build --debug --no-bundle
 #   xvfb-run -a -s "-screen 0 1280x900x24" scripts/ui-smoke/ui-smoke.sh "$PWD/src-tauri/target/debug/bucketadmin"
 # $1 = app binary (debug build: only those honour BUCKETADMIN_DEV_SCRIPT). Screenshots: /tmp/ba-smoke/*.png.
-# FLOW=admin (default) runs the admin screens, FLOW=browse the S3 browse page (needs ffmpeg for the video viewer).
+# FLOW=admin (default) runs the admin screens, FLOW=browse the S3 browse page (needs ffmpeg for the video viewer),
+# FLOW=selfservice the app as seen by users without (full) admin caps.
 HERE="$(dirname "$(readlink -f "$0")")"
 export TPL="$HERE/driver.tpl.js"
 FLOW="${FLOW:-admin}"
@@ -38,7 +39,15 @@ case "$FLOW" in
       && export BA_SMOKE_MP4=/tmp/ba-smoke/files/clip.mp4
     export BUCKETADMIN_DEV_PICK_UPLOAD=/tmp/ba-smoke/files/upload-20m.bin BUCKETADMIN_DEV_SAVE_DIR=/tmp/ba-smoke/dl
     ;;
-  *) echo "unknown FLOW=$FLOW (admin or browse)"; exit 2 ;;
+  selfservice)
+    FIXTURE_TEST=rgw_lab FIXTURE=ui_smoke_m6_fixture STEP=9000 ENTER_AT=10-caps-command
+    NAMES="01-plain-test 02-plain-badge 03-own-key-session 04-own-key-preview 05-own-key-acl - 06-key-deleted 07-key-dialog 08-audit 09-self-info 10-caps-command - 11-done"
+    rm -rf /tmp/ba-smoke/files
+    mkdir -p /tmp/ba-smoke/files
+    echo "xin chào từ key của tôi" > /tmp/ba-smoke/files/hello.txt
+    export BUCKETADMIN_DEV_PICK_UPLOAD=/tmp/ba-smoke/files/hello.txt
+    ;;
+  *) echo "unknown FLOW=$FLOW (admin, browse or selfservice)"; exit 2 ;;
 esac
 export NAMES
 fixture() { (cd "$HERE/../../src-tauri" && cargo test --quiet --test "$FIXTURE_TEST" "${FIXTURE}_$1" -- --ignored --exact 2>&1 | grep -E "test result|panicked|error" | head -3); }
@@ -88,6 +97,8 @@ for name in $NAMES; do
     clip=$(timeout 3 xclip -o -selection clipboard 2>&1)
     if [ "$FLOW" = admin ]; then
       echo "clipboard after a real Enter on 'Copy access key': ${#clip} chars; looks like an access key: $(printf '%s' "$clip" | grep -cE '^[A-Z0-9]{20}$')"
+    elif [ "$FLOW" = selfservice ]; then
+      echo "clipboard after a real Enter on 'Copy lệnh cấp caps': $clip"
     else
       # A presigned URL is a credential: only its path is printed, never the signature.
       echo "clipboard after a real Enter at $name: ${clip%%\?*}$([[ "$clip" == *X-Amz-Signature=* ]] && echo "?… (presigned, X-Amz-Expires=$(printf '%s' "$clip" | grep -o 'X-Amz-Expires=[0-9]*' | cut -d= -f2))")"
@@ -110,8 +121,9 @@ if [ "$FLOW" = browse ]; then
 fi
 echo "== profiles.json after the run"; cat /tmp/ba-smoke/data/bucketadmin/profiles.json; echo
 # A flow that fails before its last step leaves its cluster profile behind; the profile file is
-# throw-away, but its secret sits in the real keychain: remove exactly those entries.
-for id in $(grep -o '"id": "[0-9a-f]*"' /tmp/ba-smoke/data/bucketadmin/profiles.json | cut -d'"' -f4); do
+# throw-away, but its secrets sit in the real keychain (the cluster key under the profile id, a
+# personal browse key under "<id>.browse"): remove exactly those entries.
+for id in $(grep -o '"id": "[0-9a-f]*"' /tmp/ba-smoke/data/bucketadmin/profiles.json | sed 's/.*"\([0-9a-f]*\)"$/\1 \1.browse/'); do
   for item in $(gdbus call --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets \
       --method org.freedesktop.Secret.Service.SearchItems "{'service':'bucketadmin','username':'$id'}" \
       | grep -o "/org/freedesktop/secrets/collection/[A-Za-z0-9_/]*"); do
@@ -127,6 +139,7 @@ for action, target, detail, ok, msg in sqlite3.connect(db).execute("select actio
     print(f"{action:15} {target:34} {'ok ' if ok else 'ERR'} {detail}{' | ' + msg if msg else ''}")
 raw = open(db, "rb").read()
 print("admin secret key in audit.db:", raw.count(os.environ["RGW_SECRET_KEY"].encode()), "occurrences")
+print("keys typed in by the selfservice flow in audit.db:", raw.count(b"bam6uismokesecret") + raw.count(b"BAM6UISMOKEKEY"), "occurrences")
 PY
 echo "== app stdout/stderr (libEGL noise filtered)"; grep -v 'libEGL\|DRI3' /tmp/ba-smoke/app.log
 # The driver ends with a banner in the bottom-left corner: green = every step passed in time,
