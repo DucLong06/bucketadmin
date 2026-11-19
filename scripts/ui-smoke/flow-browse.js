@@ -157,6 +157,18 @@
     await click("Xoá mục đã xong");
     await click("Upload");
     await waitFor(() => hasText("Xong · 20.0 MiB") && objectLink("bin/upload-20m.bin"), "multipart upload listed", 90000);
+    // ---- times are Vietnam's (UTC+7) although this process runs with TZ=UTC. The expected value is
+    // worked out by plain arithmetic here, not with the Intl call the app itself uses.
+    check(new Date().getTimezoneOffset() === 0, "the app under test runs in UTC");
+    const secondsOfDay = (hms) => hms.split(":").reduce((total, part) => total * 60 + Number(part), 0);
+    const vietnamNow = (Math.floor(Date.now() / 1000) + 7 * 3600) % 86400;
+    const apart = (shown) => Math.min((shown - vietnamNow + 86400) % 86400, (vietnamNow - shown + 86400) % 86400);
+    const taskTime = last(all('[aria-label="Tasks"] p').filter((p) => /^\d\d:\d\d:\d\d$/.test(p.textContent.trim()))).textContent.trim();
+    check(hasText("giờ UTC+7") && apart(secondsOfDay(taskTime)) < 300, `task time ${taskTime} is the time in Vietnam`);
+    const modified = [...objectLink("bin/upload-20m.bin").closest('[role="row"], tr').querySelectorAll("*")]
+      .map((cell) => /^\d{4}-\d\d-\d\d (\d\d:\d\d)$/.exec(cell.textContent.trim()))
+      .find(Boolean);
+    check(hasText("Sửa lần cuối (UTC+7)") && modified && apart(secondsOfDay(`${modified[1]}:00`)) < 300, `last-modified ${modified?.[0]} is the time in Vietnam`);
     await shot("13-upload-done");
     await openObject("bin/upload-20m.bin");
     await click("Properties");

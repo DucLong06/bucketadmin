@@ -79,7 +79,8 @@ flow = open(os.environ["FLOW_JS"]).read()
 print(open(os.environ["TPL"]).read().replace("    // __FLOW__", flow).replace("__CFG__", json.dumps(cfg)))
 PY
 )
-BUCKETADMIN_DEV_SCRIPT=/tmp/ba-smoke/driver.js "$BIN" > /tmp/ba-smoke/app.log 2>&1 &
+# TZ=UTC: the app must show Vietnam time (UTC+7) whatever zone the machine is in; the browse flow checks it.
+TZ=UTC BUCKETADMIN_DEV_SCRIPT=/tmp/ba-smoke/driver.js "$BIN" > /tmp/ba-smoke/app.log 2>&1 &
 APP=$!
 for i in $(seq 1 30); do
   WID=$(xdotool search --onlyvisible --name 'BucketAdmin' 2>/dev/null | head -1)
