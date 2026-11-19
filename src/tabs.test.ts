@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { closeTab, cycleTab, placeLabel, placePath, samePlace, tabTitle, type BrowseTab, type Place } from "./tabs";
+import { closeTab, cycleTab, placeLabel, placePath, samePlace, tabShortcut, tabTitle, type BrowseTab, type Place } from "./tabs";
 
 const place = (bucket = "", prefix = "", clusterId = "c1", uid = ""): Place => ({ clusterId, uid, bucket, prefix });
 const tab = (id: string, at = place()): BrowseTab => ({ id, start: at, at });
@@ -38,4 +38,19 @@ test("Ctrl+Tab and Ctrl+Shift+Tab wrap around", () => {
   expect(cycleTab(tabs, "3", 1)).toBe("1");
   expect(cycleTab(tabs, "1", -1)).toBe("3");
   expect(cycleTab([tabs[0]], "1", 1)).toBe("1");
+});
+
+test("tab shortcuts, as the keys really arrive in the webview", () => {
+  const press = (key: string, code: string, mods: Partial<{ ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }> = {}) =>
+    tabShortcut({ key, code, ctrlKey: true, shiftKey: false, altKey: false, metaKey: false, ...mods });
+  expect(press("t", "KeyT")).toBe("new");
+  expect(press("T", "KeyT", { shiftKey: true })).toBe("new");
+  expect(press("w", "KeyW")).toBe("close");
+  expect(press("Tab", "Tab")).toBe("next");
+  expect(press("Tab", "Tab", { shiftKey: true })).toBe("previous");
+  // Seen with a real Ctrl+Shift+Tab under GTK: the key has no name, only its position.
+  expect(press("Unidentified", "Tab", { shiftKey: true })).toBe("previous");
+  expect(press("t", "KeyT", { ctrlKey: false })).toBeNull();
+  expect(press("t", "KeyT", { altKey: true })).toBeNull();
+  expect(press("f", "KeyF")).toBeNull();
 });

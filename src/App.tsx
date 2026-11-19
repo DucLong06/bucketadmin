@@ -19,7 +19,7 @@ import {
 import { invoke, type Profile } from "./api";
 import Browse from "./Browse";
 import Connections from "./Connections";
-import { closeTab, cycleTab, placeLabel, samePlace, tabTitle, type BrowseTab, type Place } from "./tabs";
+import { closeTab, cycleTab, placeLabel, samePlace, tabShortcut, tabTitle, type BrowseTab, type Place } from "./tabs";
 import { theme, tokens } from "./theme";
 import { TaskPanel, useTransfers } from "./transfers";
 import { ErrorAlert } from "./ui";
@@ -104,17 +104,16 @@ export default function App() {
   keys.current = { openEmptyTab, close, tabs, active };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.altKey || e.metaKey) return;
+      const asked = tabShortcut(e);
       // A dialog, drawer or menu belongs to the tab on screen: no switching underneath it.
-      if (document.querySelector(".MuiDialog-root, .MuiDrawer-root, .MuiPopover-root")) return;
+      if (!asked || document.querySelector(".MuiDialog-root, .MuiDrawer-root, .MuiPopover-root")) return;
       const now = keys.current;
-      const key = e.key.toLowerCase();
-      if (key === "t") now.openEmptyTab();
-      else if (key === "w") now.close(now.active);
-      else if (key === "tab") {
-        setActive(cycleTab(now.tabs, now.active, e.shiftKey ? -1 : 1));
+      if (asked === "new") now.openEmptyTab();
+      else if (asked === "close") now.close(now.active);
+      else {
+        setActive(cycleTab(now.tabs, now.active, asked === "next" ? 1 : -1));
         setPage("browse");
-      } else return;
+      }
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
