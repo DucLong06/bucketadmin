@@ -23,6 +23,7 @@ import { invoke, maskKey, type BrowseBucket, type Listing, type ObjectEntry, typ
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { formatBytes, shortTime } from "./format";
 import AclEditor from "./AclEditor";
+import { CreateBucketDialog } from "./BrowseDialogs";
 import ObjectDrawer, { type Versioning } from "./ObjectDrawer";
 import { TransferList, useTransfers } from "./transfers";
 import { ClusterSelect, ErrorAlert, useAction } from "./ui";
@@ -66,6 +67,7 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   const [bucketAcl, setBucketAcl] = useState(false);
   const [pattern, setPattern] = useState("");
   const [found, setFound] = useState<Found | null>(null);
+  const [creating, setCreating] = useState<"bucket" | "folder" | null>(null);
 
   async function search(e: FormEvent) {
     e.preventDefault();
@@ -148,6 +150,12 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         ? page
         : { prefixes: [...old.prefixes, ...page.prefixes], objects: [...old.objects, ...page.objects], next_token: page.next_token },
     );
+  }
+
+  function onBucketCreated(name: string) {
+    const byName = (a: BrowseBucket, b: BrowseBucket) => a.name.localeCompare(b.name);
+    setSession((s) => s && { ...s, buckets: [...s.buckets, { name, created: "" }].sort(byName) });
+    load(name, "", null);
   }
 
   // Search results replace the folder view until they are closed; keys stay relative to the open folder.
@@ -251,6 +259,11 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                 User không sở hữu bucket nào.
               </Typography>
             )}
+            <Box sx={{ px: 2, pb: 1.5 }}>
+              <Button size="small" variant="outlined" fullWidth onClick={() => setCreating("bucket")}>
+                Tạo bucket
+              </Button>
+            </Box>
             <Stack component="form" onSubmit={openByName} spacing={1} sx={{ p: 2, borderTop: 1, borderColor: "divider" }}>
               <TextField
                 label="Mở bucket theo tên"
@@ -356,6 +369,13 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
           </Box>
         </Stack>
       )}
+      <CreateBucketDialog
+        clusterId={clusterId}
+        uid={session?.uid ?? ""}
+        open={creating === "bucket"}
+        onClose={() => setCreating(null)}
+        onCreated={onBucketCreated}
+      />
       <Dialog open={bucketAcl} onClose={() => setBucketAcl(false)} maxWidth="md" fullWidth aria-labelledby="bucket-acl-title">
         <DialogTitle id="bucket-acl-title">ACL của bucket {bucket}</DialogTitle>
         <DialogContent>

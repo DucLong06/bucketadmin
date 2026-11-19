@@ -59,3 +59,8 @@ test("S3 errors made with a user's own key get their own wording", () => {
   // The admin API's AccessDenied keeps its own (caps) wording.
   expect(explain("AccessDenied (403): the admin user lacks the caps for this operation").message).toMatch(/caps/);
 });
+
+test("S3 errors of bucket creation", () => {
+  expect(explain("S3 BucketAlreadyExists (409): Cannot modify existing access control policy").message).toMatch(/đã được dùng/);
+  expect(explain("S3 TooManyBuckets (400): ").message).toMatch(/số bucket tối đa/);
+});

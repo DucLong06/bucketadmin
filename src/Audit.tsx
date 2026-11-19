@@ -43,6 +43,7 @@ const ACTIONS = [
   "version.restore",
   "version.delete",
   "acl.set",
+  "bucket.create",
 ];
 
 const native = { select: { native: true } };
