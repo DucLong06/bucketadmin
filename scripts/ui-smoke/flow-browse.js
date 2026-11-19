@@ -3,6 +3,8 @@
     const OWNER = "ba-m4-ui";
     const READ_ONLY = "ba-m4-ui-ro";
     const drawer = () => last(all(".MuiDrawer-paper"));
+    // Media is shown by /preview.html inside a frame of the drawer.
+    const media = (tag) => drawer().querySelector("iframe")?.contentDocument?.querySelector(tag);
     const objectLink = (key) => document.querySelector(`[aria-label="Mở object ${key}"]`);
     const openObject = (key) => clickSel(`[aria-label="Mở object ${key}"]`);
     const openFolder = async (prefix) => {
@@ -74,28 +76,43 @@
     // ---- media straight from presigned URLs
     await openFolder("media/");
     await openObject("media/icon.png");
-    await waitFor(() => drawer().querySelector("img")?.naturalWidth === 128, "PNG loaded");
+    await waitFor(() => media("img")?.naturalWidth === 128, "PNG loaded");
+    // The CSP at work: which directive (if any) refuses loading `url` as an image in a document.
+    const refusedBy = (doc, win, url) =>
+      new Promise((resolve) => {
+        const on = (e) => resolve(e.effectiveDirective || e.violatedDirective);
+        doc.addEventListener("securitypolicyviolation", on, { once: true });
+        new win.Image().src = url;
+        setTimeout(() => resolve(null), 3000);
+      });
+    const frame = drawer().querySelector("iframe");
+    const pngUrl = new URLSearchParams(frame.src.split("#")[1]).get("url");
+    check((await refusedBy(document, window, pngUrl)) === "img-src", "the main window is refused the very image the frame shows");
+    check(
+      (await refusedBy(frame.contentDocument, frame.contentWindow, "https://example.invalid/x.png")) === "img-src",
+      "the preview frame is refused any origin but the cluster's",
+    );
     await clickSel('[aria-label="Phóng to"]');
-    await waitFor(() => hasText("150%"), "zoomed");
+    await waitFor(() => hasText("150%") && media("img").width === 192, "zoomed to 150%");
     await shot("07-image");
     await closeDrawer();
     await openObject("media/shape.svg");
-    await waitFor(() => drawer().querySelector("img")?.naturalWidth > 0, "SVG loaded");
+    await waitFor(() => media("img")?.naturalWidth > 0, "SVG loaded");
     await closeDrawer();
     await openObject("media/tone.wav");
-    await waitFor(() => drawer().querySelector("audio")?.duration > 0.9, "audio metadata loaded", 20000);
+    await waitFor(() => media("audio")?.duration > 0.9, "audio metadata loaded", 20000);
     await shot("08-audio");
     await closeDrawer();
     if (CFG.MP4) {
       await openObject("media/clip.mp4");
-      await waitFor(() => drawer().querySelector("video")?.videoWidth === 320, "video metadata loaded", 20000);
-      drawer().querySelector("video").currentTime = 1;
+      await waitFor(() => media("video")?.videoWidth === 320, "video metadata loaded", 20000);
+      media("video").currentTime = 1;
       await sleep(1500);
     }
     await shot("09-video");
     if (CFG.MP4) await closeDrawer();
     await openObject("media/doc.pdf");
-    await waitFor(() => drawer().querySelector("iframe"), "PDF frame");
+    await waitFor(() => media("iframe"), "PDF frame inside the preview frame");
     await sleep(4000);
     await shot("10-pdf"); // what the frame shows can only be judged from the screenshot
     await closeDrawer();

@@ -3,6 +3,9 @@
 // ui-smoke.sh puts one of the flow-*.js files in place of the __FLOW__ line and creates the
 // data that flow expects on the cluster.
 (async () => {
+  // The app runs this script on every page load; only the first one starts the flow.
+  if (window.__smokeStarted) return;
+  window.__smokeStarted = true;
   const CFG = __CFG__;
   const { START, STEP, NAMES, UID } = CFG;
   const DATA_UID = "ba-m3-ui-data";

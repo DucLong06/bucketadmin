@@ -308,53 +308,55 @@ function HexView({ at, size }: { at: ObjectAt; size: number }) {
   );
 }
 
-/** Image, audio, video and PDF are shown straight from a short-lived presigned URL, so the
- *  webview streams them from RGW itself (range requests) instead of through the app. */
+const FRAME_HEIGHT: Partial<Record<PreviewKind, number>> = { image: 480, audio: 64, video: 500, pdf: 560 };
+
+/** Image, audio, video and PDF are shown by /preview.html in a frame: that page loads the
+ *  object straight from RGW (a 15-minute presigned URL, so media streams by range requests)
+ *  and is the only place in the app allowed to load anything remote. */
 function MediaView({ at, kind, name }: { at: ObjectAt; kind: PreviewKind; name: string }) {
   const [url, setUrl] = useState("");
   const [zoom, setZoom] = useState(0); // 0 = fit the panel, otherwise percent of the natural size
-  const [natural, setNatural] = useState(0);
+  const frame = useRef<HTMLIFrameElement>(null);
   const { busy, error, run } = useAction();
   useEffect(() => {
     run(() => invoke<string>("browse_media_url", { at })).then((u) => setUrl(u ?? ""));
   }, []);
+  const zoomTo = (percent: number) => {
+    setZoom(percent);
+    frame.current?.contentWindow?.postMessage({ zoom: percent }, "*");
+  };
 
   return (
     <Stack spacing={1}>
       {busy && <LinearProgress aria-label="Đang chuẩn bị" />}
       <ErrorAlert error={error} />
       {url && kind === "image" && (
-        <>
-          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-            <Button size="small" variant="outlined" onClick={() => setZoom((z) => Math.max(10, (z || 100) / 1.5))} aria-label="Thu nhỏ">
-              −
-            </Button>
-            <Button size="small" variant="outlined" onClick={() => setZoom((z) => Math.min(1600, (z || 100) * 1.5))} aria-label="Phóng to">
-              +
-            </Button>
-            <Button size="small" onClick={() => setZoom(100)}>
-              100%
-            </Button>
-            <Button size="small" onClick={() => setZoom(0)}>
-              Vừa khung
-            </Button>
-            <Typography variant="body2" aria-live="polite">
-              {zoom ? `${Math.round(zoom)}%` : "vừa khung"}
-            </Typography>
-          </Stack>
-          <Box sx={{ overflow: "auto", maxHeight: 480, bgcolor: "background.default", borderRadius: 1 }}>
-            <img
-              src={url}
-              alt={name}
-              onLoad={(e) => setNatural(e.currentTarget.naturalWidth)}
-              style={zoom && natural ? { width: (natural * zoom) / 100, display: "block" } : { maxWidth: "100%", display: "block" }}
-            />
-          </Box>
-        </>
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+          <Button size="small" variant="outlined" onClick={() => zoomTo(Math.max(10, (zoom || 100) / 1.5))} aria-label="Thu nhỏ">
+            −
+          </Button>
+          <Button size="small" variant="outlined" onClick={() => zoomTo(Math.min(1600, (zoom || 100) * 1.5))} aria-label="Phóng to">
+            +
+          </Button>
+          <Button size="small" onClick={() => zoomTo(100)}>
+            100%
+          </Button>
+          <Button size="small" onClick={() => zoomTo(0)}>
+            Vừa khung
+          </Button>
+          <Typography variant="body2" aria-live="polite">
+            {zoom ? `${Math.round(zoom)}%` : "vừa khung"}
+          </Typography>
+        </Stack>
       )}
-      {url && kind === "audio" && <audio controls src={url} aria-label={name} style={{ width: "100%" }} />}
-      {url && kind === "video" && <video controls src={url} aria-label={name} style={{ maxWidth: "100%", maxHeight: 480 }} />}
-      {url && kind === "pdf" && <iframe src={url} title={name} style={{ width: "100%", height: 560, border: 0, background: "#fff" }} />}
+      {url && (
+        <iframe
+          ref={frame}
+          title={`Xem trước ${name}`}
+          src={`/preview.html#${new URLSearchParams({ kind, url, name })}`}
+          style={{ width: "100%", height: FRAME_HEIGHT[kind], border: 0, borderRadius: 4 }}
+        />
+      )}
     </Stack>
   );
 }
