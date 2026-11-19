@@ -11,6 +11,7 @@ use clusters::{ClusterProfile, ProfileStore};
 use ops::{
     BucketDetail, NewSubuser, Ops, Quotas, RotatedKey, TrimmedUsage, UsageSupport, UsersPage,
 };
+use ops::{OnboardResult, OnboardRow};
 use rgw_admin::{
     BucketInfo, Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin,
     Usage, UserInfo,
@@ -339,6 +340,17 @@ async fn bucket_quota_set(
         .await
 }
 
+/// Creates the users of an onboarding file (or, with `dry_run`, says what would happen).
+#[tauri::command]
+async fn bulk_onboard(
+    state: St<'_>,
+    cluster_id: String,
+    rows: Vec<OnboardRow>,
+    dry_run: bool,
+) -> Cmd<'_, Vec<OnboardResult>> {
+    Ok(state.ops(&cluster_id)?.onboard(&rows, dry_run).await)
+}
+
 // ---- audit ----------------------------------------------------------------
 
 /// Latest 100 rows; empty / missing filters match everything.
@@ -410,6 +422,7 @@ pub fn run() {
             bucket_delete,
             bucket_quota_set,
             audit_recent,
+            bulk_onboard,
             browse::browse_open,
             browse::browse_list,
             browse::browse_pick_upload,
