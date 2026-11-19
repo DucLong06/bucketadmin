@@ -36,8 +36,34 @@ const BY_CODE: Record<string, string> = {
   InternalError: "RGW gặp lỗi nội bộ. Thử lại sau hoặc xem log của RGW.",
 };
 
+// Errors of S3 calls made while browsing ("S3 <Code> (<status>): ..."): the key in question
+// is the browsed user's, so the advice differs from the admin API's.
+const S3_BY_CODE: Record<string, string> = {
+  AccessDenied: "Key của user này không có quyền cho thao tác vừa làm (bị chặn bởi policy, ACL hoặc op-mask).",
+  NoSuchBucket: "Bucket không tồn tại.",
+  NoSuchKey: "Object không tồn tại (có thể đã bị xoá).",
+  NotFound: "Object không tồn tại (có thể đã bị xoá).",
+  NoSuchVersion: "Version này không tồn tại.",
+  NoSuchUpload: "Phiên upload multipart không còn tồn tại.",
+  PreconditionFailed: "Object đã bị thay đổi trong lúc đang tải. Hãy tải lại từ đầu.",
+  InvalidRange: "Khoảng byte yêu cầu nằm ngoài object.",
+  EntityTooSmall: "Một phần upload nhỏ hơn mức tối thiểu của S3.",
+  MalformedACLError: "ACL không hợp lệ.",
+  InvalidBucketState: "Bucket không ở trạng thái phù hợp cho thao tác này (ví dụ chưa bật versioning).",
+  SignatureDoesNotMatch: "Secret key của user này không khớp. Thử mở lại phiên browse.",
+  InvalidAccessKeyId: "Access key của user này không còn tồn tại. Thử mở lại phiên browse.",
+};
+
 export function explain(raw: string): Explained {
   const detail = raw;
+  const s3 = /^S3 ([A-Za-z0-9]+) \((\d{3})\)/.exec(raw);
+  if (s3) {
+    const [, code, status] = s3;
+    if (S3_BY_CODE[code]) return { message: S3_BY_CODE[code], code, detail };
+    if (status === "403") return { message: S3_BY_CODE.AccessDenied, code, detail };
+    if (status === "404") return { message: S3_BY_CODE.NotFound, code, detail };
+    return { message: `S3 báo lỗi HTTP ${status} (${code}).`, code, detail };
+  }
   // "NoSuchUser (404): user does not exist"
   const named = /^([A-Za-z]+) \((\d{3})\)/.exec(raw);
   // "RGW returned HTTP 400 InvalidArgument some message" (the code can be empty)

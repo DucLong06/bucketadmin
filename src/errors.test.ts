@@ -47,3 +47,15 @@ test("unrecognised text is passed through unchanged", () => {
   const e = explain("keychain: cannot read secret key: locked");
   expect(e).toEqual({ message: e.detail, code: null, detail: "keychain: cannot read secret key: locked" });
 });
+
+test("S3 errors made with a user's own key get their own wording", () => {
+  const denied = explain("S3 AccessDenied (403): ");
+  expect(denied.message).toMatch(/^Key của user này không có quyền/);
+  expect(denied.code).toBe("AccessDenied");
+  expect(explain("S3 NotFound (404): ").message).toMatch(/^Object không tồn tại/);
+  expect(explain("S3 HTTP403 (403): no error document").message).toMatch(/^Key của user này/);
+  expect(explain("S3 PreconditionFailed (412): ").message).toMatch(/thay đổi trong lúc đang tải/);
+  expect(explain("S3 SlowDown (503): busy").message).toBe("S3 báo lỗi HTTP 503 (SlowDown).");
+  // The admin API's AccessDenied keeps its own (caps) wording.
+  expect(explain("AccessDenied (403): the admin user lacks the caps for this operation").message).toMatch(/caps/);
+});

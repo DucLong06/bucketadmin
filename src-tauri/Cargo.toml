@@ -21,6 +21,17 @@ hmac = "0.12"
 base64 = "0.22"
 # already in the tree via reqwest/tauri; used for bounded-concurrency user loading
 futures-util = "0.3"
+# S3 browsing with a user's own key (path-style); rustls, no openssl
+aws-sdk-s3 = "1"
+# file streaming for transfers; the runtime itself is Tauri's
+tokio = { version = "1", features = ["fs", "io-util"] }
+# Parquet preview through ranged reads: footer + only the pages a view needs
+parquet = { version = "60", default-features = false, features = ["arrow", "async", "snap", "zstd", "flate2-rust_backend", "lz4"] }
+arrow-json = "60"
+# already in the tree; the buffer type of the Parquet reader interface
+bytes = "1"
+# native open/save dialogs for upload and download
+tauri-plugin-dialog = "2"
 # audit log; bundled = no system libsqlite needed
 rusqlite = { version = "0.32", features = ["bundled"] }
 # Linux Secret Service over libdbus; crypto-rust keeps openssl out
@@ -30,6 +41,9 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+# builds the Parquet files the lab tests read back
+arrow-array = "60"
+arrow-schema = "60"
 
 [lints.rust]
 unsafe_code = "forbid"

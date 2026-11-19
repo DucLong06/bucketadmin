@@ -1,8 +1,10 @@
 pub mod audit;
+mod browse;
 pub mod clusters;
 pub mod export;
 pub mod ops;
 pub mod rgw_admin;
+pub mod s3;
 
 use audit::{Audit, AuditEntry};
 use clusters::{ClusterProfile, ProfileStore};
@@ -17,10 +19,11 @@ use tauri::{Manager, State};
 
 // Errors cross the IPC boundary as display strings; the UI shows them verbatim.
 
-struct AppState {
-    profiles: ProfileStore,
-    audit: Audit,
-    http: ReqwestClient,
+pub(crate) struct AppState {
+    pub(crate) profiles: ProfileStore,
+    pub(crate) audit: Audit,
+    pub(crate) http: ReqwestClient,
+    pub(crate) browse: browse::Sessions,
 }
 
 impl AppState {
@@ -364,11 +367,13 @@ pub fn run() {
         }
     });
     builder
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(AppState {
                 profiles: ProfileStore::open_default()?,
                 audit: Audit::open(&clusters::data_dir()?.join("audit.db"))?,
                 http: ReqwestClient::new().map_err(|e| e.to_string())?,
+                browse: browse::Sessions::default(),
             });
             Ok(())
         })
@@ -402,7 +407,24 @@ pub fn run() {
             bucket_get,
             bucket_delete,
             bucket_quota_set,
-            audit_recent
+            audit_recent,
+            browse::browse_open,
+            browse::browse_list,
+            browse::browse_pick_upload,
+            browse::browse_pick_save,
+            browse::browse_upload,
+            browse::browse_download,
+            browse::browse_presign,
+            browse::browse_delete,
+            browse::browse_read,
+            browse::browse_media_url,
+            browse::browse_parquet,
+            browse::browse_versioning,
+            browse::browse_versions,
+            browse::browse_restore,
+            browse::browse_acl_get,
+            browse::browse_acl_put,
+            browse::browse_search
         ])
         .run(tauri::generate_context!())
         .expect("error while running BucketAdmin");

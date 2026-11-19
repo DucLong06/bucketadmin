@@ -37,6 +37,12 @@ const ACTIONS = [
   "bucket.quota.set",
   "bucket.delete",
   "usage.trim",
+  "object.upload",
+  "object.delete",
+  "object.presign",
+  "version.restore",
+  "version.delete",
+  "acl.set",
 ];
 
 const native = { select: { native: true } };
@@ -119,7 +125,7 @@ export default function Audit({ profiles }: { profiles: Profile[] }) {
                 <TableCell sx={{ whiteSpace: "nowrap" }}>{new Date(e.ts * 1000).toLocaleString("vi-VN")}</TableCell>
                 <TableCell>{clusterLabel(e.cluster_id)}</TableCell>
                 <TableCell sx={{ fontFamily: "monospace", whiteSpace: "nowrap" }}>{e.action}</TableCell>
-                <TableCell sx={{ fontFamily: "monospace", whiteSpace: "nowrap" }}>{e.target}</TableCell>
+                <TableCell sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>{e.target}</TableCell>
                 <TableCell>{e.detail}</TableCell>
                 <TableCell>
                   {e.ok ? (
@@ -127,7 +133,7 @@ export default function Audit({ profiles }: { profiles: Profile[] }) {
                   ) : (
                     <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
                       <Chip size="small" color="error" label="Lỗi" />
-                      <Typography variant="body2" title={e.message}>
+                      <Typography variant="body2" title={e.message} sx={{ minWidth: 200 }}>
                         {explain(e.message).message}
                       </Typography>
                     </Stack>
