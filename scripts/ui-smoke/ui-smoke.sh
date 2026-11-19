@@ -28,7 +28,7 @@ case "$FLOW" in
     ;;
   browse)
     FIXTURE_TEST=s3_lab FIXTURE=ui_smoke_browse_fixture STEP=10000 ENTER_AT="05-csv 17b-copy-url"
-    NAMES="01-browse-session 02-bucket-root 03-text-find 04-json 05-csv - 06-parquet 07-image 08-audio 09-video 10-pdf 11-hex 12-presign 12b-headers 12c-tags 13a-task-cancelled 13-upload-done 14-versions 15-acl 16-bucket-acl 17-search 17b-copy-url - 17c-create-bucket 17d-new-folder 17e-delete-confirm 18-readonly-denied 19-audit 20-done"
+    NAMES="01-browse-session 02-bucket-root 03-text-find 04-json 05-csv - 06-parquet 07-image 08-audio 09-video 10-pdf 11-hex 12-presign 12b-headers 12c-tags 13a-task-cancelled 13-upload-done 14-versions 15-acl 16-bucket-acl 16b-folder-acl 17-search 17b-copy-url - 17c-create-bucket 17d-new-folder 17e-delete-confirm 18-readonly-denied 19-audit 20-done"
     # Files the flow uploads, and where its downloads go. Native file dialogs cannot be driven
     # under Xvfb, so debug builds take their answers from these two variables instead.
     rm -rf /tmp/ba-smoke/files /tmp/ba-smoke/dl

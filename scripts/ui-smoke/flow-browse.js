@@ -189,16 +189,32 @@
 
     // ---- ACL of the object, then of the bucket
     await click("ACL");
-    await waitFor(() => hasText("Owner:") && grants() === 1, "object ACL");
-    await click("Thêm grant");
+    await waitFor(() => hasText("Owner:") && hasText("Chủ sở hữu") && grants() === 0, "object ACL as a quick-share table");
+    check(document.querySelector('input[aria-label="Chủ sở hữu: FULL_CONTROL"]').checked, "the owner row shows FULL_CONTROL");
+    await click("Thêm user");
     setValue(await waitFor(() => last(all('input[aria-label="uid của grant 2"]')), "uid field"), READ_ONLY);
     await click("Áp dụng ACL");
-    await waitFor(() => hasText("khớp với ACL vừa gửi") && grants() === 2, "ACL applied and read back");
+    await waitFor(() => hasText("khớp với ACL vừa gửi") && grants() === 1, "ACL applied and read back");
     await shot("15-acl");
     await closeDrawer();
     await click("ACL của bucket");
     await waitFor(() => hasText(`ACL của bucket ${BUCKET}`) && hasText("Owner:"), "bucket ACL");
     await shot("16-bucket-acl");
+    await click("Đóng");
+    await dialogsGone();
+
+    // ---- one ACL for every object of a folder: preset, warning, count, progress
+    await openFolder("notes/");
+    await click("ACL thư mục");
+    await waitFor(() => hasText("ACL cho object trong thư mục notes/") && hasText("Owner:"), "folder ACL");
+    await click("Công khai đọc (public-read)");
+    await waitFor(() => hasText('Đang cấp READ cho "Mọi người (public)"'), "public access warning");
+    check(!button("Áp dụng ACL"), "a folder has nothing to apply to until the recursive box is ticked");
+    last(all(".MuiDialog-root input[type=checkbox]")).click();
+    await waitFor(() => hasText("Áp dụng đệ quy cho 3 object trong thư mục notes/"), "object count");
+    await shot("16b-folder-acl");
+    await click("Áp dụng ACL cho 3 mục");
+    await waitFor(() => hasText("Đã đặt ACL cho 3/3 object."), "ACL applied to the folder", 20000);
     await click("Đóng");
     await dialogsGone();
 
@@ -282,6 +298,8 @@
     await shot("19-audit");
     await type("Action", "acl.set");
     await waitFor(() => rows() === 1 && hasText("verified=true"), "acl.set row");
+    await type("Action", "acl.set_many");
+    await waitFor(() => rows() === 1 && hasText("objects=3 applied=3 unverified=0 failed=0"), "acl.set_many row");
     for (const action of ["bucket.create", "folder.create", "object.delete_many", "object.tags.set"]) {
       await type("Action", action);
       await waitFor(() => rows() === 1, `one ${action} row`);

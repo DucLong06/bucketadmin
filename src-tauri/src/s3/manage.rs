@@ -101,6 +101,10 @@ pub fn validate_tags(tags: &[ObjectTag]) -> Result<(), String> {
     Ok(())
 }
 
+fn too_many(limit: usize) -> String {
+    format!("the selection holds more than {limit} objects; work on it in smaller parts")
+}
+
 impl S3 {
     /// Creates a bucket owned by the browsed user; versioning stays off unless asked for.
     pub async fn create_bucket(&self, name: &str, versioning: bool) -> Result<(), String> {
@@ -142,9 +146,40 @@ impl S3 {
         Ok(key)
     }
 
+    /// Every key under `prefix` (all levels, folder markers included; the empty prefix is the
+    /// whole bucket), sorted. Fails rather than truncate when there are more than `limit`.
+    pub async fn keys_under(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, String> {
+        let mut all = Vec::new();
+        let mut token = None;
+        loop {
+            let page = self.client.list_objects_v2().bucket(bucket).prefix(prefix);
+            let out = page.set_continuation_token(token).send().await;
+            let out = out.map_err(s3_error)?;
+            all.extend(
+                out.contents()
+                    .iter()
+                    .filter_map(|o| o.key().map(str::to_string)),
+            );
+            if all.len() > limit {
+                return Err(too_many(limit));
+            }
+            token = out
+                .next_continuation_token()
+                .filter(|_| out.is_truncated() == Some(true))
+                .map(str::to_string);
+            if token.is_none() {
+                return Ok(all);
+            }
+        }
+    }
+
     /// The object keys a selection stands for: `keys` themselves plus every key under each of
-    /// `prefixes` (all levels, folder markers included). Fails rather than truncate when the
-    /// selection is larger than `limit`.
+    /// `prefixes`. Fails rather than truncate when the selection is larger than `limit`.
     pub async fn expand(
         &self,
         bucket: &str,
@@ -157,36 +192,12 @@ impl S3 {
             if prefix.is_empty() {
                 return Err("refusing to select a whole bucket for deletion".into());
             }
-            let mut token = None;
-            loop {
-                let page = self.client.list_objects_v2().bucket(bucket).prefix(prefix);
-                let out = page.set_continuation_token(token).send().await;
-                let out = out.map_err(s3_error)?;
-                all.extend(
-                    out.contents()
-                        .iter()
-                        .filter_map(|o| o.key().map(str::to_string)),
-                );
-                if all.len() > limit {
-                    return Err(format!(
-                        "the selection holds more than {limit} objects; delete it in smaller parts"
-                    ));
-                }
-                token = out
-                    .next_continuation_token()
-                    .filter(|_| out.is_truncated() == Some(true))
-                    .map(str::to_string);
-                if token.is_none() {
-                    break;
-                }
-            }
+            all.extend(self.keys_under(bucket, prefix, limit).await?);
         }
         all.sort();
         all.dedup();
         if all.len() > limit {
-            return Err(format!(
-                "the selection holds more than {limit} objects; delete it in smaller parts"
-            ));
+            return Err(too_many(limit));
         }
         Ok(all)
     }

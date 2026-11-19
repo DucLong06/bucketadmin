@@ -85,7 +85,8 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   const opening = useRef(0);
   const [selected, setSelected] = useState<ObjectEntry | null>(null);
   const [versioning, setVersioning] = useState<Versioning>(NO_VERSIONING);
-  const [bucketAcl, setBucketAcl] = useState(false);
+  // The prefix whose ACL dialog is open ("" = the bucket itself); null when closed.
+  const [aclOf, setAclOf] = useState<string | null>(null);
   const [pattern, setPattern] = useState("");
   const [found, setFound] = useState<Found | null>(null);
   const [creating, setCreating] = useState<"bucket" | "folder" | null>(null);
@@ -440,9 +441,14 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                   {versioning.supported && (
                     <Chip size="small" variant="outlined" label={`Versioning: ${versioning.status || "chưa bật"}`} />
                   )}
-                  <Button size="small" onClick={() => setBucketAcl(true)}>
+                  <Button size="small" onClick={() => setAclOf("")}>
                     ACL của bucket
                   </Button>
+                  {prefix && (
+                    <Button size="small" onClick={() => setAclOf(prefix)} title="Đặt một ACL cho mọi object trong thư mục đang mở">
+                      ACL thư mục
+                    </Button>
+                  )}
                   <Button
                     size="small"
                     disabled={busy || picked.size !== 1 || pickedOf("o").length !== 1}
@@ -590,13 +596,13 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         onClose={() => setCreating(null)}
         onCreated={() => load(bucket, prefix, null)}
       />
-      <Dialog open={bucketAcl} onClose={() => setBucketAcl(false)} maxWidth="md" fullWidth aria-labelledby="bucket-acl-title">
-        <DialogTitle id="bucket-acl-title">ACL của bucket {bucket}</DialogTitle>
+      <Dialog open={aclOf !== null} onClose={() => setAclOf(null)} maxWidth="md" fullWidth aria-labelledby="bucket-acl-title">
+        <DialogTitle id="bucket-acl-title">{aclOf ? `ACL cho object trong thư mục ${aclOf}` : `ACL của bucket ${bucket}`}</DialogTitle>
         <DialogContent>
-          {bucketAcl && <AclEditor at={{ clusterId, uid: session?.uid ?? "", bucket, key: "" }} />}
+          {aclOf !== null && <AclEditor key={aclOf} at={{ clusterId, uid: session?.uid ?? "", bucket, key: aclOf }} recursive />}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setBucketAcl(false)}>Đóng</Button>
+          <Button onClick={() => setAclOf(null)}>Đóng</Button>
         </DialogActions>
       </Dialog>
       <ObjectDrawer

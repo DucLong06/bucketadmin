@@ -462,6 +462,8 @@ pub fn run() {
             browse::browse_restore,
             browse::browse_acl_get,
             browse::browse_acl_put,
+            browse::browse_acl_targets,
+            browse::browse_acl_put_many,
             browse::browse_search,
             browse::browse_cancel,
             browse::browse_create_bucket,

@@ -1960,3 +1960,127 @@ async fn m6_browse_with_own_key_never_calls_the_admin_api() {
     std::fs::remove_dir_all(&dir).unwrap();
     remove_user(&admin, uid).await;
 }
+
+/// M7a.1: one ACL applied to every object under a prefix, one after the other, with progress.
+#[tokio::test]
+async fn m7_acl_applied_to_a_whole_folder() {
+    use bucketadmin_lib::s3::acl::Grant;
+    use bucketadmin_lib::s3::transfer::Cancel;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let Some(admin) = lab() else { return };
+    let (uid, bucket) = ("ba-m7-acl", "ba-m7-acl-bucket");
+    let grant = |kind: &str, grantee: &str, permission: &str| Grant {
+        kind: kind.into(),
+        grantee: grantee.into(),
+        display_name: String::new(),
+        permission: permission.into(),
+    };
+    let (_, owner) = user(&admin, uid).await;
+    let (_, stranger) = user(&admin, "ba-m7-acl-x").await;
+    owner.create_bucket(bucket, false).await.expect("bucket");
+    owner.create_folder(bucket, "", "shared").await.unwrap();
+    for i in 0..20 {
+        // Half of them one level further down: the prefix is applied at every depth.
+        let sub = if i % 2 == 0 { "" } else { "deep/" };
+        let key = format!("shared/{sub}file-{i:02}.txt");
+        put(&owner, bucket, &key, b"hello").await.expect("put");
+    }
+    put(&owner, bucket, "outside.txt", b"x").await.expect("put");
+
+    let keys = owner.keys_under(bucket, "shared/", 5000).await.unwrap();
+    println!(
+        "keys under shared/ -> {} (20 objects + the folder marker)",
+        keys.len()
+    );
+    assert_eq!(keys.len(), 21);
+    assert_eq!(keys[0], "shared/", "sorted: the folder marker comes first");
+    let whole = owner.keys_under(bucket, "", 5000).await.unwrap();
+    assert_eq!(whole.len(), 22, "the empty prefix is the whole bucket");
+    let too_many = owner.keys_under(bucket, "shared/", 5).await.unwrap_err();
+    println!("keys_under with limit 5 -> {too_many}");
+
+    let http = reqwest::Client::new();
+    let anonymous = |key: String| {
+        let request = http.get(format!("{}/{bucket}/{key}", endpoint()));
+        async move { request.send().await.unwrap().status().as_u16() }
+    };
+    let mut readable = 0;
+    for key in &keys[1..] {
+        readable += usize::from(anonymous(key.clone()).await == 200);
+    }
+    assert_eq!(readable, 0, "private to begin with");
+
+    // ---- public-read on the folder
+    let public = [
+        grant("user", uid, "FULL_CONTROL"),
+        grant("group", "AllUsers", "READ"),
+    ];
+    let seen = AtomicU64::new(0);
+    let progress = |done: u64, total: u64| {
+        assert_eq!(total, 21);
+        assert_eq!(seen.swap(done, Ordering::SeqCst) + 1, done, "in order");
+    };
+    let report = owner
+        .put_acl_many(bucket, &keys, &public, progress, &Cancel::default())
+        .await
+        .expect("put_acl_many");
+    println!(
+        "public-read on shared/ -> applied {}/{}, unverified {}, failed {}, progress calls {}",
+        report.applied,
+        report.objects,
+        report.unverified,
+        report.failed.len(),
+        seen.load(Ordering::SeqCst)
+    );
+    assert_eq!((report.applied, report.unverified), (21, 0));
+    assert!(report.failed.is_empty() && !report.cancelled);
+    assert_eq!(seen.load(Ordering::SeqCst), 21);
+    for key in &keys[1..] {
+        readable += usize::from(anonymous(key.clone()).await == 200);
+    }
+    println!("anonymous GET after public-read -> {readable} of 20 objects answer 200");
+    assert_eq!(readable, 20);
+    let outside = anonymous("outside.txt".into()).await;
+    println!("anonymous GET of an object outside the folder -> {outside}");
+    assert_eq!(outside, 403);
+
+    // ---- someone else's key: every object is refused, none is changed
+    let private = [grant("user", uid, "FULL_CONTROL")];
+    let refused = stranger
+        .put_acl_many(bucket, &keys, &private, |_, _| {}, &Cancel::default())
+        .await
+        .unwrap();
+    println!(
+        "the same by a stranger -> applied {}, failed {}, first: {}",
+        refused.applied,
+        refused.failed.len(),
+        refused.failed[0].error
+    );
+    assert_eq!((refused.applied, refused.failed.len()), (0, 21));
+    assert_eq!(anonymous(keys[1].clone()).await, 200, "still public");
+
+    // ---- a raised cancel flag stops before the next object
+    let stop = Cancel::default();
+    stop.store(true, Ordering::SeqCst);
+    let stopped = owner
+        .put_acl_many(bucket, &keys, &private, |_, _| {}, &stop)
+        .await
+        .unwrap();
+    assert!(stopped.cancelled && stopped.applied == 0);
+
+    // ---- and back to private
+    let report = owner
+        .put_acl_many(bucket, &keys, &private, |_, _| {}, &Cancel::default())
+        .await
+        .unwrap();
+    assert_eq!((report.applied, report.unverified), (21, 0));
+    readable = 0;
+    for key in &keys[1..] {
+        readable += usize::from(anonymous(key.clone()).await == 200);
+    }
+    println!("anonymous GET after private -> {readable} of 20 objects answer 200");
+    assert_eq!(readable, 0);
+
+    remove_user(&admin, "ba-m7-acl-x").await;
+    remove_user(&admin, uid).await;
+}

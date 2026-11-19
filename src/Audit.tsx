@@ -45,6 +45,7 @@ const ACTIONS = [
   "version.restore",
   "version.delete",
   "acl.set",
+  "acl.set_many",
   "bucket.create",
   "folder.create",
 ];

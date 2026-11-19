@@ -5,7 +5,7 @@
 
 use crate::clusters::{ClusterProfile, ProfileStore, SecretStore};
 use crate::rgw_admin::{HttpClient, RgwAdmin};
-use crate::s3::acl::{Acl, AppliedAcl, Grant, VersionEntry, Versioning};
+use crate::s3::acl::{Acl, AclReport, AppliedAcl, Grant, VersionEntry, Versioning};
 use crate::s3::manage::{DeleteReport, ObjectTag, MAX_DELETE};
 use crate::s3::parquet::ParquetPage;
 use crate::s3::search::SearchResult;
@@ -448,16 +448,70 @@ pub async fn browse_acl_get(state: St<'_>, at: ObjectRef) -> Cmd<Acl> {
 pub async fn browse_acl_put(state: St<'_>, at: ObjectRef, grants: Vec<Grant>) -> Cmd<AppliedAcl> {
     let s3 = state.session(&at).await?;
     let result = s3.put_acl(&at.bucket, &at.key, &grants).await;
-    let listed: Vec<String> = grants
-        .iter()
-        .map(|g| format!("{}:{}={}", g.kind, g.grantee, g.permission))
-        .collect();
     let verified = result
         .as_ref()
         .map(|applied| applied.verified)
         .unwrap_or(false);
-    let detail = format!("grants={} verified={verified}", listed.join(","));
+    let detail = format!("grants={} verified={verified}", grants_text(&grants));
     state.audit_s3(&at, "acl.set", &detail, &result);
+    result
+}
+
+fn grants_text(grants: &[Grant]) -> String {
+    let listed: Vec<String> = grants
+        .iter()
+        .map(|g| format!("{}:{}={}", g.kind, g.grantee, g.permission))
+        .collect();
+    listed.join(",")
+}
+
+/// The keys a recursive ACL change would touch: everything under the prefix `at.key`
+/// (empty: the whole bucket).
+#[tauri::command]
+pub async fn browse_acl_targets(state: St<'_>, at: ObjectRef) -> Cmd<Vec<String>> {
+    let s3 = state.session(&at).await?;
+    s3.keys_under(&at.bucket, &at.key, MAX_DELETE).await
+}
+
+/// Applies one ACL to each of `keys` in turn (the objects under the prefix `at.key`, as
+/// listed by `browse_acl_targets`), reporting progress as `transfer` events.
+#[tauri::command]
+pub async fn browse_acl_put_many(
+    app: AppHandle,
+    state: St<'_>,
+    at: ObjectRef,
+    keys: Vec<String>,
+    grants: Vec<Grant>,
+    transfer_id: String,
+) -> Cmd<AclReport> {
+    let s3 = state.session(&at).await?;
+    let cancel = state.transfers.begin(&transfer_id);
+    let progress = report(&app, &transfer_id);
+    let result = s3
+        .put_acl_many(&at.bucket, &keys, &grants, progress, &cancel)
+        .await;
+    state.transfers.end(&transfer_id);
+    let detail = match &result {
+        Ok(r) => format!(
+            "objects={} applied={} unverified={} failed={} cancelled={} grants={}",
+            r.objects,
+            r.applied,
+            r.unverified,
+            r.failed.len(),
+            r.cancelled,
+            grants_text(&grants)
+        ),
+        Err(_) => format!("objects={} grants={}", keys.len(), grants_text(&grants)),
+    };
+    // The row is an error when any object failed, with the first failure as its message.
+    let outcome = match &result {
+        Ok(r) => match r.failed.first() {
+            None => Ok(()),
+            Some(first) => Err(format!("{}: {}", first.key, first.error)),
+        },
+        Err(e) => Err(e.clone()),
+    };
+    state.audit_s3(&at, "acl.set_many", &detail, &outcome);
     result
 }
 
