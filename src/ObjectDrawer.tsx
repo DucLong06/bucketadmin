@@ -2,7 +2,7 @@ import { type ComponentType, useEffect, useState } from "react";
 import { Box, Button, Divider, Drawer, Stack, Tab, Tabs, TextField, Typography } from "@mui/material";
 import { AclTab } from "./AclEditor";
 import { invoke, keyOwner, type ObjectEntry } from "./api";
-import { formatBytes, shortTime } from "./format";
+import { formatBytes, TZ, vnTime } from "./format";
 import { HeadersTab, TagsTab, type Inspected } from "./InspectTabs";
 import PreviewTab from "./preview/Preview";
 import { MAX_PRESIGN_SECS, presignSeconds, type PresignUnit } from "./presign";
@@ -83,7 +83,7 @@ function DetailsTab({ at, object, startTransfer, onChanged, onClose }: ObjectTab
       <Stack spacing={1}>
         {row("Key", object.key)}
         {row("Size", `${formatBytes(object.size)} (${object.size} byte)`)}
-        {row("Sửa lần cuối (UTC)", shortTime(object.last_modified))}
+        {row(`Sửa lần cuối (${TZ})`, vnTime(object.last_modified, true))}
         {row("ETag", object.etag)}
         {row("Content-Type", contentType)}
         {object.storage_class && row("Storage class", object.storage_class)}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Alert, Box, Button, Chip, Divider, Drawer, LinearProgress, Stack, Typography } from "@mui/material";
 import { bucketObjects, bucketSize, invoke, type BucketDetail } from "./api";
-import { formatBytes, prettyJson } from "./format";
+import { formatBytes, prettyJson, TZ, vnTime } from "./format";
 import { QuotaForm } from "./QuotaTab";
 import { ConfirmDialog, ErrorAlert, useAction } from "./ui";
 
@@ -98,7 +98,7 @@ export default function BucketDrawer({ clusterId, bucket, onClose, onChanged }: 
               {info.tenant && row("Tenant", info.tenant)}
               {row("Dung lượng", `${formatBytes(bucketSize(info))} (${bucketSize(info)} byte)`)}
               {row("Số object", String(objects))}
-              {row("Tạo lúc", info.creation_time)}
+              {row(`Tạo lúc (${TZ})`, vnTime(info.creation_time, true))}
               {row("Versioning", info.versioning)}
               {row("Object lock", info.object_lock_enabled ? "bật" : "tắt")}
               {row("Placement", info.placement_rule)}

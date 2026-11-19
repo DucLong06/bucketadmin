@@ -162,7 +162,7 @@
     await waitFor(() => hasText("User chưa có bucket nào."), "empty bucket list of the new user");
     await click("Usage");
     await waitFor(() => hasText("Chưa có dữ liệu usage") || all('[aria-label="Usage theo bucket"]').length > 0, "usage loaded");
-    check(!!(await field("Từ ngày (UTC)")).value && !!(await field("Đến hết ngày (UTC)")).value, "date range is prefilled");
+    check(!!(await field("Từ ngày (UTC+7)")).value && !!(await field("Đến hết ngày (UTC+7)")).value, "date range is prefilled");
     await shot("17-usage");
 
     await click("Đóng");

@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { formatBytes, prettyJson, shortTime } from "./format";
+import { formatBytes, prettyJson, vnTime } from "./format";
 
 test("formatBytes uses binary units", () => {
   expect(formatBytes(0)).toBe("0 B");
@@ -16,7 +16,18 @@ test("prettyJson indents JSON and leaves other text alone", () => {
   expect(prettyJson("not json")).toBe("not json");
 });
 
-test("shortTime keeps date and minutes", () => {
-  expect(shortTime("2026-11-18T14:45:06.641Z")).toBe("2026-11-18 14:45");
-  expect(shortTime("")).toBe("");
+test("vnTime shows instants in Asia/Ho_Chi_Minh (UTC+7), whatever zone the machine is in", () => {
+  expect(vnTime("2026-11-18T14:45:06.641Z")).toBe("2026-11-18 21:45");
+  expect(vnTime("2026-11-18T14:45:06.641Z", true)).toBe("2026-11-18 21:45:06");
+  // Past 17:00 UTC it is already the next day in Vietnam.
+  expect(vnTime("2026-12-31T17:00:00Z")).toBe("2027-01-01 00:00");
+  // RGW's own formats: usage hours and bucket creation times.
+  expect(vnTime("2026-11-19 08:00:00.000000Z")).toBe("2026-11-19 15:00");
+  expect(vnTime("2026-11-18T03:41:15.676507Z")).toBe("2026-11-18 10:41");
+  expect(vnTime("2026-11-18T03:41:15")).toBe("2026-11-18 10:41");
+  expect(vnTime("2026-11-18T10:41:15+07:00")).toBe("2026-11-18 10:41");
+  // Epoch milliseconds (audit rows, tasks).
+  expect(vnTime(Date.UTC(2026, 10, 18, 14, 45, 6))).toBe("2026-11-18 21:45");
+  expect(vnTime("")).toBe("");
+  expect(vnTime("không rõ")).toBe("không rõ");
 });

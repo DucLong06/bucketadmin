@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Alert, Box, Button, Chip, LinearProgress, Paper, Stack, Typography } from "@mui/material";
 import { invoke } from "./api";
-import { formatBytes, shortTime } from "./format";
+import { formatBytes, TZ, vnTime } from "./format";
 import { download, type ObjectTabProps } from "./ObjectDrawer";
 import { ConfirmDialog, ErrorAlert, useAction } from "./ui";
 
@@ -49,7 +49,7 @@ export default function VersionsTab({ at, startTransfer, onChanged, versioning }
   const confirmText = !v
     ? ""
     : pending.kind === "restore"
-      ? `Chép version ${v.version_id} (${shortTime(v.last_modified)}) thành version mới nhất của ${at.key}. Không version nào bị xoá.`
+      ? `Chép version ${v.version_id} (${vnTime(v.last_modified)} ${TZ}) thành version mới nhất của ${at.key}. Không version nào bị xoá.`
       : v.delete_marker
         ? `Gỡ delete marker ${v.version_id}. Object ${at.key} sẽ hiện lại với version ngay trước đó.`
         : `Xoá vĩnh viễn version ${v.version_id} (${formatBytes(v.size)}) của ${at.key}. Không khôi phục được.`;
@@ -71,7 +71,7 @@ export default function VersionsTab({ at, startTransfer, onChanged, versioning }
               <Stack sx={{ flexGrow: 1, minWidth: 0 }}>
                 <Typography sx={{ fontFamily: "monospace", fontSize: 13, wordBreak: "break-all" }}>{ver.version_id}</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {shortTime(ver.last_modified)} UTC{ver.delete_marker ? "" : ` · ${formatBytes(ver.size)}`}
+                  {vnTime(ver.last_modified, true)} ({TZ}){ver.delete_marker ? "" : ` · ${formatBytes(ver.size)}`}
                 </Typography>
               </Stack>
               {ver.is_latest && <Chip size="small" color="success" variant="outlined" label="Mới nhất" />}

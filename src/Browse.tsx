@@ -23,7 +23,7 @@ import {
 } from "@mui/material";
 import { invoke, keyOwner, maskKey, type BrowseBucket, type Listing, type ObjectEntry, type Profile } from "./api";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { formatBytes, shortTime } from "./format";
+import { formatBytes, TZ, vnTime } from "./format";
 import AclEditor from "./AclEditor";
 import { CreateBucketDialog, CreateFolderDialog, OwnKeyDialog } from "./BrowseDialogs";
 import { accessLevel, type Access } from "./caps";
@@ -308,7 +308,7 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         ),
     },
     { header: "Size", width: "100px", align: "right", cell: (r) => ("object" in r ? formatBytes(r.object.size) : "—") },
-    { header: "Sửa lần cuối (UTC)", width: "150px", cell: (r) => ("object" in r ? shortTime(r.object.last_modified) : "") },
+    { header: `Sửa lần cuối (${TZ})`, width: "160px", cell: (r) => ("object" in r ? vnTime(r.object.last_modified) : "") },
     { header: "Storage class", width: "110px", cell: (r) => ("object" in r ? r.object.storage_class : "") },
     { header: "Owner", width: "minmax(100px, 1fr)", cell: (r) => ("object" in r ? r.object.owner : "") },
   ];
