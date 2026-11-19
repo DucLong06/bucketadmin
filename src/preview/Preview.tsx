@@ -5,7 +5,19 @@ import { formatBytes } from "../format";
 import type { ObjectAt, ObjectTabProps } from "../ObjectDrawer";
 import { CopyButton, ErrorAlert, useAction } from "../ui";
 import { VirtualTable, type Column } from "../virtual";
-import { cellText, displayText, hexLines, matchingLines, parseDelimited, previewKind, shortType, type PreviewKind } from "./parse";
+import {
+  PREVIEW_CAP,
+  cellText,
+  displayText,
+  hexLines,
+  loadableBytes,
+  matchingLines,
+  parseDelimited,
+  previewKind,
+  previewPlan,
+  shortType,
+  type PreviewKind,
+} from "./parse";
 
 const TEXT_CHUNK = 256 * 1024;
 const HEX_CHUNK = 4096;
@@ -16,8 +28,9 @@ function useChunks(at: ObjectAt, size: number, chunk: number) {
   const [bytes, setBytes] = useState(new Uint8Array());
   const { busy, error, run } = useAction();
   const more = async () => {
-    if (bytes.length >= size) return;
-    const got = await run(() => invoke<ArrayBuffer>("browse_read", { at, start: bytes.length, len: chunk }));
+    const len = Math.min(chunk, loadableBytes(bytes.length, size));
+    if (len === 0) return;
+    const got = await run(() => invoke<ArrayBuffer>("browse_read", { at, start: bytes.length, len }));
     if (!got) return;
     const next = new Uint8Array(bytes.length + got.byteLength);
     next.set(bytes);
@@ -27,7 +40,8 @@ function useChunks(at: ObjectAt, size: number, chunk: number) {
   useEffect(() => {
     more();
   }, []);
-  return { bytes, more, busy, error, complete: bytes.length >= size };
+  // `capped`: the viewer holds as much as it may, and the object has more.
+  return { bytes, more, busy, error, complete: bytes.length >= size, capped: bytes.length < size && loadableBytes(bytes.length, size) === 0 };
 }
 
 type Loaded = ReturnType<typeof useChunks>;
@@ -39,10 +53,15 @@ function LoadMore({ loaded, size, label }: { loaded: Loaded; size: number; label
         Đã tải {formatBytes(loaded.bytes.length)} / {formatBytes(size)}
         {loaded.complete ? " — đã tải hết." : "."}
       </Typography>
-      {!loaded.complete && (
+      {!loaded.complete && !loaded.capped && (
         <Button size="small" variant="outlined" onClick={loaded.more} disabled={loaded.busy}>
           {label}
         </Button>
+      )}
+      {loaded.capped && (
+        <Typography variant="body2" color="warning.main">
+          Đã tới giới hạn xem trước {formatBytes(PREVIEW_CAP)}. Tải file về để xem phần còn lại.
+        </Typography>
       )}
     </Stack>
   );
@@ -377,7 +396,9 @@ const KIND_LABEL: Record<PreviewKind, string> = {
 export default function PreviewTab({ at, object }: ObjectTabProps) {
   const kind = previewKind(object.key);
   const [asHex, setAsHex] = useState(false);
+  const [allowBig, setAllowBig] = useState(false);
   const shown = asHex ? "hex" : kind;
+  const plan = previewPlan(shown, object.size);
   if (object.size === 0) return <Alert severity="info">Object rỗng (0 byte), không có gì để xem.</Alert>;
   const name = object.key.slice(object.key.lastIndexOf("/") + 1);
   return (
@@ -396,7 +417,26 @@ export default function PreviewTab({ at, object }: ObjectTabProps) {
       {(shown === "csv" || shown === "tsv") && <CsvView at={at} size={object.size} delimiter={shown === "csv" ? "," : "\t"} />}
       {shown === "parquet" && <ParquetView at={at} />}
       {shown === "hex" && <HexView key="hex" at={at} size={object.size} />}
-      {(shown === "image" || shown === "audio" || shown === "video" || shown === "pdf") && <MediaView at={at} kind={shown} name={name} />}
+      {plan === "prefix" && (
+        <Alert severity="info">
+          File lớn ({formatBytes(object.size)}): chỉ phần đầu được tải. Bấm "Tải thêm" để xem tiếp, tối đa {formatBytes(PREVIEW_CAP)}.
+        </Alert>
+      )}
+      {plan === "ask" && !allowBig && (
+        <Alert
+          severity="warning"
+          action={
+            <Button color="inherit" size="small" onClick={() => setAllowBig(true)}>
+              Vẫn xem
+            </Button>
+          }
+        >
+          {KIND_LABEL[shown]} này nặng {formatBytes(object.size)} và sẽ được tải toàn bộ vào bộ nhớ để hiển thị.
+        </Alert>
+      )}
+      {(shown === "audio" || shown === "video" || ((shown === "image" || shown === "pdf") && (plan !== "ask" || allowBig))) && (
+        <MediaView at={at} kind={shown} name={name} />
+      )}
     </Stack>
   );
 }

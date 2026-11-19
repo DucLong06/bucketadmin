@@ -108,3 +108,22 @@ export function cellText(value: unknown): string {
 
 /** "Struct(\"a\": Int32)" -> "Struct", "List(Utf8)" -> "List(Utf8)" (short types are kept whole). */
 export const shortType = (type: string) => (type.length > 24 ? type.slice(0, type.indexOf("(")) || type.slice(0, 24) : type);
+
+/** A viewer never holds more than this much of an object. */
+export const PREVIEW_CAP = 20 * 1024 * 1024;
+
+/**
+ * How an object of `size` bytes is previewed without loading it whole:
+ * - "full": small enough, or a viewer that only ever fetches what it shows (Parquet pages, hex chunks, streamed media);
+ * - "prefix": text and tables show the beginning and offer more, up to PREVIEW_CAP;
+ * - "ask": images and PDFs are fetched whole by the webview, so big ones need a click first.
+ */
+export function previewPlan(kind: PreviewKind, size: number): "full" | "prefix" | "ask" {
+  if (size <= PREVIEW_CAP) return "full";
+  if (kind === "image" || kind === "pdf") return "ask";
+  if (kind === "text" || kind === "json" || kind === "csv" || kind === "tsv") return "prefix";
+  return "full";
+}
+
+/** Bytes a chunked viewer may still fetch. */
+export const loadableBytes = (loaded: number, size: number) => Math.max(0, Math.min(size, PREVIEW_CAP) - loaded);
