@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BucketAdmin</title>
+    <!-- On top of the app-wide policy (src-tauri/tauri.conf.json, explained in docs/SECURITY.md):
+         this window itself never loads images, media or frames from outside the app. Previews
+         of remote objects live in /preview.html, embedded as a same-origin frame. -->
+    <meta http-equiv="Content-Security-Policy" content="img-src 'self' data:; media-src 'none'; frame-src 'self'" />
   </head>
   <body>
     <div id="root"></div>

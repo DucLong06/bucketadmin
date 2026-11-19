@@ -3,6 +3,7 @@ import { Box, Button, Divider, Drawer, Stack, Tab, Tabs, TextField, Typography }
 import { AclTab } from "./AclEditor";
 import { invoke, type ObjectEntry } from "./api";
 import { formatBytes, shortTime } from "./format";
+import { HeadersTab, TagsTab, type Inspected } from "./InspectTabs";
 import PreviewTab from "./preview/Preview";
 import { MAX_PRESIGN_SECS, presignSeconds, type PresignUnit } from "./presign";
 import type { StartTransfer } from "./transfers";
@@ -53,7 +54,15 @@ function DetailsTab({ at, object, startTransfer, onChanged, onClose }: ObjectTab
   const [unit, setUnit] = useState<PresignUnit>("m");
   const [url, setUrl] = useState("");
   const [confirming, setConfirming] = useState(false);
+  const [contentType, setContentType] = useState("…");
   const { busy, error, run, setError } = useAction();
+  useEffect(() => {
+    // The listing does not carry the content type; a HEAD does.
+    invoke<Inspected>("browse_inspect", { at }).then(
+      (i) => setContentType(i.head.content_type || "(không có)"),
+      () => setContentType("(không đọc được)"),
+    );
+  }, []);
 
   const seconds = presignSeconds(amount, unit);
   async function presign() {
@@ -76,6 +85,7 @@ function DetailsTab({ at, object, startTransfer, onChanged, onClose }: ObjectTab
         {row("Size", `${formatBytes(object.size)} (${object.size} byte)`)}
         {row("Sửa lần cuối (UTC)", shortTime(object.last_modified))}
         {row("ETag", object.etag)}
+        {row("Content-Type", contentType)}
         {object.storage_class && row("Storage class", object.storage_class)}
         {object.owner && row("Owner", object.owner)}
         <Box>
@@ -161,7 +171,9 @@ function DetailsTab({ at, object, startTransfer, onChanged, onClose }: ObjectTab
 
 const allTabs: { label: string; Panel: ComponentType<ObjectTabProps> }[] = [
   { label: "Xem trước", Panel: PreviewTab },
-  { label: "Chi tiết", Panel: DetailsTab },
+  { label: "Properties", Panel: DetailsTab },
+  { label: "Headers", Panel: HeadersTab },
+  { label: "Tags", Panel: TagsTab },
   { label: "Versions", Panel: VersionsTab },
   { label: "ACL", Panel: AclTab },
 ];

@@ -42,7 +42,7 @@ export function usageTotals(rows: UsageRow[]) {
 /** Bucket-hour records in the answer: what a trim of the same range removes. */
 export const usageRecords = (usage: Usage) => usage.entries.reduce((n, e) => n + e.buckets.length, 0);
 
-function csvCell(value: string | number): string {
+export function csvCell(value: string | number): string {
   let text = String(value);
   // A cell starting with = + - @ is run as a formula by spreadsheet programs.
   if (typeof value === "string" && /^[=+\-@]/.test(text)) text = `'${text}`;

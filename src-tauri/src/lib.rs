@@ -11,6 +11,7 @@ use clusters::{ClusterProfile, ProfileStore};
 use ops::{
     BucketDetail, NewSubuser, Ops, Quotas, RotatedKey, TrimmedUsage, UsageSupport, UsersPage,
 };
+use ops::{OnboardResult, OnboardRow};
 use rgw_admin::{
     BucketInfo, Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin,
     Usage, UserInfo,
@@ -24,6 +25,7 @@ pub(crate) struct AppState {
     pub(crate) audit: Audit,
     pub(crate) http: ReqwestClient,
     pub(crate) browse: browse::Sessions,
+    pub(crate) transfers: browse::Transfers,
 }
 
 impl AppState {
@@ -338,6 +340,17 @@ async fn bucket_quota_set(
         .await
 }
 
+/// Creates the users of an onboarding file (or, with `dry_run`, says what would happen).
+#[tauri::command]
+async fn bulk_onboard(
+    state: St<'_>,
+    cluster_id: String,
+    rows: Vec<OnboardRow>,
+    dry_run: bool,
+) -> Cmd<'_, Vec<OnboardResult>> {
+    Ok(state.ops(&cluster_id)?.onboard(&rows, dry_run).await)
+}
+
 // ---- audit ----------------------------------------------------------------
 
 /// Latest 100 rows; empty / missing filters match everything.
@@ -374,6 +387,7 @@ pub fn run() {
                 audit: Audit::open(&clusters::data_dir()?.join("audit.db"))?,
                 http: ReqwestClient::new().map_err(|e| e.to_string())?,
                 browse: browse::Sessions::default(),
+                transfers: browse::Transfers::default(),
             });
             Ok(())
         })
@@ -408,6 +422,7 @@ pub fn run() {
             bucket_delete,
             bucket_quota_set,
             audit_recent,
+            bulk_onboard,
             browse::browse_open,
             browse::browse_list,
             browse::browse_pick_upload,
@@ -424,7 +439,14 @@ pub fn run() {
             browse::browse_restore,
             browse::browse_acl_get,
             browse::browse_acl_put,
-            browse::browse_search
+            browse::browse_search,
+            browse::browse_cancel,
+            browse::browse_create_bucket,
+            browse::browse_create_folder,
+            browse::browse_delete_many,
+            browse::browse_inspect,
+            browse::browse_tags_get,
+            browse::browse_tags_put
         ])
         .run(tauri::generate_context!())
         .expect("error while running BucketAdmin");

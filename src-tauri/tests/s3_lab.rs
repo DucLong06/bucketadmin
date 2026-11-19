@@ -293,14 +293,8 @@ async fn m4_browse_with_user_credentials() {
         .iter()
         .all(|o| o.key != "by-reader-2.txt"));
 
-    admin
-        .delete_user("ba-m4-reader", true)
-        .await
-        .expect("cleanup reader");
-    admin
-        .delete_user("ba-m4-owner", true)
-        .await
-        .expect("cleanup owner");
+    remove_user(&admin, "ba-m4-reader").await;
+    remove_user(&admin, "ba-m4-owner").await;
 }
 
 fn temp_dir(name: &str) -> std::path::PathBuf {
@@ -528,14 +522,8 @@ async fn m4_upload_download_presign() {
         .starts_with("cannot read"));
 
     std::fs::remove_dir_all(&dir).unwrap();
-    admin
-        .delete_user("ba-m4-xfer-ro", true)
-        .await
-        .expect("cleanup");
-    admin
-        .delete_user("ba-m4-xfer", true)
-        .await
-        .expect("cleanup");
+    remove_user(&admin, "ba-m4-xfer-ro").await;
+    remove_user(&admin, "ba-m4-xfer").await;
 }
 
 /// Writes a Parquet file of about `megabytes` MB with flat, nullable and nested columns and a
@@ -830,7 +818,7 @@ async fn m4_parquet_ranged_preview() {
         "{wrong}"
     );
 
-    admin.delete_user("ba-m4-pq", true).await.expect("cleanup");
+    remove_user(&admin, "ba-m4-pq").await;
 }
 
 /// M4.4: versions (list, read, restore, delete, delete markers) and the ACL editor's calls.
@@ -1135,11 +1123,8 @@ async fn m4_versions_and_acl() {
         .unwrap_err()
         .contains("invalid ACL permission"));
 
-    admin
-        .delete_user("ba-m4-ver-other", true)
-        .await
-        .expect("cleanup");
-    admin.delete_user("ba-m4-ver", true).await.expect("cleanup");
+    remove_user(&admin, "ba-m4-ver-other").await;
+    remove_user(&admin, "ba-m4-ver").await;
 }
 
 /// M4.5: recursive search with result and time limits.
@@ -1444,4 +1429,327 @@ async fn ui_smoke_browse_fixture_remove() {
     let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
     remove_user(&admin, SMOKE_READ_ONLY).await;
     remove_user(&admin, SMOKE_OWNER).await;
+}
+
+/// M5: create bucket (with and without versioning), create folder, multi-delete with folders,
+/// tags and raw HEAD headers, all with a normal user's key.
+#[tokio::test]
+async fn m5_manage_buckets_folders_delete_tags() {
+    use bucketadmin_lib::s3::manage::ObjectTag;
+    let Some(admin) = lab() else { return };
+    let (_, owner) = user(&admin, "ba-m5-manage").await;
+    let (_, other) = user(&admin, "ba-m5-manage-x").await;
+
+    // ---- create bucket
+    let invalid = owner
+        .create_bucket("Not_A_Valid_Name", false)
+        .await
+        .unwrap_err();
+    println!("create_bucket invalid name -> {invalid}");
+    assert!(invalid.starts_with("invalid bucket name"));
+    owner
+        .create_bucket("ba-m5-plain", false)
+        .await
+        .expect("create bucket");
+    owner
+        .create_bucket("ba-m5-versioned", true)
+        .await
+        .expect("create versioned bucket");
+    println!(
+        "versioning after create -> plain {:?}, versioned {:?}",
+        owner.versioning("ba-m5-plain").await.status,
+        owner.versioning("ba-m5-versioned").await.status
+    );
+    assert_eq!(owner.versioning("ba-m5-plain").await.status, "");
+    assert_eq!(owner.versioning("ba-m5-versioned").await.status, "Enabled");
+    let names: Vec<String> = owner
+        .list_buckets()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|b| b.name)
+        .collect();
+    assert_eq!(names, ["ba-m5-plain", "ba-m5-versioned"]);
+    let taken = other.create_bucket("ba-m5-plain", false).await.unwrap_err();
+    println!("create_bucket with a name another user owns -> {taken}");
+    assert!(taken.starts_with("S3 BucketAlreadyExists (409)"), "{taken}");
+
+    // ---- create folder
+    let bucket = "ba-m5-plain";
+    let key = owner
+        .create_folder(bucket, "", "reports")
+        .await
+        .expect("create_folder");
+    assert_eq!(key, "reports/");
+    assert_eq!(
+        owner
+            .create_folder(bucket, "reports/", "2026")
+            .await
+            .unwrap(),
+        "reports/2026/"
+    );
+    assert!(owner
+        .create_folder(bucket, "", "reports")
+        .await
+        .unwrap_err()
+        .contains("already exists"));
+    assert!(owner.create_folder(bucket, "", "a/b").await.is_err());
+    let root = owner.list(bucket, "", None, 1000).await.unwrap();
+    println!(
+        "after create_folder -> prefixes {:?}, objects {}",
+        root.prefixes,
+        root.objects.len()
+    );
+    assert_eq!(
+        (root.prefixes.as_slice(), root.objects.len()),
+        (&["reports/".to_string()][..], 0)
+    );
+    let inside = owner.list(bucket, "reports/", None, 1000).await.unwrap();
+    assert_eq!(inside.prefixes, ["reports/2026/"]);
+    assert_eq!(
+        inside
+            .objects
+            .iter()
+            .map(|o| (o.key.as_str(), o.size))
+            .collect::<Vec<_>>(),
+        [("reports/", 0)],
+        "the folder marker itself"
+    );
+    assert!(
+        other.create_folder(bucket, "", "intruder").await.is_err(),
+        "another user cannot create folders"
+    );
+
+    // ---- multi-delete: two objects and one folder (with everything below it)
+    for key in [
+        "keep.txt",
+        "one.txt",
+        "two.txt",
+        "reports/a.csv",
+        "reports/2026/b.csv",
+        "reports/2026/q1/c.csv",
+    ] {
+        put(&owner, bucket, key, b"x").await.unwrap();
+    }
+    let selection = (
+        vec!["one.txt".to_string(), "two.txt".to_string()],
+        vec!["reports/".to_string()],
+    );
+    let keys = owner
+        .expand(bucket, &selection.0, &selection.1, 5000)
+        .await
+        .expect("expand");
+    println!("selection expands to -> {keys:?}");
+    assert_eq!(
+        keys,
+        [
+            "one.txt",
+            "reports/",
+            "reports/2026/",
+            "reports/2026/b.csv",
+            "reports/2026/q1/c.csv",
+            "reports/a.csv",
+            "two.txt"
+        ]
+    );
+    assert!(owner
+        .expand(bucket, &[], &selection.1, 3)
+        .await
+        .unwrap_err()
+        .contains("more than 3 objects"));
+    assert!(
+        owner
+            .expand(bucket, &[], &[String::new()], 5000)
+            .await
+            .is_err(),
+        "an empty prefix would mean the whole bucket"
+    );
+    let refused = other.delete_many(bucket, keys.clone()).await;
+    assert_eq!(
+        (refused.deleted, refused.failed.len()),
+        (0, 7),
+        "another user deletes nothing"
+    );
+    assert!(refused.failed[0].error.starts_with("S3 AccessDenied (403)"));
+    let report = owner.delete_many(bucket, keys).await;
+    println!(
+        "delete_many -> {} of {} deleted, {} failed",
+        report.deleted,
+        report.objects,
+        report.failed.len()
+    );
+    assert_eq!(
+        (report.objects, report.deleted, report.failed.len()),
+        (7, 7, 0)
+    );
+    let left = owner.list(bucket, "", None, 1000).await.unwrap();
+    assert!(left.prefixes.is_empty());
+    assert_eq!(
+        left.objects
+            .iter()
+            .map(|o| o.key.as_str())
+            .collect::<Vec<_>>(),
+        ["keep.txt"]
+    );
+
+    // ---- tags
+    let tag = |key: &str, value: &str| ObjectTag {
+        key: key.into(),
+        value: value.into(),
+    };
+    assert!(owner
+        .get_tags(bucket, "keep.txt", None)
+        .await
+        .unwrap()
+        .is_empty());
+    owner
+        .put_tags(
+            bucket,
+            "keep.txt",
+            None,
+            &[tag("env", "lab"), tag("owner", "đội sys")],
+        )
+        .await
+        .expect("put_tags");
+    let tags = owner.get_tags(bucket, "keep.txt", None).await.unwrap();
+    println!("tags -> {tags:?}");
+    assert_eq!(tags, [tag("env", "lab"), tag("owner", "đội sys")]);
+    owner
+        .put_tags(bucket, "keep.txt", None, &[tag("env", "prod")])
+        .await
+        .unwrap();
+    assert_eq!(
+        owner.get_tags(bucket, "keep.txt", None).await.unwrap(),
+        [tag("env", "prod")],
+        "tags are replaced, not merged"
+    );
+    assert!(owner
+        .put_tags(bucket, "keep.txt", None, &[tag("", "x")])
+        .await
+        .is_err());
+    assert!(other
+        .put_tags(bucket, "keep.txt", None, &[tag("x", "y")])
+        .await
+        .is_err());
+    owner
+        .put_tags(bucket, "keep.txt", None, &[])
+        .await
+        .expect("clear tags");
+    assert!(owner
+        .get_tags(bucket, "keep.txt", None)
+        .await
+        .unwrap()
+        .is_empty());
+
+    // ---- raw HEAD headers
+    let headers = owner
+        .head_headers(bucket, "keep.txt", None)
+        .await
+        .expect("head_headers");
+    println!(
+        "HEAD headers -> {:?}",
+        headers.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>()
+    );
+    let header = |name: &str| {
+        headers
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+    };
+    assert_eq!(header("content-length"), Some("1"));
+    assert!(
+        header("etag").is_some()
+            && header("last-modified").is_some()
+            && header("x-amz-request-id").is_some()
+    );
+    assert!(owner
+        .head_headers(bucket, "missing.txt", None)
+        .await
+        .unwrap_err()
+        .contains("(404)"));
+
+    remove_user(&admin, "ba-m5-manage-x").await;
+    remove_user(&admin, "ba-m5-manage").await;
+}
+
+/// M5: a running transfer stops when cancelled; an upload leaves no parts behind, a download
+/// keeps what it has for a later resume.
+#[tokio::test]
+async fn m5_transfers_can_be_cancelled() {
+    use bucketadmin_lib::s3::transfer::Cancel;
+    use std::sync::atomic::Ordering::SeqCst;
+    let Some(admin) = lab() else { return };
+    let bucket = "ba-m5-cancel";
+    let (_, owner) = user(&admin, "ba-m5-cancel").await;
+    owner
+        .create_bucket(bucket, false)
+        .await
+        .expect("create bucket");
+    let dir = temp_dir("cancel");
+    let big = dir.join("big.bin");
+    std::fs::write(&big, pattern(20 * 1024 * 1024)).unwrap();
+
+    // Cancel as soon as the first part is done.
+    let cancel = Cancel::default();
+    let flag = cancel.clone();
+    let stopped = owner
+        .upload_with(
+            bucket,
+            "big.bin",
+            &big,
+            move |_, _| flag.store(true, SeqCst),
+            &cancel,
+        )
+        .await
+        .unwrap_err();
+    println!("upload cancelled after the first part -> {stopped}");
+    assert_eq!(stopped, "cancelled");
+    assert!(
+        owner.head(bucket, "big.bin", None).await.is_err(),
+        "no object was created"
+    );
+    let pending = owner
+        .client()
+        .list_multipart_uploads()
+        .bucket(bucket)
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        pending.uploads().is_empty(),
+        "the multipart upload was aborted"
+    );
+
+    owner
+        .upload(bucket, "big.bin", &big, |_, _| {})
+        .await
+        .expect("upload");
+    let dest = dir.join("big.copy");
+    let cancel = Cancel::default();
+    let flag = cancel.clone();
+    let stopped = owner
+        .download_with(
+            bucket,
+            "big.bin",
+            None,
+            &dest,
+            move |done, _| flag.store(done > 0, SeqCst),
+            &cancel,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(stopped, "cancelled");
+    let kept = std::fs::metadata(dir.join("big.copy.part")).unwrap().len();
+    println!("download cancelled -> {kept} bytes kept in the .part file");
+    assert_eq!(kept, 8 * 1024 * 1024);
+    assert!(!dest.exists());
+    let resumed = owner
+        .download(bucket, "big.bin", None, &dest, |_, _| {})
+        .await
+        .expect("resume");
+    assert_eq!(resumed.resumed_from, kept);
+    assert!(std::fs::read(&dest).unwrap() == std::fs::read(&big).unwrap());
+
+    std::fs::remove_dir_all(&dir).unwrap();
+    remove_user(&admin, "ba-m5-cancel").await;
 }

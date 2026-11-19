@@ -18,6 +18,7 @@ import {
   Typography,
 } from "@mui/material";
 import { invoke, uidOf, type KeyPair, type Profile, type UserInfo } from "./api";
+import BulkOnboard from "./BulkOnboard";
 import CreateUserDialog from "./CreateUserDialog";
 import { ClusterSelect, ErrorAlert, SecretDialog, useAction } from "./ui";
 import UserDrawer from "./UserDrawer";
@@ -39,6 +40,7 @@ export default function Users({ profiles, clusterId, onClusterChange, onBrowse }
   const [users, setUsers] = useState<UserInfo[] | null>(null);
   const [filter, setFilter] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [nextMarker, setNextMarker] = useState<string | null>(null);
   const [newKeys, setNewKeys] = useState<KeyPair[] | null>(null);
@@ -96,6 +98,9 @@ export default function Users({ profiles, clusterId, onClusterChange, onBrowse }
         <Box sx={{ flexGrow: 1 }} />
         <Button onClick={() => load(null)} disabled={busy}>
           Làm mới
+        </Button>
+        <Button variant="outlined" onClick={() => setBulkOpen(true)}>
+          Onboard từ CSV
         </Button>
         <Button variant="contained" onClick={() => setCreateOpen(true)}>
           Tạo user
@@ -168,6 +173,7 @@ export default function Users({ profiles, clusterId, onClusterChange, onBrowse }
           )}
         </Stack>
       )}
+      <BulkOnboard clusterId={clusterId} open={bulkOpen} onClose={() => setBulkOpen(false)} onCreated={() => load(null)} />
       <CreateUserDialog
         clusterId={clusterId}
         open={createOpen}

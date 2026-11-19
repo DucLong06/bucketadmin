@@ -3,6 +3,8 @@
     const OWNER = "ba-m4-ui";
     const READ_ONLY = "ba-m4-ui-ro";
     const drawer = () => last(all(".MuiDrawer-paper"));
+    // Media is shown by /preview.html inside a frame of the drawer.
+    const media = (tag) => drawer().querySelector("iframe")?.contentDocument?.querySelector(tag);
     const objectLink = (key) => document.querySelector(`[aria-label="Mở object ${key}"]`);
     const openObject = (key) => clickSel(`[aria-label="Mở object ${key}"]`);
     const openFolder = async (prefix) => {
@@ -74,28 +76,43 @@
     // ---- media straight from presigned URLs
     await openFolder("media/");
     await openObject("media/icon.png");
-    await waitFor(() => drawer().querySelector("img")?.naturalWidth === 128, "PNG loaded");
+    await waitFor(() => media("img")?.naturalWidth === 128, "PNG loaded");
+    // The CSP at work: which directive (if any) refuses loading `url` as an image in a document.
+    const refusedBy = (doc, win, url) =>
+      new Promise((resolve) => {
+        const on = (e) => resolve(e.effectiveDirective || e.violatedDirective);
+        doc.addEventListener("securitypolicyviolation", on, { once: true });
+        new win.Image().src = url;
+        setTimeout(() => resolve(null), 3000);
+      });
+    const frame = drawer().querySelector("iframe");
+    const pngUrl = new URLSearchParams(frame.src.split("#")[1]).get("url");
+    check((await refusedBy(document, window, pngUrl)) === "img-src", "the main window is refused the very image the frame shows");
+    check(
+      (await refusedBy(frame.contentDocument, frame.contentWindow, "https://example.invalid/x.png")) === "img-src",
+      "the preview frame is refused any origin but the cluster's",
+    );
     await clickSel('[aria-label="Phóng to"]');
-    await waitFor(() => hasText("150%"), "zoomed");
+    await waitFor(() => hasText("150%") && media("img").width === 192, "zoomed to 150%");
     await shot("07-image");
     await closeDrawer();
     await openObject("media/shape.svg");
-    await waitFor(() => drawer().querySelector("img")?.naturalWidth > 0, "SVG loaded");
+    await waitFor(() => media("img")?.naturalWidth > 0, "SVG loaded");
     await closeDrawer();
     await openObject("media/tone.wav");
-    await waitFor(() => drawer().querySelector("audio")?.duration > 0.9, "audio metadata loaded", 20000);
+    await waitFor(() => media("audio")?.duration > 0.9, "audio metadata loaded", 20000);
     await shot("08-audio");
     await closeDrawer();
     if (CFG.MP4) {
       await openObject("media/clip.mp4");
-      await waitFor(() => drawer().querySelector("video")?.videoWidth === 320, "video metadata loaded", 20000);
-      drawer().querySelector("video").currentTime = 1;
+      await waitFor(() => media("video")?.videoWidth === 320, "video metadata loaded", 20000);
+      media("video").currentTime = 1;
       await sleep(1500);
     }
     await shot("09-video");
     if (CFG.MP4) await closeDrawer();
     await openObject("media/doc.pdf");
-    await waitFor(() => drawer().querySelector("iframe"), "PDF frame");
+    await waitFor(() => media("iframe"), "PDF frame inside the preview frame");
     await sleep(4000);
     await shot("10-pdf"); // what the frame shows can only be judged from the screenshot
     await closeDrawer();
@@ -107,23 +124,42 @@
     await click("Tải thêm 4 KiB");
     await waitFor(() => hasText("Đã tải 8.00 KiB / 10.0 KiB") && hasText("00001000  "), "next 4 KiB");
     await shot("11-hex");
-    await click("Chi tiết");
+    await click("Properties");
     await type("Hết hạn sau", "30");
     await type("Đơn vị", "s");
     await click("Tạo URL");
     const urlField = await field("Presigned URL");
     await waitFor(() => /X-Amz-Signature=/.test(urlField.value) && /X-Amz-Expires=30(&|$)/.test(urlField.value), "URL with a 30 s expiry");
     await shot("12-presign");
+    await waitFor(() => /Content-Type\s+\S*octet-stream/.test(drawer().innerText), "content type from a HEAD");
+    await click("Headers");
+    await waitFor(() => hasText("x-amz-request-id") && hasText("content-length") && hasText("10240"), "raw HEAD headers");
+    await shot("12b-headers");
+    await click("Tags");
+    await waitFor(() => hasText("Object chưa có tag nào."), "no tags yet");
+    await click("Thêm tag");
+    setValue(await waitFor(() => last(all('input[aria-label="Key của tag 1"]')), "tag key field"), "env");
+    setValue(last(all('input[aria-label="Value của tag 1"]')), "lab");
+    await click("Lưu tag");
+    await waitFor(() => hasText("Đã lưu. Danh sách trên là tag đang có trên object."), "tags saved and read back");
+    await shot("12c-tags");
+    await click("Properties");
     await click("Tải về");
     await waitFor(() => hasText(`Đã lưu vào ${CFG.FILES.replace("/files", "/dl")}/blob.bin`), "download finished", 20000);
     await closeDrawer();
 
     // ---- upload: the Upload button (20 MiB, multipart) and a dropped file
     await click("Upload");
+    (await waitFor(() => last(all('[aria-label^="Huỷ ↑"]')), "cancel button of the running upload")).click();
+    await waitFor(() => hasText("Đã huỷ.") && !objectLink("bin/upload-20m.bin"), "upload cancelled, nothing uploaded", 60000);
+    check(hasText("Tasks —"), "the task panel is shown");
+    await shot("13a-task-cancelled");
+    await click("Xoá mục đã xong");
+    await click("Upload");
     await waitFor(() => hasText("Xong · 20.0 MiB") && objectLink("bin/upload-20m.bin"), "multipart upload listed", 90000);
     await shot("13-upload-done");
     await openObject("bin/upload-20m.bin");
-    await click("Chi tiết");
+    await click("Properties");
     await click("Tải về");
     await waitFor(() => hasText("/dl/upload-20m.bin"), "20 MiB download finished", 90000);
     await closeDrawer();
@@ -177,12 +213,58 @@
     // ---- delete an object
     await openFolder("bin/");
     await openObject("bin/upload-20m.bin");
-    await click("Chi tiết");
+    await click("Properties");
     await click("Xoá object");
     await waitFor(() => hasText("Xoá object?"), "delete confirmation");
     await click("Xoá object");
     await drawersGone();
     await waitFor(() => !objectLink("bin/upload-20m.bin"), "object gone from the listing");
+
+    // ---- Copy URL of the one ticked object (a real Enter from the shell: the clipboard ignores synthetic clicks)
+    await openFolder("notes/");
+    (await waitFor(() => last(all('input[aria-label="Chọn readme.txt"]')), "checkbox of readme.txt")).click();
+    const copyUrl = await waitFor(() => button("Copy URL"), "Copy URL enabled for one object");
+    check(!!button("Xoá (1)"), "the delete button shows the number of ticked rows");
+    copyUrl.focus();
+    await shot("17b-copy-url");
+    // The toast hides itself after 8 s: look for it before sitting out the next slot.
+    await waitFor(() => hasText("Đã copy presigned URL của notes/readme.txt"), "URL copied", 5000);
+    await shot("-");
+
+    // ---- create a bucket (versioning on), a folder in it, then delete everything ticked
+    await click("Tạo bucket");
+    await type("Tên bucket", "Bad_Name");
+    await waitFor(() => hasText("Chỉ dùng chữ thường, số, dấu chấm và dấu gạch ngang."), "bucket name rule shown");
+    await type("Tên bucket", "ba-m5-ui-new");
+    last(all(".MuiDialog-root .MuiSwitch-input")).click();
+    await shot("17c-create-bucket");
+    await click("Tạo bucket");
+    await dialogsGone();
+    await waitFor(() => hasText("Versioning: Enabled") && hasText("Thư mục trống.") && button("ba-m5-ui-new"), "new versioned bucket opened");
+    await click("Tạo thư mục");
+    await type("Tên thư mục", "reports");
+    await click("Tạo thư mục");
+    await dialogsGone();
+    await waitFor(() => all('[aria-label="Mở thư mục reports/"]').length === 1, "folder listed");
+    await clickSel('[aria-label="Mở thư mục reports/"]');
+    await waitFor(() => hasText("0 thư mục, 0 object đã tải"), "the folder's own marker is not shown as content");
+    await window.__TAURI_INTERNALS__.invoke("plugin:event|emit", {
+      event: "tauri://drag-drop",
+      payload: { paths: [`${CFG.FILES}/dropped.txt`], position: { x: 10, y: 10 } },
+    });
+    await waitFor(() => objectLink("reports/dropped.txt"), "file dropped into the new folder", 20000);
+    await shot("17d-new-folder");
+    await click("ba-m5-ui-new");
+    await waitFor(() => all('[aria-label="Mở thư mục reports/"]').length === 1, "bucket root");
+    last(all('input[aria-label="Chọn tất cả các dòng đang hiện"]')).click();
+    await click("Xoá (1)");
+    await waitFor(() => hasText("Xoá vĩnh viễn 2 object") && hasText("toàn bộ nội dung của 1 thư mục (reports/)"), "confirmation counts the folder's content");
+    await shot("17e-delete-confirm");
+    await click("Xoá 2 object");
+    await dialogsGone();
+    await waitFor(() => hasText("Đã xoá 2 object.") && hasText("Thư mục trống."), "selection deleted");
+    all('[aria-label="Danh sách bucket"] [role=button]')[0].click(); // the first of the two buckets now listed
+    await waitFor(() => hasText("4 thư mục, 0 object đã tải"), "back in the fixture bucket");
 
     // ---- the same bucket as a read-only user: can look, cannot upload
     await type("Browse với user (uid)", READ_ONLY);
@@ -200,6 +282,10 @@
     await shot("19-audit");
     await type("Action", "acl.set");
     await waitFor(() => rows() === 1 && hasText("verified=true"), "acl.set row");
+    for (const action of ["bucket.create", "folder.create", "object.delete_many", "object.tags.set"]) {
+      await type("Action", action);
+      await waitFor(() => rows() === 1, `one ${action} row`);
+    }
 
     await click("Clusters");
     await clickSel('[aria-label="Xoá cluster lab"]');

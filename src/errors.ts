@@ -41,6 +41,12 @@ const BY_CODE: Record<string, string> = {
 const S3_BY_CODE: Record<string, string> = {
   AccessDenied: "Key của user này không có quyền cho thao tác vừa làm (bị chặn bởi policy, ACL hoặc op-mask).",
   NoSuchBucket: "Bucket không tồn tại.",
+  BucketAlreadyExists: "Tên bucket này đã được dùng trên cluster (bởi user khác).",
+  BucketAlreadyOwnedByYou: "User này đã có bucket trùng tên.",
+  InvalidBucketName: "Tên bucket không hợp lệ.",
+  TooManyBuckets: "User đã đạt số bucket tối đa (max-buckets).",
+  BucketNotEmpty: "Bucket vẫn còn object.",
+  InvalidTag: "Tag không hợp lệ.",
   NoSuchKey: "Object không tồn tại (có thể đã bị xoá).",
   NotFound: "Object không tồn tại (có thể đã bị xoá).",
   NoSuchVersion: "Version này không tồn tại.",

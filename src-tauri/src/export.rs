@@ -4,12 +4,19 @@
 use crate::clusters::data_dir;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 /// `~/Downloads` when it exists, otherwise `<app data>/exports`.
 // shortcut: a localised downloads folder is not looked up (xdg user-dirs); such desktops get
 // the app data folder. Read XDG_DOWNLOAD_DIR from user-dirs.dirs if that turns out to matter.
 pub fn export_dir() -> Result<PathBuf, String> {
+    // Debug builds only: the UI smoke test keeps its exports out of the real downloads folder.
+    if cfg!(debug_assertions) {
+        if let Some(dir) = std::env::var_os("BUCKETADMIN_DEV_SAVE_DIR") {
+            return Ok(PathBuf::from(dir));
+        }
+    }
     let downloads = std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Downloads"));
     match downloads {
         Some(dir) if dir.is_dir() => Ok(dir),
@@ -39,7 +46,13 @@ pub fn save(dir: &Path, file_name: &str, content: &str) -> Result<PathBuf, Strin
         };
         let path = dir.join(name);
         // create_new: fails instead of truncating when the file already exists.
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
+        // 0600: an onboarding report holds the new users' secret keys.
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+        {
             Ok(mut file) => {
                 file.write_all(content.as_bytes())
                     .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
@@ -69,6 +82,9 @@ mod tests {
         let first = save(&dir, "usage-alice.csv", "a,b\r\n1,2\r\n").unwrap();
         assert_eq!(first, dir.join("usage-alice.csv"));
         assert_eq!(std::fs::read_to_string(&first).unwrap(), "a,b\r\n1,2\r\n");
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&first).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "exports are private to the user");
 
         let second = save(&dir, "usage-alice.csv", "new").unwrap();
         assert_eq!(second, dir.join("usage-alice-1.csv"));

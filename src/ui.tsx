@@ -69,20 +69,25 @@ export function ErrorAlert({ error, sx }: { error: string | null | undefined; sx
   );
 }
 
+/** Puts text on the clipboard. */
+export async function copyText(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    // WebKitGTK can refuse the async clipboard API; fall back to the legacy command.
+    const area = document.createElement("textarea");
+    area.value = value;
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+}
+
 export function CopyButton({ value, label }: { value: string; label: string }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
-    } catch {
-      // WebKitGTK can refuse the async clipboard API; fall back to the legacy command.
-      const area = document.createElement("textarea");
-      area.value = value;
-      document.body.appendChild(area);
-      area.select();
-      document.execCommand("copy");
-      area.remove();
-    }
+    await copyText(value);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
