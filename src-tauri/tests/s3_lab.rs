@@ -1268,3 +1268,180 @@ async fn m4_search_bounded() {
     remove_user(&admin, "ba-m4-search-x").await;
     remove_user(&admin, "ba-m4-search").await;
 }
+
+// ---- data for the browse flow of scripts/ui-smoke/ui-smoke.sh (FLOW=browse) ----
+
+const SMOKE_OWNER: &str = "ba-m4-ui";
+const SMOKE_READ_ONLY: &str = "ba-m4-ui-ro";
+const SMOKE_BUCKET: &str = "ba-m4-ui-bucket";
+
+/// One second of a 440 Hz tone as a 16-bit mono WAV file.
+fn wav() -> Vec<u8> {
+    const RATE: u32 = 8000;
+    let samples: Vec<u8> = (0..RATE)
+        .flat_map(|i| {
+            {
+                let t = i as f32 / RATE as f32;
+                ((t * 440.0 * std::f32::consts::TAU).sin() * 12000.0) as i16
+            }
+            .to_le_bytes()
+        })
+        .collect();
+    let mut out = Vec::new();
+    out.extend(b"RIFF");
+    out.extend((36 + samples.len() as u32).to_le_bytes());
+    out.extend(b"WAVEfmt ");
+    out.extend(16u32.to_le_bytes());
+    out.extend(1u16.to_le_bytes()); // PCM
+    out.extend(1u16.to_le_bytes()); // mono
+    out.extend(RATE.to_le_bytes());
+    out.extend((RATE * 2).to_le_bytes()); // bytes per second
+    out.extend(2u16.to_le_bytes()); // bytes per sample
+    out.extend(16u16.to_le_bytes());
+    out.extend(b"data");
+    out.extend((samples.len() as u32).to_le_bytes());
+    out.extend(samples);
+    out
+}
+
+/// A one-page PDF saying `text`, with a correct cross-reference table.
+fn pdf(text: &str) -> Vec<u8> {
+    let stream = format!("BT /F1 28 Tf 60 700 Td ({text}) Tj ET");
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_string(),
+        format!("<< /Length {} >>\nstream\n{stream}\nendstream", stream.len()),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
+    ];
+    let mut out = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend(format!("{} 0 obj\n{body}\nendobj\n", i + 1).bytes());
+    }
+    let xref = out.len();
+    out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).bytes());
+    for offset in offsets {
+        out.extend(format!("{offset:010} 00000 n \n").bytes());
+    }
+    out.extend(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .bytes(),
+    );
+    out
+}
+
+/// A user owning a bucket with one object per viewer, a versioned key, and a second user who
+/// is granted everything on the bucket but is read-only by op-mask.
+#[tokio::test]
+#[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
+async fn ui_smoke_browse_fixture_create() {
+    use aws_sdk_s3::types::{BucketVersioningStatus, VersioningConfiguration};
+    let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
+    let (_, owner) = user(&admin, SMOKE_OWNER).await;
+    user(&admin, SMOKE_READ_ONLY).await;
+    let bucket = SMOKE_BUCKET;
+    owner
+        .client()
+        .create_bucket()
+        .bucket(bucket)
+        .send()
+        .await
+        .expect("create bucket");
+
+    let readme: String = (1..=400)
+        .map(|i| match i {
+            50 | 250 | 399 => format!("dòng {i}: ERROR disk full\n"),
+            _ => format!("dòng {i}: ok\n"),
+        })
+        .collect();
+    let mut csv = String::from("id,name,city,note\n");
+    for i in 1..=200 {
+        csv.push_str(&format!(
+            "{i},\"Nguyen, An {i}\",Ha Noi,\"said \"\"hi\"\"\"\n"
+        ));
+    }
+    let json = r#"{"name":"lab","retention_days":30,"tags":["a","b"],"nested":{"enabled":true}}"#;
+    let files: [(&str, Vec<u8>); 8] = [
+        ("notes/readme.txt", readme.into_bytes()),
+        ("notes/config.json", json.as_bytes().to_vec()),
+        ("data/people.csv", csv.into_bytes()),
+        (
+            "media/icon.png",
+            include_bytes!("../icons/128x128.png").to_vec(),
+        ),
+        (
+            "media/shape.svg",
+            include_bytes!("../icons/icon.svg").to_vec(),
+        ),
+        ("media/tone.wav", wav()),
+        ("media/doc.pdf", pdf("BucketAdmin PDF preview")),
+        ("bin/blob.bin", pattern(10240)),
+    ];
+    for (key, body) in &files {
+        put(&owner, bucket, key, body)
+            .await
+            .expect("fixture object");
+    }
+    let dir = temp_dir("smoke-fixture");
+    let parquet = dir.join("sample.parquet");
+    assert_eq!(write_parquet(&parquet, 2), 2000);
+    owner
+        .upload(bucket, "data/sample.parquet", &parquet, |_, _| {})
+        .await
+        .expect("parquet");
+    std::fs::remove_dir_all(&dir).unwrap();
+    // The video comes from the smoke script (ffmpeg); without it the flow skips that viewer.
+    if let Ok(mp4) = std::env::var("BA_SMOKE_MP4") {
+        let mp4 = std::path::PathBuf::from(mp4);
+        owner
+            .upload(bucket, "media/clip.mp4", &mp4, |_, _| {})
+            .await
+            .expect("mp4");
+    }
+
+    let on = VersioningConfiguration::builder()
+        .status(BucketVersioningStatus::Enabled)
+        .build();
+    let versioning = owner.client().put_bucket_versioning().bucket(bucket);
+    versioning
+        .versioning_configuration(on)
+        .send()
+        .await
+        .expect("enable versioning");
+    for body in ["first version", "second version, longer", "third"] {
+        put(&owner, bucket, "notes/versioned.txt", body.as_bytes())
+            .await
+            .expect("version");
+    }
+
+    let grant = policy(bucket, SMOKE_READ_ONLY, r#""s3:*""#);
+    owner
+        .client()
+        .put_bucket_policy()
+        .bucket(bucket)
+        .policy(grant)
+        .send()
+        .await
+        .expect("put policy");
+    let read_only = UserModify {
+        op_mask: Some("read".into()),
+        ..Default::default()
+    };
+    admin
+        .modify_user(SMOKE_READ_ONLY, &read_only)
+        .await
+        .expect("op-mask=read");
+}
+
+#[tokio::test]
+#[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
+async fn ui_smoke_browse_fixture_remove() {
+    let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
+    remove_user(&admin, SMOKE_READ_ONLY).await;
+    remove_user(&admin, SMOKE_OWNER).await;
+}

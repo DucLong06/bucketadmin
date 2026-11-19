@@ -161,9 +161,22 @@ fn report(app: &AppHandle, id: &str) -> impl Fn(u64, u64) + Send + Sync {
     }
 }
 
+/// Debug builds only: the answer a native file dialog would give, taken from the environment,
+/// because the UI smoke test cannot operate a native dialog. Release builds never look.
+fn dev_answer(variable: &str) -> Option<String> {
+    if cfg!(debug_assertions) {
+        std::env::var(variable).ok().filter(|v| !v.is_empty())
+    } else {
+        None
+    }
+}
+
 /// Native "open" dialog; the chosen paths (none when cancelled).
 #[tauri::command(async)]
 pub fn browse_pick_upload(app: AppHandle) -> Vec<String> {
+    if let Some(path) = dev_answer("BUCKETADMIN_DEV_PICK_UPLOAD") {
+        return vec![path];
+    }
     let picked = app
         .dialog()
         .file()
@@ -180,6 +193,9 @@ pub fn browse_pick_upload(app: AppHandle) -> Vec<String> {
 /// Native "save as" dialog; `None` when cancelled.
 #[tauri::command(async)]
 pub fn browse_pick_save(app: AppHandle, name: String) -> Option<String> {
+    if let Some(dir) = dev_answer("BUCKETADMIN_DEV_SAVE_DIR") {
+        return Some(format!("{dir}/{name}"));
+    }
     let picked = app
         .dialog()
         .file()

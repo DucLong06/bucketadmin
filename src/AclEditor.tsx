@@ -124,7 +124,7 @@ export default function AclEditor({ at }: { at: ObjectAt }) {
                   value={g.permission}
                   onChange={(e) => change(i, { permission: e.target.value })}
                   size="small"
-                  sx={{ width: 170 }}
+                  sx={{ width: 200 }}
                   slotProps={{ ...native, htmlInput: { "aria-label": `Quyền của grant ${i + 1}` } }}
                 >
                   {PERMISSIONS.map((p) => (

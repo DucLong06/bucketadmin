@@ -92,15 +92,19 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
     const now = here.current;
     if (now.bucket === toBucket && now.prefix === toPrefix) load(toBucket, toPrefix, null);
   }
+  // The drop listener is registered once; it must call this render's `upload`, not the first
+  // render's (which has no session and so would upload but never refresh the listing).
+  const uploadNow = useRef(upload);
+  uploadNow.current = upload;
   useEffect(() => {
     // The webview reports dropped files with their paths (not their content).
     const unlisten = getCurrentWebview().onDragDropEvent((e) => {
-      if (e.payload.type === "drop") upload(e.payload.paths);
+      if (e.payload.type === "drop") uploadNow.current(e.payload.paths);
     });
     return () => {
       unlisten.then((stop) => stop());
     };
-  }, [clusterId]);
+  }, []);
 
   // Every S3 call is signed with this user's own key, looked up by the backend; the UI never sees a secret.
   async function open(target: string) {
