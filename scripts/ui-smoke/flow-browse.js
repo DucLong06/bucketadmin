@@ -35,7 +35,7 @@
     await shot("01-browse-session");
     await clickSel('[aria-label="Danh sách bucket"] [role=button]');
     await waitFor(() => hasText("4 thư mục, 0 object đã tải"), "bucket root");
-    await waitFor(() => hasText("Versioning: Enabled"), "versioning chip");
+    await waitFor(() => hasText("Versioning: Bật"), "versioning chip");
     await shot("02-bucket-root");
 
     // ---- text: line numbers, Ctrl-F, find
@@ -157,6 +157,18 @@
     await click("Xoá mục đã xong");
     await click("Upload");
     await waitFor(() => hasText("Xong · 20.0 MiB") && objectLink("bin/upload-20m.bin"), "multipart upload listed", 90000);
+    // ---- times are Vietnam's (UTC+7) although this process runs with TZ=UTC. The expected value is
+    // worked out by plain arithmetic here, not with the Intl call the app itself uses.
+    check(new Date().getTimezoneOffset() === 0, "the app under test runs in UTC");
+    const secondsOfDay = (hms) => hms.split(":").reduce((total, part) => total * 60 + Number(part), 0);
+    const vietnamNow = (Math.floor(Date.now() / 1000) + 7 * 3600) % 86400;
+    const apart = (shown) => Math.min((shown - vietnamNow + 86400) % 86400, (vietnamNow - shown + 86400) % 86400);
+    const taskTime = last(all('[aria-label="Tasks"] p').filter((p) => /^\d\d:\d\d:\d\d$/.test(p.textContent.trim()))).textContent.trim();
+    check(hasText("giờ UTC+7") && apart(secondsOfDay(taskTime)) < 300, `task time ${taskTime} is the time in Vietnam`);
+    const modified = [...objectLink("bin/upload-20m.bin").closest('[role="row"], tr').querySelectorAll("*")]
+      .map((cell) => /^\d{4}-\d\d-\d\d (\d\d:\d\d)$/.exec(cell.textContent.trim()))
+      .find(Boolean);
+    check(hasText("Sửa lần cuối (UTC+7)") && modified && apart(secondsOfDay(`${modified[1]}:00`)) < 300, `last-modified ${modified?.[0]} is the time in Vietnam`);
     await shot("13-upload-done");
     await openObject("bin/upload-20m.bin");
     await click("Properties");
@@ -173,7 +185,7 @@
     // ---- versions
     await openFolder("notes/");
     await openObject("notes/versioned.txt");
-    await click("Versions");
+    await click("Phiên bản");
     await waitFor(() => versions() === 3, "three versions");
     await shot("14-versions");
     last(all('[aria-label^="Khôi phục version"]')).click();
@@ -189,16 +201,32 @@
 
     // ---- ACL of the object, then of the bucket
     await click("ACL");
-    await waitFor(() => hasText("Owner:") && grants() === 1, "object ACL");
-    await click("Thêm grant");
+    await waitFor(() => hasText("Owner:") && hasText("Chủ sở hữu") && grants() === 0, "object ACL as a quick-share table");
+    check(document.querySelector('input[aria-label="Chủ sở hữu: FULL_CONTROL"]').checked, "the owner row shows FULL_CONTROL");
+    await click("Thêm user");
     setValue(await waitFor(() => last(all('input[aria-label="uid của grant 2"]')), "uid field"), READ_ONLY);
     await click("Áp dụng ACL");
-    await waitFor(() => hasText("khớp với ACL vừa gửi") && grants() === 2, "ACL applied and read back");
+    await waitFor(() => hasText("khớp với ACL vừa gửi") && grants() === 1, "ACL applied and read back");
     await shot("15-acl");
     await closeDrawer();
     await click("ACL của bucket");
     await waitFor(() => hasText(`ACL của bucket ${BUCKET}`) && hasText("Owner:"), "bucket ACL");
     await shot("16-bucket-acl");
+    await click("Đóng");
+    await dialogsGone();
+
+    // ---- one ACL for every object of a folder: preset, warning, count, progress
+    await openFolder("notes/");
+    await click("ACL thư mục");
+    await waitFor(() => hasText("ACL cho object trong thư mục notes/") && hasText("Owner:"), "folder ACL");
+    await click("Công khai đọc (public-read)");
+    await waitFor(() => hasText('Đang cấp READ cho "Mọi người (public)"'), "public access warning");
+    check(!button("Áp dụng ACL"), "a folder has nothing to apply to until the recursive box is ticked");
+    last(all(".MuiDialog-root input[type=checkbox]")).click();
+    await waitFor(() => hasText("Áp dụng đệ quy cho 3 object trong thư mục notes/"), "object count");
+    await shot("16b-folder-acl");
+    await click("Áp dụng ACL cho 3 mục");
+    await waitFor(() => hasText("Đã đặt ACL cho 3/3 object."), "ACL applied to the folder", 20000);
     await click("Đóng");
     await dialogsGone();
 
@@ -215,10 +243,21 @@
     await openObject("bin/upload-20m.bin");
     await click("Properties");
     await click("Xoá object");
-    await waitFor(() => hasText("Xoá object?"), "delete confirmation");
+    await waitFor(() => hasText("Xoá object?") && hasText("khôi phục được từ tab Phiên bản"), "delete confirmation says it can be undone");
     await click("Xoá object");
     await drawersGone();
-    await waitFor(() => !objectLink("bin/upload-20m.bin"), "object gone from the listing");
+    await waitFor(() => hasText("Đã đánh dấu xoá 1 object") && button("Hoàn tác") && !objectLink("bin/upload-20m.bin"), "object gone, undo offered");
+    // ---- the deleted object can still be found, with nothing but its versions
+    await click("Hiện object đã xoá");
+    await waitFor(() => hasText("1 object đã xoá còn khôi phục được") && objectLink("bin/upload-20m.bin"), "deleted object listed");
+    check(!document.querySelector('input[aria-label="Chọn upload-20m.bin"]'), "a deleted object cannot be ticked");
+    await openObject("bin/upload-20m.bin");
+    await waitFor(() => hasText("đang ở trạng thái đã xoá") && all('[aria-label^="Gỡ marker"]').length === 1, "versions of the deleted object");
+    check(all(".MuiDrawer-paper [role=tab]").length === 1, "a deleted object only has its versions tab");
+    await shot("17a-deleted-shown");
+    await closeDrawer();
+    await click("Ẩn object đã xoá");
+    await waitFor(() => !objectLink("bin/upload-20m.bin"), "deleted objects hidden again");
 
     // ---- Copy URL of the one ticked object (a real Enter from the shell: the clipboard ignores synthetic clicks)
     await openFolder("notes/");
@@ -240,7 +279,7 @@
     await shot("17c-create-bucket");
     await click("Tạo bucket");
     await dialogsGone();
-    await waitFor(() => hasText("Versioning: Enabled") && hasText("Thư mục trống.") && button("ba-m5-ui-new"), "new versioned bucket opened");
+    await waitFor(() => hasText("Versioning: Bật") && hasText("Thư mục trống.") && button("ba-m5-ui-new"), "new versioned bucket opened");
     await click("Tạo thư mục");
     await type("Tên thư mục", "reports");
     await click("Tạo thư mục");
@@ -258,11 +297,30 @@
     await waitFor(() => all('[aria-label="Mở thư mục reports/"]').length === 1, "bucket root");
     last(all('input[aria-label="Chọn tất cả các dòng đang hiện"]')).click();
     await click("Xoá (1)");
-    await waitFor(() => hasText("Xoá vĩnh viễn 2 object") && hasText("toàn bộ nội dung của 1 thư mục (reports/)"), "confirmation counts the folder's content");
+    await waitFor(
+      () => hasText("Xoá 2 object trong bucket ba-m5-ui-new") && hasText("toàn bộ nội dung của 1 thư mục (reports/)") && hasText("khôi phục được từ tab Phiên bản"),
+      "confirmation counts the folder's content",
+    );
     await shot("17e-delete-confirm");
     await click("Xoá 2 object");
     await dialogsGone();
-    await waitFor(() => hasText("Đã xoá 2 object.") && hasText("Thư mục trống."), "selection deleted");
+    await waitFor(() => hasText("Đã đánh dấu xoá 2 object") && hasText("Thư mục trống."), "selection deleted");
+    // ---- undo from the toast, then versioning off: the same delete is now final
+    await click("Hoàn tác");
+    await waitFor(() => hasText("Đã khôi phục 2 object.") && all('[aria-label="Mở thư mục reports/"]').length === 1, "delete undone");
+    await shot("17f-undone");
+    await click("Tắt versioning");
+    await waitFor(() => hasText("Tắt versioning?"), "versioning confirmation");
+    await click("Tắt versioning");
+    await dialogsGone();
+    await waitFor(() => hasText("Versioning: Tạm dừng") && button("Bật versioning"), "versioning suspended");
+    last(all('input[aria-label="Chọn tất cả các dòng đang hiện"]')).click();
+    await click("Xoá (1)");
+    await waitFor(() => hasText("KHÔNG THỂ HOÀN TÁC"), "red warning: this delete is final");
+    await shot("17g-final-delete");
+    await click("Xoá 2 object");
+    await dialogsGone();
+    await waitFor(() => hasText("Đã xoá 2 object.") && hasText("Thư mục trống.") && !button("Hoàn tác"), "deleted for good, no undo offered");
     all('[aria-label="Danh sách bucket"] [role=button]')[0].click(); // the first of the two buckets now listed
     await waitFor(() => hasText("4 thư mục, 0 object đã tải"), "back in the fixture bucket");
 
@@ -282,10 +340,14 @@
     await shot("19-audit");
     await type("Action", "acl.set");
     await waitFor(() => rows() === 1 && hasText("verified=true"), "acl.set row");
-    for (const action of ["bucket.create", "folder.create", "object.delete_many", "object.tags.set"]) {
+    await type("Action", "acl.set_many");
+    await waitFor(() => rows() === 1 && hasText("objects=3 applied=3 unverified=0 failed=0"), "acl.set_many row");
+    for (const action of ["bucket.create", "folder.create", "object.undelete", "bucket.versioning.set", "object.tags.set"]) {
       await type("Action", action);
       await waitFor(() => rows() === 1, `one ${action} row`);
     }
+    await type("Action", "object.delete_many");
+    await waitFor(() => rows() === 2 && hasText("delete_markers=2") && hasText("delete_markers=0"), "two object.delete_many rows");
 
     await click("Clusters");
     await clickSel('[aria-label="Xoá cluster lab"]');

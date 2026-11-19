@@ -12,12 +12,12 @@ import {
   TextField,
 } from "@mui/material";
 import { invoke, type Usage } from "./api";
-import { formatBytes } from "./format";
+import { formatBytes, TZ, vnTime } from "./format";
 import { ConfirmDialog, ErrorAlert, useAction } from "./ui";
-import { daysAgo, exportName, nextDay, usageCsv, usageRecords, usageRows, usageTotals } from "./usage";
+import { dayStartUtc, daysAgo, exportName, usageCsv, usageRecords, usageRows, usageTotals } from "./usage";
 import type { UserTabProps } from "./UserDrawer";
 
-// Wide enough for the longer of the two labels ("Đến hết ngày (UTC)").
+// Wide enough for the longer of the two labels ("Đến hết ngày (UTC+7)").
 const dateSx = { minWidth: 200 };
 const dateField = { inputLabel: { shrink: true } };
 
@@ -31,8 +31,8 @@ export default function UsageTab({ clusterId, uid }: UserTabProps) {
   const { busy, error, run, setError } = useAction();
 
   const rangeOk = !!start && !!end && start <= end;
-  // RGW's `end` is exclusive; the picker's end day is meant to be included.
-  const range = () => ({ clusterId, uid, start, end: nextDay(end) });
+  // The pickers are days in Vietnam; RGW takes UTC instants, and its `end` is exclusive.
+  const range = () => ({ clusterId, uid, start: dayStartUtc(start), end: dayStartUtc(end, 1) });
 
   const load = async () => {
     if (!rangeOk) return undefined;
@@ -73,7 +73,7 @@ export default function UsageTab({ clusterId, uid }: UserTabProps) {
     <Stack spacing={2}>
       <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start", flexWrap: "wrap" }} useFlexGap>
         <TextField
-          label="Từ ngày (UTC)"
+          label={`Từ ngày (${TZ})`}
           type="date"
           sx={dateSx}
           value={start}
@@ -82,7 +82,7 @@ export default function UsageTab({ clusterId, uid }: UserTabProps) {
           slotProps={dateField}
         />
         <TextField
-          label="Đến hết ngày (UTC)"
+          label={`Đến hết ngày (${TZ})`}
           type="date"
           sx={dateSx}
           value={end}
@@ -116,7 +116,7 @@ export default function UsageTab({ clusterId, uid }: UserTabProps) {
           <TableHead>
             <TableRow>
               <TableCell>Bucket</TableCell>
-              <TableCell>Giờ (UTC)</TableCell>
+              <TableCell>Giờ ({TZ})</TableCell>
               <TableCell>Category</TableCell>
               <TableCell align="right">Ops</TableCell>
               <TableCell align="right">Ops thành công</TableCell>
@@ -128,7 +128,7 @@ export default function UsageTab({ clusterId, uid }: UserTabProps) {
             {rows.map((r, i) => (
               <TableRow key={i}>
                 <TableCell sx={{ fontFamily: "monospace" }}>{r.bucket || "(không gắn bucket)"}</TableCell>
-                <TableCell sx={{ whiteSpace: "nowrap" }}>{r.time.slice(0, 16).replace("T", " ")}</TableCell>
+                <TableCell sx={{ whiteSpace: "nowrap" }}>{vnTime(r.time)}</TableCell>
                 <TableCell>{r.category}</TableCell>
                 <TableCell align="right">{r.ops}</TableCell>
                 <TableCell align="right">{r.successful_ops}</TableCell>
@@ -156,7 +156,7 @@ export default function UsageTab({ clusterId, uid }: UserTabProps) {
       <ConfirmDialog
         open={trim !== null}
         title="Xoá usage?"
-        text={`Sẽ xoá ${trim?.records ?? 0} bản ghi usage (${trim?.ops ?? 0} ops) của user ${uid}, từ ${start} đến hết ${end} (UTC). Dữ liệu usage đã xoá không khôi phục được.`}
+        text={`Sẽ xoá ${trim?.records ?? 0} bản ghi usage (${trim?.ops ?? 0} ops) của user ${uid}, từ ${start} đến hết ${end} (${TZ}). Dữ liệu usage đã xoá không khôi phục được.`}
         confirmLabel={`Xoá ${trim?.records ?? 0} bản ghi`}
         busy={busy}
         error={error}

@@ -19,6 +19,9 @@ fi
 ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 cd "$ROOT"
 
+# The app compares this with the latest release tag to say when a newer one is out.
+export BUCKETADMIN_VERSION="$VERSION"
+
 # 1. Release binary with the frontend embedded. `tauri build` runs `npm run build` itself
 #    (beforeBuildCommand) and enables tauri/custom-protocol.
 if ! npx tauri build --no-bundle; then

@@ -195,24 +195,31 @@ pub fn validate_cap(cap: &str) -> Result<String, String> {
     Ok(compact)
 }
 
-/// Accepts exactly `YYYY-MM-DD` with a plausible month and day.
+/// Accepts exactly `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS` (UTC, as RGW reads it) with
+/// plausible numbers. The time lets the UI ask for a day in another zone.
 pub fn validate_date(date: &str) -> Result<(), String> {
-    let b = date.as_bytes();
-    let shape_ok = b.len() == 10
-        && b[4] == b'-'
-        && b[7] == b'-'
-        && b.iter()
-            .enumerate()
-            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit());
+    let shape = match date.len() {
+        10 => "dddd-dd-dd",
+        _ => "dddd-dd-dd dd:dd:dd",
+    };
+    let shape_ok = date.len() == shape.len()
+        && date.bytes().zip(shape.bytes()).all(|(c, s)| match s {
+            b'd' => c.is_ascii_digit(),
+            _ => c == s,
+        });
     let in_range = |from: usize, min: u32, max: u32| {
         date.get(from..from + 2)
             .and_then(|s| s.parse::<u32>().ok())
             .is_some_and(|n| (min..=max).contains(&n))
     };
-    if shape_ok && in_range(5, 1, 12) && in_range(8, 1, 31) {
+    let time_ok =
+        date.len() == 10 || (in_range(11, 0, 23) && in_range(14, 0, 59) && in_range(17, 0, 59));
+    if shape_ok && in_range(5, 1, 12) && in_range(8, 1, 31) && time_ok {
         Ok(())
     } else {
-        Err(format!("invalid date {date:?}: expected YYYY-MM-DD"))
+        Err(format!(
+            "invalid date {date:?}: expected YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
+        ))
     }
 }
 
@@ -1378,7 +1385,14 @@ mod tests {
 
     #[test]
     fn date_format_is_strict() {
-        for good in ["2026-11-18", "1970-01-02", "2028-02-29"] {
+        for good in [
+            "2026-11-18",
+            "1970-01-02",
+            "2028-02-29",
+            "2026-11-18 00:00:00",
+            "2026-11-17 17:00:00",
+            "2026-11-18 23:59:59",
+        ] {
             assert!(validate_date(good).is_ok(), "{good}");
         }
         for bad in [
@@ -1389,7 +1403,12 @@ mod tests {
             "2026-11-32",
             "18-11-2026",
             "2026/11/18",
-            "2026-11-18 00:00:00",
+            "2026-11-18T00:00:00",
+            "2026-11-18 00:00",
+            "2026-11-18 24:00:00",
+            "2026-11-18 00:60:00",
+            "2026-11-18 00:00:00Z",
+            "2026-11-18  0:00:00",
             "not-a-date",
         ] {
             assert!(validate_date(bad).is_err(), "{bad:?} should be rejected");

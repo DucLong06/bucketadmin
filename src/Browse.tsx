@@ -21,14 +21,14 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { invoke, keyOwner, maskKey, type BrowseBucket, type Listing, type ObjectEntry, type Profile } from "./api";
+import { invoke, keyOwner, maskKey, type BrowseBucket, type Listing, type Marker, type ObjectEntry, type Profile } from "./api";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { formatBytes, shortTime } from "./format";
+import { formatBytes, TZ, vnTime } from "./format";
 import AclEditor from "./AclEditor";
 import { CreateBucketDialog, CreateFolderDialog, OwnKeyDialog } from "./BrowseDialogs";
 import { accessLevel, type Access } from "./caps";
 import MyInfo from "./MyInfo";
-import ObjectDrawer, { type Versioning } from "./ObjectDrawer";
+import ObjectDrawer, { canUndelete, finalDeleteWarning, UNDELETE_HINT, type Versioning } from "./ObjectDrawer";
 import { TaskPanel, useTransfers } from "./transfers";
 import { explain } from "./errors";
 import { ClusterSelect, ConfirmDialog, copyText, ErrorAlert, useAction } from "./ui";
@@ -51,8 +51,11 @@ type Props = {
 /** `uid` is empty while browsing with the caller's own saved key. */
 type Session = { uid: string; access_key: string; buckets: BrowseBucket[] };
 type Row = { folder: string } | { object: ObjectEntry };
-type DeleteReport = { objects: number; deleted: number; failed: { key: string; error: string }[] };
-type Notice = { severity: "success" | "error" | "info"; text: string };
+type DeleteReport = { objects: number; deleted: number; failed: { key: string; error: string }[]; markers: Marker[] };
+/** `undo`: delete markers a "Hoàn tác" button in the toast removes again. */
+type Notice = { severity: "success" | "error" | "info"; text: string; undo?: Marker[] };
+type Deleted = { prefixes: string[]; objects: ObjectEntry[]; truncated: boolean };
+const VERSIONING_LABEL: Record<string, string> = { Enabled: "Bật", Suspended: "Tạm dừng", "": "Chưa bật" };
 type Found = { matches: ObjectEntry[]; scanned: number; stopped: "done" | "results" | "time" };
 // Limits of one search; the backend enforces its own caps on top.
 const SEARCH_RESULTS = 500;
@@ -85,7 +88,8 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   const opening = useRef(0);
   const [selected, setSelected] = useState<ObjectEntry | null>(null);
   const [versioning, setVersioning] = useState<Versioning>(NO_VERSIONING);
-  const [bucketAcl, setBucketAcl] = useState(false);
+  // The prefix whose ACL dialog is open ("" = the bucket itself); null when closed.
+  const [aclOf, setAclOf] = useState<string | null>(null);
   const [pattern, setPattern] = useState("");
   const [found, setFound] = useState<Found | null>(null);
   const [creating, setCreating] = useState<"bucket" | "folder" | null>(null);
@@ -93,6 +97,11 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [plan, setPlan] = useState<{ objects: number; keys: string[]; prefixes: string[] } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  // Deleted but restorable keys of the open folder, while "Hiện object đã xoá" is on.
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [gone, setGone] = useState<Deleted | null>(null);
+  // The versioning state the user asked to switch to, while its confirmation is open.
+  const [switching, setSwitching] = useState<boolean | null>(null);
   const rowId = (r: Row) => ("folder" in r ? `f:${r.folder}` : `o:${r.object.key}`);
   const pickedOf = (kind: "f" | "o") => [...picked].filter((id) => id.startsWith(`${kind}:`)).map((id) => id.slice(2));
   const toggle = (id: string) =>
@@ -129,15 +138,53 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
     if (!report) return;
     setPlan(null);
     const first = report.failed[0];
+    const undo = report.markers.length > 0 ? report.markers : undefined;
     setNotice(
       first
         ? {
             severity: "error",
             text: `Đã xoá ${report.deleted}/${report.objects} object; ${report.failed.length} object không xoá được. Lỗi đầu tiên (${first.key}): ${explain(first.error).message}`,
+            undo,
           }
-        : { severity: "success", text: `Đã xoá ${report.deleted} object.` },
+        : deletedNotice(report.deleted, undo),
     );
     load(bucket, prefix, null);
+  }
+  const deletedNotice = (count: number, undo?: Marker[]): Notice =>
+    undo
+      ? { severity: "success", text: `Đã đánh dấu xoá ${count} object — khôi phục được từ tab Phiên bản.`, undo }
+      : { severity: "success", text: `Đã xoá ${count} object.` };
+  // Removing the delete markers a delete just left makes the objects current again.
+  async function undoDelete(markers: Marker[]) {
+    if (!session) return;
+    setNotice(null);
+    const at = { clusterId, uid: session.uid, bucket };
+    const report = await run(() => invoke<DeleteReport>("browse_undelete", { at, markers }));
+    if (!report) return;
+    const first = report.failed[0];
+    setNotice(
+      first
+        ? { severity: "error", text: `Khôi phục được ${report.deleted}/${report.objects} object. Lỗi đầu tiên (${first.key}): ${explain(first.error).message}` }
+        : { severity: "success", text: `Đã khôi phục ${report.deleted} object.` },
+    );
+    load(bucket, prefix, null);
+  }
+  async function switchVersioning() {
+    if (!session || switching === null) return;
+    const at = { clusterId, uid: session.uid, bucket };
+    const now = await run(() => invoke<Versioning>("browse_set_versioning", { at, enabled: switching }));
+    if (!now) return;
+    setVersioning(now);
+    setSwitching(null);
+  }
+  function loadGone(toBucket: string, toPrefix: string, mine: number) {
+    if (!session) return;
+    const at = { clusterId, uid: session.uid, bucket: toBucket, key: toPrefix };
+    // Shown next to the listing when it arrives; a failure only means nothing extra is shown.
+    invoke<Deleted>("browse_deleted", { at }).then(
+      (found) => mine === request.current && setGone(found),
+      () => {},
+    );
   }
 
   async function search(e: FormEvent) {
@@ -225,6 +272,7 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
       if (toBucket !== bucket) {
         // Asked once per bucket; a key that may not ask simply gets no Versions tab.
         setVersioning(NO_VERSIONING);
+        setShowDeleted(false);
         const at = { clusterId, uid: session.uid, bucket: toBucket };
         invoke<Versioning>("browse_versioning", { at }).then(setVersioning, () => {});
       }
@@ -233,6 +281,8 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
       setListing(null);
       setFound(null);
       setPicked(new Set());
+      setGone(null);
+      if (showDeleted && toBucket === bucket) loadGone(toBucket, toPrefix, mine);
     }
     const page = await run(() =>
       invoke<Listing>("browse_list", { clusterId, uid: session.uid, bucket: toBucket, prefix: toPrefix, token }),
@@ -255,12 +305,18 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   // A folder made by an S3 tool has a zero-byte marker object named like the folder itself: not content.
   const objects = (listing?.objects ?? []).filter((o) => o.key !== prefix);
   // Search results replace the folder view until they are closed; keys stay relative to the open folder.
+  // With "Hiện object đã xoá": deleted keys, and folders that hold nothing but deleted keys.
+  const goneFolders = (gone?.prefixes ?? []).filter((p) => !listing?.prefixes.includes(p));
+  const goneObjects = (gone?.objects ?? []).map((o) => ({ ...o, deleted: true }));
   const rows: Row[] = found
     ? found.matches.map((object) => ({ object }))
     : listing
-      ? [...listing.prefixes.map((folder) => ({ folder })), ...objects.map((object) => ({ object }))]
+      ? [...[...listing.prefixes, ...goneFolders].map((folder) => ({ folder })), ...[...objects, ...goneObjects].map((object) => ({ object }))]
       : [];
-  const allPicked = rows.length > 0 && rows.every((r) => picked.has(rowId(r)));
+  // A deleted key cannot be ticked: there is nothing to delete or to make a URL of.
+  const isGone = (r: Row) => "object" in r && r.object.deleted === true;
+  const tickable = rows.filter((r) => !isGone(r));
+  const allPicked = tickable.length > 0 && tickable.every((r) => picked.has(rowId(r)));
   const nameOf = (r: Row) => baseName("folder" in r ? r.folder : r.object.key, prefix);
   const columns: Column<Row>[] = [
     {
@@ -270,20 +326,21 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
           sx={{ p: 0 }}
           checked={allPicked}
           indeterminate={picked.size > 0 && !allPicked}
-          onChange={(e) => setPicked(e.target.checked ? new Set(rows.map(rowId)) : new Set())}
+          onChange={(e) => setPicked(e.target.checked ? new Set(tickable.map(rowId)) : new Set())}
           slotProps={{ input: { "aria-label": "Chọn tất cả các dòng đang hiện" } }}
         />
       ),
       width: "28px",
-      cell: (r) => (
-        <Checkbox
-          size="small"
-          sx={{ p: 0 }}
-          checked={picked.has(rowId(r))}
-          onChange={() => toggle(rowId(r))}
-          slotProps={{ input: { "aria-label": `Chọn ${nameOf(r)}` } }}
-        />
-      ),
+      cell: (r) =>
+        isGone(r) ? null : (
+          <Checkbox
+            size="small"
+            sx={{ p: 0 }}
+            checked={picked.has(rowId(r))}
+            onChange={() => toggle(rowId(r))}
+            slotProps={{ input: { "aria-label": `Chọn ${nameOf(r)}` } }}
+          />
+        ),
     },
     {
       header: "Tên",
@@ -303,11 +360,12 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
             aria-label={`Mở object ${r.object.key}`}
           >
             {baseName(r.object.key, prefix)}
+            {r.object.deleted && <Chip size="small" color="warning" variant="outlined" label="Đã xoá" sx={{ ml: 1 }} />}
           </Link>
         ),
     },
-    { header: "Size", width: "100px", align: "right", cell: (r) => ("object" in r ? formatBytes(r.object.size) : "—") },
-    { header: "Sửa lần cuối (UTC)", width: "150px", cell: (r) => ("object" in r ? shortTime(r.object.last_modified) : "") },
+    { header: "Size", width: "100px", align: "right", cell: (r) => ("object" in r && !r.object.deleted ? formatBytes(r.object.size) : "—") },
+    { header: `Sửa lần cuối (${TZ})`, width: "160px", cell: (r) => ("object" in r ? vnTime(r.object.last_modified) : "") },
     { header: "Storage class", width: "110px", cell: (r) => ("object" in r ? r.object.storage_class : "") },
     { header: "Owner", width: "minmax(100px, 1fr)", cell: (r) => ("object" in r ? r.object.owner : "") },
   ];
@@ -375,7 +433,7 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         <MyInfo key={clusterId} clusterId={clusterId} access={access} defaultOpen={accessLevel(access) === "self"} />
       )}
       {busy && <LinearProgress aria-label="Đang tải" />}
-      {plan === null && !forgetting && <ErrorAlert error={error} sx={{ mb: 2 }} />}
+      {plan === null && !forgetting && switching === null && <ErrorAlert error={error} sx={{ mb: 2 }} />}
       <TaskPanel tasks={transfers} />
       {!session && !busy && !error && (
         <Alert severity="info">
@@ -438,11 +496,26 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                     ))}
                   </Breadcrumbs>
                   {versioning.supported && (
-                    <Chip size="small" variant="outlined" label={`Versioning: ${versioning.status || "chưa bật"}`} />
+                    <>
+                      <Chip
+                        size="small"
+                        variant="outlined"
+                        color={versioning.status === "Enabled" ? "success" : versioning.status === "Suspended" ? "warning" : "default"}
+                        label={`Versioning: ${VERSIONING_LABEL[versioning.status] ?? versioning.status}`}
+                      />
+                      <Button size="small" disabled={busy} onClick={() => setSwitching(versioning.status !== "Enabled")}>
+                        {versioning.status === "Enabled" ? "Tắt versioning" : "Bật versioning"}
+                      </Button>
+                    </>
                   )}
-                  <Button size="small" onClick={() => setBucketAcl(true)}>
+                  <Button size="small" onClick={() => setAclOf("")}>
                     ACL của bucket
                   </Button>
+                  {prefix && (
+                    <Button size="small" onClick={() => setAclOf(prefix)} title="Đặt một ACL cho mọi object trong thư mục đang mở">
+                      ACL thư mục
+                    </Button>
+                  )}
                   <Button
                     size="small"
                     disabled={busy || picked.size !== 1 || pickedOf("o").length !== 1}
@@ -520,6 +593,23 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                         Tải thêm
                       </Button>
                     )}
+                    {versioning.supported && versioning.status !== "" && (
+                      <Button
+                        size="small"
+                        onClick={() => {
+                          setShowDeleted(!showDeleted);
+                          setGone(null);
+                          if (!showDeleted) loadGone(bucket, prefix, request.current);
+                        }}
+                      >
+                        {showDeleted ? "Ẩn object đã xoá" : "Hiện object đã xoá"}
+                      </Button>
+                    )}
+                    {gone && (
+                      <Typography variant="body2" color="text.secondary">
+                        {gone.objects.length} object đã xoá còn khôi phục được{gone.truncated ? " (thư mục có quá nhiều version, danh sách chưa đủ)" : ""}.
+                      </Typography>
+                    )}
                   </Stack>
                 )}
               </Stack>
@@ -532,9 +622,9 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         title="Xoá các mục đã chọn?"
         text={
           plan
-            ? `Xoá vĩnh viễn ${plan.objects} object trong bucket ${bucket}: ${plan.keys.length} object được chọn${
+            ? `Xoá ${plan.objects} object trong bucket ${bucket}: ${plan.keys.length} object được chọn${
                 plan.prefixes.length ? ` và toàn bộ nội dung của ${plan.prefixes.length} thư mục (${plan.prefixes.join(", ")})` : ""
-              }. Nếu bucket không bật versioning thì không khôi phục được.`
+              }.`
             : ""
         }
         confirmLabel={`Xoá ${plan?.objects ?? 0} object`}
@@ -545,9 +635,40 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
           setPlan(null);
           setError(null);
         }}
+      >
+        {canUndelete(versioning) ? <Alert severity="info">{UNDELETE_HINT}</Alert> : <Alert severity="error">{finalDeleteWarning(versioning)}</Alert>}
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={switching !== null}
+        title={switching ? "Bật versioning?" : "Tắt versioning?"}
+        text={
+          switching
+            ? `Bật versioning cho bucket ${bucket}: từ giờ mỗi lần ghi đè hoặc xoá đều giữ lại version cũ, nên khôi phục được (và tốn thêm dung lượng).`
+            : `Tạm dừng versioning của bucket ${bucket}: các version cũ vẫn được giữ, nhưng từ giờ ghi đè và xoá không còn khôi phục được. S3 không có trạng thái "tắt hẳn" sau khi đã bật.`
+        }
+        confirmLabel={switching ? "Bật versioning" : "Tắt versioning"}
+        busy={busy}
+        error={error}
+        onConfirm={switchVersioning}
+        onClose={() => {
+          setSwitching(null);
+          setError(null);
+        }}
       />
-      <Snackbar open={notice !== null} autoHideDuration={8000} onClose={() => setNotice(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
-        <Alert severity={notice?.severity ?? "info"} variant="filled" onClose={() => setNotice(null)}>
+      {/* An undo stays on screen longer: it is the quick way back. */}
+      <Snackbar open={notice !== null} autoHideDuration={notice?.undo ? 20000 : 8000} onClose={() => setNotice(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
+        <Alert
+          severity={notice?.severity ?? "info"}
+          variant="filled"
+          onClose={() => setNotice(null)}
+          action={
+            notice?.undo && (
+              <Button color="inherit" size="small" onClick={() => undoDelete(notice.undo ?? [])}>
+                Hoàn tác
+              </Button>
+            )
+          }
+        >
           {notice?.text}
         </Alert>
       </Snackbar>
@@ -590,13 +711,13 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         onClose={() => setCreating(null)}
         onCreated={() => load(bucket, prefix, null)}
       />
-      <Dialog open={bucketAcl} onClose={() => setBucketAcl(false)} maxWidth="md" fullWidth aria-labelledby="bucket-acl-title">
-        <DialogTitle id="bucket-acl-title">ACL của bucket {bucket}</DialogTitle>
+      <Dialog open={aclOf !== null} onClose={() => setAclOf(null)} maxWidth="md" fullWidth aria-labelledby="bucket-acl-title">
+        <DialogTitle id="bucket-acl-title">{aclOf ? `ACL cho object trong thư mục ${aclOf}` : `ACL của bucket ${bucket}`}</DialogTitle>
         <DialogContent>
-          {bucketAcl && <AclEditor at={{ clusterId, uid: session?.uid ?? "", bucket, key: "" }} />}
+          {aclOf !== null && <AclEditor key={aclOf} at={{ clusterId, uid: session?.uid ?? "", bucket, key: aclOf }} recursive />}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setBucketAcl(false)}>Đóng</Button>
+          <Button onClick={() => setAclOf(null)}>Đóng</Button>
         </DialogActions>
       </Dialog>
       <ObjectDrawer
@@ -607,6 +728,10 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         versioning={versioning}
         startTransfer={transfers.start}
         onChanged={() => load(bucket, prefix, null)}
+        onDeleted={(key, marker) => {
+          setNotice(deletedNotice(1, marker ? [{ key, version: marker }] : undefined));
+          load(bucket, prefix, null);
+        }}
         onClose={() => setSelected(null)}
       />
     </>

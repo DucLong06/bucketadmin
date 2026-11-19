@@ -20,7 +20,15 @@ export type Profile = {
   browse_access_key?: string | null;
   /** "Tôi là user thường": no admin caps, so the admin screens are hidden and the Admin API is not called. */
   plain_user?: boolean;
+  /** This cluster's own proxy choice; absent = follow the app-wide setting. */
+  proxy?: Proxy | null;
 };
+/** How requests leave the machine: by the environment's proxy variables, always direct, or through one given proxy. */
+export type Proxy = { mode: "auto" } | { mode: "none" } | { mode: "custom"; url: string };
+/** What an endpoint's host looks like from this machine (backend `endpoint_kind`). */
+export type EndpointKind = "private-address" | "internal-name" | "public" | "unresolved";
+/** An endpoint a proxy outside the network usually cannot reach. */
+export const isInternal = (kind: EndpointKind | null) => kind === "private-address" || kind === "internal-name";
 export type ClusterInfo = { cluster_id: string; version: string | null };
 /** `secret_key` is empty except in the response that creates the key. */
 export type KeyPair = { user: string; access_key: string; secret_key: string };
@@ -99,5 +107,9 @@ export type ObjectEntry = {
   storage_class: string;
   etag: string;
   owner: string;
+  /** A key whose latest version is a delete marker (shown on request in a versioned bucket); `last_modified` is then when it was deleted. */
+  deleted?: boolean;
 };
+/** A delete marker left by a delete in a versioned bucket: removing it undoes the delete. */
+export type Marker = { key: string; version: string };
 export type Listing = { prefixes: string[]; objects: ObjectEntry[]; next_token: string | null };

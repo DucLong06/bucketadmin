@@ -13,6 +13,8 @@ Không cần cài gì lên cụm Ceph, không có server trung gian.
 **Quản trị (Admin Ops API)**
 
 - Nhiều cluster cùng lúc; secret của admin nằm trong keychain của hệ điều hành, không ghi ra file.
+- Proxy chọn được trong app (tab **Clusters**): tự động theo biến môi trường, không dùng proxy, hoặc một proxy tự nhập;
+  đặt chung cho cả app và đổi riêng cho từng cluster. Endpoint nội bộ được gợi ý "Không dùng proxy".
 - User: danh sách có phân trang, tạo, sửa, suspend / enable, xoá (tuỳ chọn xoá cả dữ liệu).
 - Key: tạo, xoá, rotate, thêm key có sẵn. Secret chỉ hiện đúng một lần lúc tạo.
 - Subuser (Swift), caps, quota theo user và theo bucket, usage theo khoảng ngày (export CSV, xoá usage cũ).
@@ -27,7 +29,12 @@ Không cần cài gì lên cụm Ceph, không có server trung gian.
 - Hàng đợi task: chạy song song, tiến độ theo từng phần, huỷ được.
 - Xem trước mà không tải cả file: văn bản / JSON / YAML (có tìm kiếm), CSV / TSV, **Parquet** (chỉ tải footer và các page cần xem),
   ảnh, audio / video, PDF, hex. Văn bản và bảng dừng ở 20 MiB; ảnh và PDF lớn thì app hỏi trước khi tải.
-- Xem chi tiết object theo tab: Properties, Headers (HEAD thật), Tags (đọc và sửa), Versions, ACL.
+- Xem chi tiết object theo tab: Properties, Headers (HEAD thật), Tags (đọc và sửa), Phiên bản, ACL.
+- ACL kiểu chia sẻ nhanh: bảng Chủ sở hữu / User đã xác thực / Mọi người × 5 quyền, ba preset (riêng tư, public-read,
+  authenticated-read), áp dụng một ACL cho mọi object trong một thư mục hoặc cả bucket.
+- Versioning: bật / tắt ngay trên trang Browse. Bucket đang bật versioning thì xoá nhầm hoàn tác được (nút Hoàn tác, hoặc
+  "Hiện object đã xoá" rồi khôi phục trong tab Phiên bản); bucket không bật thì app cảnh báo đỏ trước khi xoá.
+- Mọi thời gian hiển thị theo giờ Việt Nam (UTC+7).
 - **Copy URL**: presigned URL 15 phút của object đang chọn, vào thẳng clipboard.
 - Presigned URL với thời hạn tuỳ chọn, versions (khôi phục, xoá từng version), ACL của object và bucket, tìm kiếm đệ quy có giới hạn.
 
@@ -118,6 +125,8 @@ Thiếu cap thì thao tác tương ứng báo "Không đủ quyền", các phầ
 - Cửa sổ chính không tải bất kỳ tài nguyên nào từ ngoài app; xem trước ảnh / media / PDF nằm trong một khung riêng chỉ được phép
   tải từ đúng endpoint của cluster.
 - Presigned URL: mặc định 15 phút; audit log ghi việc tạo URL nhưng không ghi URL.
+- Kiểm tra bản mới: mỗi ngày tối đa một request tới `api.github.com` (qua cài đặt proxy của app) để đọc tag release mới nhất.
+  Request không mang dữ liệu nào của bạn; không tới được GitHub thì app im lặng bỏ qua.
 
 Chi tiết từng directive của CSP và cách xử lý presigned URL: [docs/SECURITY.md](docs/SECURITY.md).
 
@@ -128,7 +137,7 @@ Chi tiết từng directive của CSP và cách xử lý presigned URL: [docs/SE
 | "Secret key của cluster không đúng" (SignatureDoesNotMatch) | Sai secret key, hoặc đồng hồ máy lệch nhiều so với cụm. Kiểm tra lại key và `timedatectl`. |
 | "Access key không tồn tại trên cluster này" | Access key gõ sai, hoặc endpoint trỏ sang cụm khác. |
 | "Không đủ quyền: admin user của cluster thiếu caps" | Admin user thiếu cap cho thao tác đó. Xem bảng caps ở trên, thêm bằng `radosgw-admin caps add`. |
-| "Không kết nối được tới RGW" | Sai endpoint / port, hoặc máy đi qua proxy. Endpoint nội bộ cần nằm trong `NO_PROXY` trước khi mở app. |
+| "Không kết nối được tới RGW", hoặc lỗi HTTP 502 / 504 / 407 | Sai endpoint / port, hoặc request đang đi qua proxy mà proxy không tới được cụm. Với endpoint nội bộ: tab **Clusters** → Proxy của cluster đó → **Không dùng proxy**. |
 | "Không tìm thấy (HTTP 404)" khi kiểm tra kết nối | Endpoint không phải RGW, hoặc Admin API bị tắt / đổi đường dẫn trên cụm. |
 | Usage luôn trống | RGW chưa bật ghi usage: đặt `rgw_enable_usage_log = true` rồi restart RGW. |
 | Xoá user báo "Bucket đã tồn tại… user vẫn còn bucket" | User còn bucket. Xoá bucket trước, hoặc chọn "Xoá cả dữ liệu của user". |

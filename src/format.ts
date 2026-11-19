@@ -20,5 +20,33 @@ export function prettyJson(text: string): string {
   }
 }
 
-/** "2026-11-18T14:45:06.641Z" -> "2026-11-18 14:45" (still UTC). */
-export const shortTime = (iso: string) => iso.slice(0, 16).replace("T", " ");
+/** Every time the app shows is in this zone; labels carry this suffix. */
+export const TZ = "UTC+7";
+const VN = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Ho_Chi_Minh",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
+
+/**
+ * An instant as "2026-11-18 21:45" in Asia/Ho_Chi_Minh. Takes epoch milliseconds, or a UTC
+ * timestamp the way S3 ("2026-11-18T14:45:06.641Z") and RGW ("2026-11-18 14:00:00.000000Z")
+ * write them. Text that is not a time is returned unchanged.
+ */
+export function vnTime(when: string | number, seconds = false): string {
+  let iso = when;
+  if (typeof iso === "string") {
+    // RGW: a space instead of "T" and microseconds; a time without a zone is UTC.
+    iso = iso.trim().replace(" ", "T").replace(/(\.\d{3})\d+/, "$1");
+    if (!/(Z|[+-]\d\d:?\d\d)$/.test(iso)) iso += "Z";
+  }
+  const date = new Date(iso);
+  if (when === "" || Number.isNaN(date.getTime())) return String(when);
+  const part = Object.fromEntries(VN.formatToParts(date).map((p) => [p.type, p.value]));
+  return `${part.year}-${part.month}-${part.day} ${part.hour}:${part.minute}${seconds ? `:${part.second}` : ""}`;
+}

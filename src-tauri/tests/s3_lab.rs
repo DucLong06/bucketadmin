@@ -1795,6 +1795,7 @@ impl bucketadmin_lib::rgw_admin::HttpClient for &NoAdminApi {
 #[tokio::test]
 async fn m6_browse_with_own_key_never_calls_the_admin_api() {
     use bucketadmin_lib::browse_connect as connect;
+    let auto = bucketadmin_lib::settings::Proxy::Auto;
     use bucketadmin_lib::clusters::ProfileStore;
     use bucketadmin_lib::rgw_admin::RgwError;
     use bucketadmin_lib::s3::acl::Grant;
@@ -1828,7 +1829,7 @@ async fn m6_browse_with_own_key_never_calls_the_admin_api() {
         .add("lab", &endpoint(), &key.access_key, &key.secret_key)
         .unwrap();
     let no_admin = NoAdminApi::default();
-    let before = connect(&store, &no_admin, &profile.id, "").await;
+    let before = connect(&store, &no_admin, &profile.id, "", &auto).await;
     assert_eq!(
         before.err().unwrap(),
         "no personal key saved for this cluster"
@@ -1844,7 +1845,7 @@ async fn m6_browse_with_own_key_never_calls_the_admin_api() {
     let on_disk = std::fs::read_to_string(dir.join("data/profiles.json")).unwrap();
     assert!(!on_disk.contains(&key.secret_key), "secret leaked to disk");
 
-    let s3 = connect(&store, &no_admin, &profile.id, "")
+    let s3 = connect(&store, &no_admin, &profile.id, "", &auto)
         .await
         .expect("own-key session");
     assert_eq!(s3.access_key(), key.access_key);
@@ -1949,7 +1950,9 @@ async fn m6_browse_with_own_key_never_calls_the_admin_api() {
     // The key is deleted again: no session, and still no Admin API request anywhere above.
     let cleared = store.clear_browse_key(&profile.id).unwrap();
     assert_eq!(cleared.browse_access_key, None);
-    assert!(connect(&store, &no_admin, &profile.id, "").await.is_err());
+    assert!(connect(&store, &no_admin, &profile.id, "", &auto)
+        .await
+        .is_err());
     println!(
         "own-key browse as {uid}: buckets, folders, upload (single + multipart), list, preview, \
          search, download, versions, ACL, tags, presign, delete -> Admin API requests: {}",
@@ -1958,5 +1961,262 @@ async fn m6_browse_with_own_key_never_calls_the_admin_api() {
     assert_eq!(no_admin.0.load(SeqCst), 0, "the Admin API was called");
 
     std::fs::remove_dir_all(&dir).unwrap();
+    remove_user(&admin, uid).await;
+}
+
+/// M7a.1: one ACL applied to every object under a prefix, one after the other, with progress.
+#[tokio::test]
+async fn m7_acl_applied_to_a_whole_folder() {
+    use bucketadmin_lib::s3::acl::Grant;
+    use bucketadmin_lib::s3::transfer::Cancel;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let Some(admin) = lab() else { return };
+    let (uid, bucket) = ("ba-m7-acl", "ba-m7-acl-bucket");
+    let grant = |kind: &str, grantee: &str, permission: &str| Grant {
+        kind: kind.into(),
+        grantee: grantee.into(),
+        display_name: String::new(),
+        permission: permission.into(),
+    };
+    let (_, owner) = user(&admin, uid).await;
+    let (_, stranger) = user(&admin, "ba-m7-acl-x").await;
+    owner.create_bucket(bucket, false).await.expect("bucket");
+    owner.create_folder(bucket, "", "shared").await.unwrap();
+    for i in 0..20 {
+        // Half of them one level further down: the prefix is applied at every depth.
+        let sub = if i % 2 == 0 { "" } else { "deep/" };
+        let key = format!("shared/{sub}file-{i:02}.txt");
+        put(&owner, bucket, &key, b"hello").await.expect("put");
+    }
+    put(&owner, bucket, "outside.txt", b"x").await.expect("put");
+
+    let keys = owner.keys_under(bucket, "shared/", 5000).await.unwrap();
+    println!(
+        "keys under shared/ -> {} (20 objects + the folder marker)",
+        keys.len()
+    );
+    assert_eq!(keys.len(), 21);
+    assert_eq!(keys[0], "shared/", "sorted: the folder marker comes first");
+    let whole = owner.keys_under(bucket, "", 5000).await.unwrap();
+    assert_eq!(whole.len(), 22, "the empty prefix is the whole bucket");
+    let too_many = owner.keys_under(bucket, "shared/", 5).await.unwrap_err();
+    println!("keys_under with limit 5 -> {too_many}");
+
+    let http = reqwest::Client::new();
+    let anonymous = |key: String| {
+        let request = http.get(format!("{}/{bucket}/{key}", endpoint()));
+        async move { request.send().await.unwrap().status().as_u16() }
+    };
+    let mut readable = 0;
+    for key in &keys[1..] {
+        readable += usize::from(anonymous(key.clone()).await == 200);
+    }
+    assert_eq!(readable, 0, "private to begin with");
+
+    // ---- public-read on the folder
+    let public = [
+        grant("user", uid, "FULL_CONTROL"),
+        grant("group", "AllUsers", "READ"),
+    ];
+    let seen = AtomicU64::new(0);
+    let progress = |done: u64, total: u64| {
+        assert_eq!(total, 21);
+        assert_eq!(seen.swap(done, Ordering::SeqCst) + 1, done, "in order");
+    };
+    let report = owner
+        .put_acl_many(bucket, &keys, &public, progress, &Cancel::default())
+        .await
+        .expect("put_acl_many");
+    println!(
+        "public-read on shared/ -> applied {}/{}, unverified {}, failed {}, progress calls {}",
+        report.applied,
+        report.objects,
+        report.unverified,
+        report.failed.len(),
+        seen.load(Ordering::SeqCst)
+    );
+    assert_eq!((report.applied, report.unverified), (21, 0));
+    assert!(report.failed.is_empty() && !report.cancelled);
+    assert_eq!(seen.load(Ordering::SeqCst), 21);
+    for key in &keys[1..] {
+        readable += usize::from(anonymous(key.clone()).await == 200);
+    }
+    println!("anonymous GET after public-read -> {readable} of 20 objects answer 200");
+    assert_eq!(readable, 20);
+    let outside = anonymous("outside.txt".into()).await;
+    println!("anonymous GET of an object outside the folder -> {outside}");
+    assert_eq!(outside, 403);
+
+    // ---- someone else's key: every object is refused, none is changed
+    let private = [grant("user", uid, "FULL_CONTROL")];
+    let refused = stranger
+        .put_acl_many(bucket, &keys, &private, |_, _| {}, &Cancel::default())
+        .await
+        .unwrap();
+    println!(
+        "the same by a stranger -> applied {}, failed {}, first: {}",
+        refused.applied,
+        refused.failed.len(),
+        refused.failed[0].error
+    );
+    assert_eq!((refused.applied, refused.failed.len()), (0, 21));
+    assert_eq!(anonymous(keys[1].clone()).await, 200, "still public");
+
+    // ---- a raised cancel flag stops before the next object
+    let stop = Cancel::default();
+    stop.store(true, Ordering::SeqCst);
+    let stopped = owner
+        .put_acl_many(bucket, &keys, &private, |_, _| {}, &stop)
+        .await
+        .unwrap();
+    assert!(stopped.cancelled && stopped.applied == 0);
+
+    // ---- and back to private
+    let report = owner
+        .put_acl_many(bucket, &keys, &private, |_, _| {}, &Cancel::default())
+        .await
+        .unwrap();
+    assert_eq!((report.applied, report.unverified), (21, 0));
+    readable = 0;
+    for key in &keys[1..] {
+        readable += usize::from(anonymous(key.clone()).await == 200);
+    }
+    println!("anonymous GET after private -> {readable} of 20 objects answer 200");
+    assert_eq!(readable, 0);
+
+    remove_user(&admin, "ba-m7-acl-x").await;
+    remove_user(&admin, uid).await;
+}
+
+/// M7a.4: versioning switched on from the app, a delete that can be undone, deleted objects
+/// that can be found again and restored; and the plain bucket where a delete is final.
+#[tokio::test]
+async fn m7_versioning_delete_undo_restore() {
+    let Some(admin) = lab() else { return };
+    let (uid, bucket) = ("ba-m7-ver", "ba-m7-ver-bucket");
+    let (_, owner) = user(&admin, uid).await;
+    let (_, stranger) = user(&admin, "ba-m7-ver-x").await;
+    owner.create_bucket(bucket, false).await.expect("bucket");
+    let text = |key: &'static str| {
+        let s3 = owner.clone();
+        async move {
+            let bytes = s3.read_range(bucket, key, None, 0, 64).await;
+            bytes.map(|b| String::from_utf8_lossy(&b).into_owned())
+        }
+    };
+
+    // ---- versioning never switched on: a delete is final
+    put(&owner, bucket, "plain.txt", b"gone for good")
+        .await
+        .unwrap();
+    let marker = owner.delete(bucket, "plain.txt", None).await.unwrap();
+    let left = owner.list_versions(bucket, "plain.txt").await.unwrap();
+    println!(
+        "delete without versioning -> marker {marker:?}, versions left {}",
+        left.len()
+    );
+    assert!(marker.is_none() && left.is_empty());
+
+    // ---- switch it on (owner only)
+    let refused = stranger.set_versioning(bucket, true).await.unwrap_err();
+    println!("set_versioning by a stranger -> {refused}");
+    assert!(refused.starts_with("S3 AccessDenied (403)"), "{refused}");
+    owner.set_versioning(bucket, true).await.expect("enable");
+    let status = owner.versioning(bucket).await.status;
+    println!("versioning after enabling -> {status:?}");
+    assert_eq!(status, "Enabled");
+
+    // ---- delete = delete marker; undo = remove the marker
+    put(&owner, bucket, "doc.txt", b"one").await.unwrap();
+    put(&owner, bucket, "doc.txt", b"two").await.unwrap();
+    put(&owner, bucket, "dir/inner.txt", b"inner")
+        .await
+        .unwrap();
+    let marker = owner.delete(bucket, "doc.txt", None).await.unwrap();
+    println!("delete with versioning -> marker {marker:?}");
+    let marker = marker.expect("a delete marker id");
+    assert!(text("doc.txt").await.is_err(), "looks deleted");
+    let listed = owner.list(bucket, "", None, 100).await.unwrap();
+    assert!(listed.objects.is_empty(), "not in the normal listing");
+    let gone = owner.list_deleted(bucket, "").await.unwrap();
+    let keys: Vec<&str> = gone.objects.iter().map(|o| o.key.as_str()).collect();
+    println!(
+        "list_deleted -> objects {keys:?}, prefixes {:?}",
+        gone.prefixes
+    );
+    assert_eq!(keys, ["doc.txt"]);
+    assert_eq!(gone.prefixes, ["dir/"]);
+    assert!(!gone.objects[0].last_modified.is_empty() && !gone.truncated);
+
+    let undo = bucketadmin_lib::s3::manage::Marker {
+        key: "doc.txt".into(),
+        version: marker,
+    };
+    let undone = owner.undelete(bucket, vec![undo]).await;
+    println!(
+        "undelete -> restored {}/{}, failed {}; doc.txt reads {:?}",
+        undone.deleted,
+        undone.objects,
+        undone.failed.len(),
+        text("doc.txt").await
+    );
+    assert_eq!((undone.deleted, undone.failed.len()), (1, 0));
+    assert_eq!(text("doc.txt").await.unwrap(), "two");
+    assert!(owner
+        .list_deleted(bucket, "")
+        .await
+        .unwrap()
+        .objects
+        .is_empty());
+
+    // ---- delete several (a folder too): every marker comes back for the undo
+    let all = owner
+        .expand(bucket, &["doc.txt".into()], &["dir/".into()], 100)
+        .await
+        .unwrap();
+    let report = owner.delete_many(bucket, all).await;
+    println!(
+        "delete_many -> deleted {}, markers {}",
+        report.deleted,
+        report.markers.len()
+    );
+    assert_eq!((report.deleted, report.markers.len()), (2, 2));
+    let gone = owner.list_deleted(bucket, "").await.unwrap();
+    assert_eq!(gone.objects.len(), 1);
+    assert_eq!(
+        gone.prefixes,
+        ["dir/"],
+        "a folder holding only deleted objects is still found"
+    );
+    let inside = owner.list_deleted(bucket, "dir/").await.unwrap();
+    assert_eq!(inside.objects[0].key, "dir/inner.txt");
+
+    // ---- restore an old version of a deleted object from its version list
+    let versions = owner.list_versions(bucket, "doc.txt").await.unwrap();
+    assert!(versions[0].delete_marker && versions[0].is_latest);
+    let oldest = versions.last().unwrap();
+    owner
+        .restore_version(bucket, "doc.txt", &oldest.version_id)
+        .await
+        .expect("restore");
+    println!(
+        "restore of the oldest version of a deleted object -> doc.txt reads {:?}, versions now {}",
+        text("doc.txt").await,
+        owner.list_versions(bucket, "doc.txt").await.unwrap().len()
+    );
+    assert_eq!(text("doc.txt").await.unwrap(), "one");
+    let undone = owner.undelete(bucket, report.markers).await;
+    assert_eq!(undone.deleted, 2, "the rest of the undo still works");
+    assert_eq!(text("dir/inner.txt").await.unwrap(), "inner");
+
+    // ---- switching off suspends: old versions stay, a delete no longer leaves a real marker
+    owner.set_versioning(bucket, false).await.expect("suspend");
+    let status = owner.versioning(bucket).await.status;
+    let marker = owner.delete(bucket, "dir/inner.txt", None).await.unwrap();
+    println!("versioning after switching off -> {status:?}; delete then -> marker {marker:?}");
+    assert_eq!(status, "Suspended");
+    assert!(marker.is_none(), "nothing the undo could remove");
+
+    remove_user(&admin, "ba-m7-ver-x").await;
     remove_user(&admin, uid).await;
 }

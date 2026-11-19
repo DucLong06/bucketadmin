@@ -1,4 +1,5 @@
 import type { Usage } from "./api";
+import { vnTime } from "./format";
 
 export type UsageRow = {
   bucket: string;
@@ -57,13 +58,17 @@ export function usageCsv(rows: UsageRow[]): string {
   return [header.join(","), ...lines].join("\r\n") + "\r\n";
 }
 
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+/** `YYYY-MM-DD` of the day in Vietnam `days` before `now`. */
+export const daysAgo = (days: number, now = new Date()) => vnTime(now.getTime() - days * 86_400_000).slice(0, 10);
 
-/** `YYYY-MM-DD` of the UTC day `days` before `now`. */
-export const daysAgo = (days: number, now = new Date()) => isoDay(new Date(now.getTime() - days * 86_400_000));
-
-/** RGW's `end` is exclusive, the date picker's is inclusive: send the day after. */
-export const nextDay = (date: string) => isoDay(new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000));
+/**
+ * The UTC instant at which the day `date` starts in Vietnam, in the form RGW takes
+ * ("YYYY-MM-DD HH:MM:SS"). `plusDays = 1` is the start of the next day: RGW's `end` is
+ * exclusive, the date picker's is inclusive. Vietnam has no daylight saving time, so the
+ * ISO offset +07:00 is the zone.
+ */
+export const dayStartUtc = (date: string, plusDays = 0) =>
+  new Date(Date.parse(`${date}T00:00:00+07:00`) + plusDays * 86_400_000).toISOString().slice(0, 19).replace("T", " ");
 
 /** File name for an export; the backend only accepts letters, digits and . _ - */
 export const exportName = (uid: string, start: string, end: string) =>

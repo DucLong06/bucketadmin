@@ -1,9 +1,12 @@
 //! Object versions and ACLs, as the browsed user's key is allowed to see and change them.
 
+use super::manage::FailedDelete;
+use super::transfer::Cancel;
 use super::{s3_error, time, S3};
 use crate::rgw_admin::sigv4::uri_encode;
 use aws_sdk_s3::types::{AccessControlPolicy, Grantee, Owner, Permission, Type};
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::Ordering;
 
 const GROUP_URI: &str = "http://acs.amazonaws.com/groups/global/";
 const GROUPS: [&str; 2] = ["AllUsers", "AuthenticatedUsers"];
@@ -57,6 +60,19 @@ pub struct AppliedAcl {
     pub acl: Acl,
     /// Whether what was read back holds exactly the grants that were sent.
     pub verified: bool,
+}
+
+/// Outcome of applying one ACL to many objects.
+#[derive(Debug, Default, Serialize)]
+pub struct AclReport {
+    pub objects: usize,
+    /// Objects whose ACL was replaced.
+    pub applied: usize,
+    /// Of those, how many read back with other grants than were sent.
+    pub unverified: usize,
+    pub failed: Vec<FailedDelete>,
+    /// Stopped on request before the last object.
+    pub cancelled: bool,
 }
 
 /// Rejects grants RGW would refuse or, worse, quietly reinterpret.
@@ -284,6 +300,41 @@ impl S3 {
         let acl = self.get_acl(bucket, key).await?;
         let verified = normalized(&acl.grants) == normalized(grants);
         Ok(AppliedAcl { acl, verified })
+    }
+
+    /// Replaces the ACL of each of `keys` with `grants`, one object after the other, calling
+    /// `progress(done, total)` after each. One failure does not stop the rest.
+    pub async fn put_acl_many(
+        &self,
+        bucket: &str,
+        keys: &[String],
+        grants: &[Grant],
+        progress: impl Fn(u64, u64),
+        cancel: &Cancel,
+    ) -> Result<AclReport, String> {
+        validate_grants(grants)?;
+        let mut report = AclReport {
+            objects: keys.len(),
+            ..Default::default()
+        };
+        for (done, key) in keys.iter().enumerate() {
+            if cancel.load(Ordering::SeqCst) {
+                report.cancelled = true;
+                break;
+            }
+            match self.put_acl(bucket, key, grants).await {
+                Ok(applied) => {
+                    report.applied += 1;
+                    report.unverified += usize::from(!applied.verified);
+                }
+                Err(error) => report.failed.push(FailedDelete {
+                    key: key.clone(),
+                    error,
+                }),
+            }
+            progress(done as u64 + 1, keys.len() as u64);
+        }
+        Ok(report)
     }
 }
 

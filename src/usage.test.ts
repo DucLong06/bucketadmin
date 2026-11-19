@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import type { Usage } from "./api";
-import { daysAgo, exportName, nextDay, usageCsv, usageRecords, usageRows, usageTotals } from "./usage";
+import { dayStartUtc, daysAgo, exportName, usageCsv, usageRecords, usageRows, usageTotals } from "./usage";
 
 const stats = (category: string, ops: number, sent: number, received: number) => ({
   category,
@@ -43,13 +43,17 @@ test("CSV: header, CRLF, quoting and formula guard", () => {
   expect(tricky.split("\r\n")[1]).toBe(`"'=cmd|""x"",1",t,'-,-1,0,0,0`);
 });
 
-test("date helpers work in UTC", () => {
+test("date helpers work in days of Vietnam (UTC+7)", () => {
+  // 23:30 UTC on the 18th is already 06:30 on the 19th in Vietnam.
   const now = new Date("2026-11-18T23:30:00Z");
-  expect(daysAgo(0, now)).toBe("2026-11-18");
-  expect(daysAgo(30, now)).toBe("2026-10-19");
-  expect(nextDay("2026-11-18")).toBe("2026-11-19");
-  expect(nextDay("2026-12-31")).toBe("2027-01-01");
-  expect(nextDay("2028-02-28")).toBe("2028-02-29");
+  expect(daysAgo(0, now)).toBe("2026-11-19");
+  expect(daysAgo(30, now)).toBe("2026-10-20");
+  expect(daysAgo(0, new Date("2026-11-18T16:59:59Z"))).toBe("2026-11-18");
+  // A day in Vietnam starts at 17:00 UTC of the day before; `end` is the start of the day after.
+  expect(dayStartUtc("2026-11-18")).toBe("2026-11-17 17:00:00");
+  expect(dayStartUtc("2026-11-18", 1)).toBe("2026-11-18 17:00:00");
+  expect(dayStartUtc("2027-01-01")).toBe("2026-12-31 17:00:00");
+  expect(dayStartUtc("2028-02-28", 1)).toBe("2028-02-28 17:00:00");
 });
 
 test("export file names only use characters the backend accepts", () => {

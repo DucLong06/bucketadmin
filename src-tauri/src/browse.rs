@@ -5,12 +5,13 @@
 
 use crate::clusters::{ClusterProfile, ProfileStore, SecretStore};
 use crate::rgw_admin::{HttpClient, RgwAdmin};
-use crate::s3::acl::{Acl, AppliedAcl, Grant, VersionEntry, Versioning};
-use crate::s3::manage::{DeleteReport, ObjectTag, MAX_DELETE};
+use crate::s3::acl::{Acl, AclReport, AppliedAcl, Grant, VersionEntry, Versioning};
+use crate::s3::manage::{DeleteReport, Deleted, Marker, ObjectTag, MAX_DELETE};
 use crate::s3::parquet::ParquetPage;
 use crate::s3::search::SearchResult;
 use crate::s3::transfer::{content_type_for, Cancel, Downloaded};
 use crate::s3::{BucketEntry, Listing, ObjectHead, LIST_PAGE, S3};
+use crate::settings::Proxy;
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -26,6 +27,14 @@ type St<'a> = State<'a, AppState>;
 /// The empty uid is the session of the personal key ("my own key").
 #[derive(Default)]
 pub struct Sessions(Mutex<HashMap<(String, String), S3>>);
+
+impl Sessions {
+    pub(crate) fn clear(&self) {
+        if let Ok(mut sessions) = self.0.lock() {
+            sessions.clear();
+        }
+    }
+}
 
 /// Cancel flags of the transfers in flight, by the id the UI gave them.
 #[derive(Default)]
@@ -55,10 +64,11 @@ pub async fn connect<S: SecretStore, H: HttpClient>(
     http: H,
     cluster_id: &str,
     uid: &str,
+    proxy: &Proxy,
 ) -> Result<S3, String> {
     if uid.is_empty() {
         let (endpoint, mine) = profiles.browse_credentials(cluster_id)?;
-        return Ok(S3::new(&endpoint, &mine.access_key, &mine.secret_key));
+        return S3::with_proxy(&endpoint, &mine.access_key, &mine.secret_key, proxy);
     }
     let (endpoint, admin_creds) = profiles.credentials(cluster_id)?;
     let admin = RgwAdmin::new(&endpoint, admin_creds, http).map_err(|e| e.to_string())?;
@@ -69,7 +79,7 @@ pub async fn connect<S: SecretStore, H: HttpClient>(
         .keys
         .first()
         .ok_or_else(|| format!("user {uid} has no S3 key to browse with"))?;
-    Ok(S3::new(&endpoint, &key.access_key, &key.secret_key))
+    S3::with_proxy(&endpoint, &key.access_key, &key.secret_key, proxy)
 }
 
 /// What a command acts on, and as whom (`uid` empty: with the caller's own saved key).
@@ -109,7 +119,9 @@ impl AppState {
                 return Ok(s3.clone());
             }
         }
-        let s3 = connect(&self.profiles, self.http.clone(), cluster_id, uid).await?;
+        let proxy = self.proxy_of(cluster_id)?;
+        let http = self.http(&proxy)?;
+        let s3 = connect(&self.profiles, http, cluster_id, uid, &proxy).await?;
         let mut sessions = self.browse.0.lock().map_err(|e| e.to_string())?;
         sessions.insert(cache_key, s3.clone());
         Ok(s3)
@@ -341,9 +353,10 @@ pub async fn browse_presign(state: St<'_>, at: ObjectRef, expires_secs: u64) -> 
     result
 }
 
-/// Deletes the object, or exactly one version of it when `at.version` is set.
+/// Deletes the object, or exactly one version of it when `at.version` is set. Returns the
+/// version id of the delete marker when the bucket's versioning turned the delete into one.
 #[tauri::command]
-pub async fn browse_delete(state: St<'_>, at: ObjectRef) -> Cmd<()> {
+pub async fn browse_delete(state: St<'_>, at: ObjectRef) -> Cmd<Option<String>> {
     at.require_key()?;
     let s3 = state.session(&at).await?;
     let result = s3.delete(&at.bucket, &at.key, at.version()).await;
@@ -351,8 +364,53 @@ pub async fn browse_delete(state: St<'_>, at: ObjectRef) -> Cmd<()> {
         Some(_) => "version.delete",
         None => "object.delete",
     };
-    state.audit_s3(&at, action, "", &result);
+    let detail = match &result {
+        Ok(Some(marker)) => format!("delete_marker={marker}"),
+        _ => String::new(),
+    };
+    state.audit_s3(&at, action, &detail, &result);
     result
+}
+
+/// Undo of a delete in a bucket with versioning on: removes the delete markers it left.
+#[tauri::command]
+pub async fn browse_undelete(
+    state: St<'_>,
+    at: ObjectRef,
+    markers: Vec<Marker>,
+) -> Cmd<DeleteReport> {
+    let s3 = state.session(&at).await?;
+    let report = s3.undelete(&at.bucket, markers).await;
+    let detail = format!(
+        "objects={} restored={} failed={}",
+        report.objects,
+        report.deleted,
+        report.failed.len()
+    );
+    let outcome = match report.failed.first() {
+        None => Ok(()),
+        Some(first) => Err(format!("{}: {}", first.key, first.error)),
+    };
+    state.audit_s3(&at, "object.undelete", &detail, &outcome);
+    Ok(report)
+}
+
+/// Deleted but restorable keys one level below the prefix `at.key`.
+#[tauri::command]
+pub async fn browse_deleted(state: St<'_>, at: ObjectRef) -> Cmd<Deleted> {
+    let s3 = state.session(&at).await?;
+    s3.list_deleted(&at.bucket, &at.key).await
+}
+
+/// Switches the bucket's versioning on or suspends it, and reports the state that reads back.
+#[tauri::command]
+pub async fn browse_set_versioning(state: St<'_>, at: ObjectRef, enabled: bool) -> Cmd<Versioning> {
+    let s3 = state.session(&at).await?;
+    let result = s3.set_versioning(&at.bucket, enabled).await;
+    let detail = format!("status={}", if enabled { "Enabled" } else { "Suspended" });
+    state.audit_s3(&at, "bucket.versioning.set", &detail, &result);
+    result?;
+    Ok(s3.versioning(&at.bucket).await)
 }
 
 // ---- preview ----------------------------------------------------------------
@@ -448,16 +506,70 @@ pub async fn browse_acl_get(state: St<'_>, at: ObjectRef) -> Cmd<Acl> {
 pub async fn browse_acl_put(state: St<'_>, at: ObjectRef, grants: Vec<Grant>) -> Cmd<AppliedAcl> {
     let s3 = state.session(&at).await?;
     let result = s3.put_acl(&at.bucket, &at.key, &grants).await;
-    let listed: Vec<String> = grants
-        .iter()
-        .map(|g| format!("{}:{}={}", g.kind, g.grantee, g.permission))
-        .collect();
     let verified = result
         .as_ref()
         .map(|applied| applied.verified)
         .unwrap_or(false);
-    let detail = format!("grants={} verified={verified}", listed.join(","));
+    let detail = format!("grants={} verified={verified}", grants_text(&grants));
     state.audit_s3(&at, "acl.set", &detail, &result);
+    result
+}
+
+fn grants_text(grants: &[Grant]) -> String {
+    let listed: Vec<String> = grants
+        .iter()
+        .map(|g| format!("{}:{}={}", g.kind, g.grantee, g.permission))
+        .collect();
+    listed.join(",")
+}
+
+/// The keys a recursive ACL change would touch: everything under the prefix `at.key`
+/// (empty: the whole bucket).
+#[tauri::command]
+pub async fn browse_acl_targets(state: St<'_>, at: ObjectRef) -> Cmd<Vec<String>> {
+    let s3 = state.session(&at).await?;
+    s3.keys_under(&at.bucket, &at.key, MAX_DELETE).await
+}
+
+/// Applies one ACL to each of `keys` in turn (the objects under the prefix `at.key`, as
+/// listed by `browse_acl_targets`), reporting progress as `transfer` events.
+#[tauri::command]
+pub async fn browse_acl_put_many(
+    app: AppHandle,
+    state: St<'_>,
+    at: ObjectRef,
+    keys: Vec<String>,
+    grants: Vec<Grant>,
+    transfer_id: String,
+) -> Cmd<AclReport> {
+    let s3 = state.session(&at).await?;
+    let cancel = state.transfers.begin(&transfer_id);
+    let progress = report(&app, &transfer_id);
+    let result = s3
+        .put_acl_many(&at.bucket, &keys, &grants, progress, &cancel)
+        .await;
+    state.transfers.end(&transfer_id);
+    let detail = match &result {
+        Ok(r) => format!(
+            "objects={} applied={} unverified={} failed={} cancelled={} grants={}",
+            r.objects,
+            r.applied,
+            r.unverified,
+            r.failed.len(),
+            r.cancelled,
+            grants_text(&grants)
+        ),
+        Err(_) => format!("objects={} grants={}", keys.len(), grants_text(&grants)),
+    };
+    // The row is an error when any object failed, with the first failure as its message.
+    let outcome = match &result {
+        Ok(r) => match r.failed.first() {
+            None => Ok(()),
+            Some(first) => Err(format!("{}: {}", first.key, first.error)),
+        },
+        Err(e) => Err(e.clone()),
+    };
+    state.audit_s3(&at, "acl.set_many", &detail, &outcome);
     result
 }
 
@@ -531,10 +643,11 @@ pub async fn browse_delete_many(
     }
     let report = s3.delete_many(&at.bucket, all).await;
     let detail = format!(
-        "objects={} deleted={} failed={} folders={}",
+        "objects={} deleted={} failed={} delete_markers={} folders={}",
         report.objects,
         report.deleted,
         report.failed.len(),
+        report.markers.len(),
         prefixes.join(",")
     );
     let outcome = match report.failed.first() {
@@ -599,17 +712,23 @@ mod tests {
         let p = store.add("lab", admin_endpoint, "AK", "SK").unwrap();
 
         let none = Mock::default();
-        let err = connect(&store, &none, &p.id, "").await.err().unwrap();
+        let auto = Proxy::Auto;
+        let err = connect(&store, &none, &p.id, "", &auto)
+            .await
+            .err()
+            .unwrap();
         assert_eq!(err, "no personal key saved for this cluster");
         store.set_browse_key(&p.id, "AKMINE", "my-secret").unwrap();
-        let s3 = connect(&store, &none, &p.id, "").await.unwrap();
+        let s3 = connect(&store, &none, &p.id, "", &auto).await.unwrap();
         assert_eq!(s3.access_key(), "AKMINE");
         assert_eq!(none.calls(), [] as [&str; 0], "own key: no Admin API call");
 
         // Browsing as another user is the one case that asks the Admin API (for that key).
         let user = r#"{"user_id":"alice","keys":[{"user":"alice","access_key":"AKALICE","secret_key":"s"}]}"#;
         let lookup = Mock::reply(200, user);
-        let s3 = connect(&store, &lookup, &p.id, "alice").await.unwrap();
+        let s3 = connect(&store, &lookup, &p.id, "alice", &auto)
+            .await
+            .unwrap();
         assert_eq!(s3.access_key(), "AKALICE");
         assert_eq!(lookup.calls(), ["GET /admin/user?format=json&uid=alice"]);
         std::fs::remove_dir_all(dir).unwrap();

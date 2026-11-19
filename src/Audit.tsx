@@ -18,6 +18,7 @@ import {
 } from "@mui/material";
 import { invoke, type AuditEntry, type Profile } from "./api";
 import { explain } from "./errors";
+import { TZ, vnTime } from "./format";
 import { ErrorAlert, useAction } from "./ui";
 
 // Action names written by src-tauri/src/ops.rs.
@@ -40,11 +41,14 @@ const ACTIONS = [
   "object.upload",
   "object.delete",
   "object.delete_many",
+  "object.undelete",
+  "bucket.versioning.set",
   "object.presign",
   "object.tags.set",
   "version.restore",
   "version.delete",
   "acl.set",
+  "acl.set_many",
   "bucket.create",
   "folder.create",
 ];
@@ -115,7 +119,7 @@ export default function Audit({ profiles }: { profiles: Profile[] }) {
         <Table size="small" aria-label="Audit log">
           <TableHead>
             <TableRow>
-              <TableCell>Thời gian</TableCell>
+              <TableCell>Thời gian ({TZ})</TableCell>
               <TableCell>Cluster</TableCell>
               <TableCell>Action</TableCell>
               <TableCell>Target</TableCell>
@@ -126,7 +130,7 @@ export default function Audit({ profiles }: { profiles: Profile[] }) {
           <TableBody>
             {(entries ?? []).map((e) => (
               <TableRow key={e.id} hover>
-                <TableCell sx={{ whiteSpace: "nowrap" }}>{new Date(e.ts * 1000).toLocaleString("vi-VN")}</TableCell>
+                <TableCell sx={{ whiteSpace: "nowrap" }}>{vnTime(e.ts * 1000, true)}</TableCell>
                 <TableCell>{clusterLabel(e.cluster_id)}</TableCell>
                 <TableCell sx={{ fontFamily: "monospace", whiteSpace: "nowrap" }}>{e.action}</TableCell>
                 <TableCell sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>{e.target}</TableCell>

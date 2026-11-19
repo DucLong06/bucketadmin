@@ -4,7 +4,7 @@ import { invoke, maskKey, type Quota, type Usage, type UserInfo } from "./api";
 import type { Access } from "./caps";
 import { formatBytes } from "./format";
 import { ErrorAlert, useAction } from "./ui";
-import { daysAgo, nextDay, usageRows, usageTotals } from "./usage";
+import { dayStartUtc, daysAgo, usageRows, usageTotals } from "./usage";
 
 type Quotas = { user: Quota; bucket: Quota };
 const USAGE_DAYS = 30;
@@ -49,7 +49,7 @@ export default function MyInfo({ clusterId, access, defaultOpen }: { clusterId: 
       }
       if (access.usage) {
         // RGW's end date is exclusive: the day after today covers today.
-        setUsage(await invoke<Usage>("usage_get", { clusterId, uid, start: daysAgo(USAGE_DAYS), end: nextDay(daysAgo(0)) }));
+        setUsage(await invoke<Usage>("usage_get", { clusterId, uid, start: dayStartUtc(daysAgo(USAGE_DAYS)), end: dayStartUtc(daysAgo(0), 1) }));
       }
     });
   }, [open, clusterId, access]);

@@ -302,16 +302,23 @@ impl S3 {
         })
     }
 
-    /// Deletes an object, or exactly one version of it when `version` is given.
+    /// Deletes an object, or exactly one version of it when `version` is given. With
+    /// versioning on, deleting an object only puts a delete marker on top of it: the marker's
+    /// version id is returned, and deleting that version brings the object back.
     pub async fn delete(
         &self,
         bucket: &str,
         key: &str,
         version: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<Option<String>, String> {
         let delete = self.client.delete_object().bucket(bucket).key(key);
         let delete = delete.set_version_id(version.map(str::to_string));
-        delete.send().await.map(|_| ()).map_err(s3_error)
+        let out = delete.send().await.map_err(s3_error)?;
+        // "null" is the marker of a bucket with versioning suspended: it replaced the data.
+        let marker = out
+            .version_id()
+            .filter(|id| version.is_none() && out.delete_marker() == Some(true) && *id != "null");
+        Ok(marker.map(str::to_string))
     }
 
     /// A URL that lets anyone holding it GET the object for `expires_secs`. `inline_type`

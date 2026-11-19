@@ -20,6 +20,9 @@ cp "${1:?usage: ui-smoke.sh <debug app binary built by tauri build --debug>}" "$
 case "$FLOW" in
   admin)
     FIXTURE_TEST=rgw_lab FIXTURE=ui_smoke_fixture STEP=10000 ENTER_AT=06-secret-once
+    # Debug builds take GitHub's "latest release" answer from here: this flow sees a newer release.
+    export BUCKETADMIN_DEV_UPDATE='{"tag_name":"v9.9.9","html_url":"https://github.com/DucLong06/bucketadmin/releases/tag/v9.9.9"}'
+
     # Debug builds write exports (the onboarding report) here instead of ~/Downloads.
     mkdir -p /tmp/ba-smoke/dl
     rm -f /tmp/ba-smoke/dl/onboard-*.csv
@@ -28,7 +31,9 @@ case "$FLOW" in
     ;;
   browse)
     FIXTURE_TEST=s3_lab FIXTURE=ui_smoke_browse_fixture STEP=10000 ENTER_AT="05-csv 17b-copy-url"
-    NAMES="01-browse-session 02-bucket-root 03-text-find 04-json 05-csv - 06-parquet 07-image 08-audio 09-video 10-pdf 11-hex 12-presign 12b-headers 12c-tags 13a-task-cancelled 13-upload-done 14-versions 15-acl 16-bucket-acl 17-search 17b-copy-url - 17c-create-bucket 17d-new-folder 17e-delete-confirm 18-readonly-denied 19-audit 20-done"
+    export BUCKETADMIN_DEV_UPDATE='{}' # no release to read: no badge, and no request to GitHub
+
+    NAMES="01-browse-session 02-bucket-root 03-text-find 04-json 05-csv - 06-parquet 07-image 08-audio 09-video 10-pdf 11-hex 12-presign 12b-headers 12c-tags 13a-task-cancelled 13-upload-done 14-versions 15-acl 16-bucket-acl 16b-folder-acl 17-search 17a-deleted-shown 17b-copy-url - 17c-create-bucket 17d-new-folder 17e-delete-confirm 17f-undone 17g-final-delete 18-readonly-denied 19-audit 20-done"
     # Files the flow uploads, and where its downloads go. Native file dialogs cannot be driven
     # under Xvfb, so debug builds take their answers from these two variables instead.
     rm -rf /tmp/ba-smoke/files /tmp/ba-smoke/dl
@@ -74,7 +79,8 @@ flow = open(os.environ["FLOW_JS"]).read()
 print(open(os.environ["TPL"]).read().replace("    // __FLOW__", flow).replace("__CFG__", json.dumps(cfg)))
 PY
 )
-BUCKETADMIN_DEV_SCRIPT=/tmp/ba-smoke/driver.js "$BIN" > /tmp/ba-smoke/app.log 2>&1 &
+# TZ=UTC: the app must show Vietnam time (UTC+7) whatever zone the machine is in; the browse flow checks it.
+TZ=UTC BUCKETADMIN_DEV_SCRIPT=/tmp/ba-smoke/driver.js "$BIN" > /tmp/ba-smoke/app.log 2>&1 &
 APP=$!
 for i in $(seq 1 30); do
   WID=$(xdotool search --onlyvisible --name 'BucketAdmin' 2>/dev/null | head -1)

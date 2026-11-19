@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
 import {
+  Alert,
   AppBar,
+  Button,
   Chip,
   Container,
   CssBaseline,
+  Snackbar,
   Tab,
   Tabs,
   ThemeProvider,
@@ -22,6 +25,8 @@ import { CallerContext, ErrorAlert } from "./ui";
 import Users from "./Users";
 
 const theme = createTheme({ palette: { mode: "dark" } });
+/** A release whose tag is not this build's version (backend `update_check`). */
+type Update = { tag: string; url: string; current: string };
 
 export default function App() {
   const [page, setPage] = useState("users");
@@ -34,6 +39,19 @@ export default function App() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [clusterId, setClusterId] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // A release newer than this build, found by the daily check; trouble checking is silent.
+  const [update, setUpdate] = useState<Update | null>(null);
+  const [updateToast, setUpdateToast] = useState<"new" | "no-browser" | null>(null);
+  useEffect(() => {
+    invoke<Update | null>("update_check").then(
+      (found) => {
+        setUpdate(found);
+        if (found) setUpdateToast("new");
+      },
+      () => {},
+    );
+  }, []);
+  const openRelease = () => invoke("update_open").then(() => setUpdateToast(null), () => setUpdateToast("no-browser"));
 
   const reload = () =>
     invoke<Profile[]>("list_profiles")
@@ -115,6 +133,16 @@ export default function App() {
             <Tab value="clusters" label="Clusters" />
             <Tab value="audit" label="Audit" />
           </Tabs>
+          {update && (
+            <Chip
+              size="small"
+              color="info"
+              label={`Có bản mới ${update.tag}`}
+              onClick={openRelease}
+              title={`Đang dùng ${update.current}. Bấm để mở trang tải về: ${update.url}`}
+              sx={{ mr: 1 }}
+            />
+          )}
           {level && <Chip size="small" color={BADGE_COLOR[level]} label={LEVEL_LABEL[level]} title={badgeHint()} aria-label={`Quyền của key: ${LEVEL_LABEL[level]}. ${badgeHint()}`} />}
           {accessError && <Chip size="small" color="error" variant="outlined" label="Chưa kiểm tra được caps" title={explain(accessError).message} />}
         </Toolbar>
@@ -142,6 +170,30 @@ export default function App() {
           {page === "audit" && <Audit profiles={profiles} />}
         </Container>
       </CallerContext.Provider>
+      <Snackbar
+        open={updateToast !== null}
+        autoHideDuration={updateToast === "new" ? 12000 : null}
+        onClose={(_, reason) => reason === "clickaway" || setUpdateToast(null)}
+        anchorOrigin={{ vertical: "top", horizontal: "right" }}
+      >
+        <Alert
+          severity="info"
+          variant="filled"
+          onClose={() => setUpdateToast(null)}
+          action={
+            updateToast === "new" && (
+              <Button color="inherit" size="small" onClick={openRelease}>
+                Mở trang tải về
+              </Button>
+            )
+          }
+          sx={{ wordBreak: "break-all" }}
+        >
+          {updateToast === "no-browser"
+            ? `Không mở được trình duyệt. Trang tải về: ${update?.url}`
+            : `Có bản mới ${update?.tag} (đang dùng ${update?.current}).`}
+        </Alert>
+      </Snackbar>
     </ThemeProvider>
   );
 }

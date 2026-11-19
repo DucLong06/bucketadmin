@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Alert, Box, Button, Chip, LinearProgress, Paper, Stack, Typography } from "@mui/material";
 import { invoke } from "./api";
-import { formatBytes, shortTime } from "./format";
+import { formatBytes, TZ, vnTime } from "./format";
 import { download, type ObjectTabProps } from "./ObjectDrawer";
 import { ConfirmDialog, ErrorAlert, useAction } from "./ui";
 
@@ -24,6 +24,7 @@ const STATUS: Record<string, string> = {
 export default function VersionsTab({ at, startTransfer, onChanged, versioning }: ObjectTabProps) {
   const [versions, setVersions] = useState<Version[] | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
+  const [restored, setRestored] = useState<string | null>(null);
   const { busy, error, run, setError } = useAction();
 
   const load = async () => {
@@ -40,6 +41,7 @@ export default function VersionsTab({ at, startTransfer, onChanged, versioning }
     const command = pending.kind === "restore" ? "browse_restore" : "browse_delete";
     const done = await run(() => invoke(command, { at: target }).then(() => true));
     if (!done) return;
+    setRestored(pending.kind === "restore" ? pending.version.version_id : null);
     setPending(null);
     await load();
     onChanged();
@@ -49,14 +51,22 @@ export default function VersionsTab({ at, startTransfer, onChanged, versioning }
   const confirmText = !v
     ? ""
     : pending.kind === "restore"
-      ? `Chép version ${v.version_id} (${shortTime(v.last_modified)}) thành version mới nhất của ${at.key}. Không version nào bị xoá.`
+      ? `Chép version ${v.version_id} (${vnTime(v.last_modified)} ${TZ}) thành version mới nhất của ${at.key}. Không version nào bị xoá.`
       : v.delete_marker
         ? `Gỡ delete marker ${v.version_id}. Object ${at.key} sẽ hiện lại với version ngay trước đó.`
         : `Xoá vĩnh viễn version ${v.version_id} (${formatBytes(v.size)}) của ${at.key}. Không khôi phục được.`;
 
+  const deleted = versions?.[0]?.delete_marker === true;
   return (
     <Stack spacing={2}>
       <Alert severity="info">{STATUS[versioning.status] ?? `Versioning: ${versioning.status}`}</Alert>
+      {deleted && (
+        <Alert severity="warning">
+          Object này đang ở trạng thái đã xoá: version mới nhất là một delete marker. Bấm Khôi phục ở version muốn lấy lại, hoặc
+          Gỡ marker để quay về version ngay trước khi xoá.
+        </Alert>
+      )}
+      {restored && <Alert severity="success">Đã khôi phục: version {restored} giờ là nội dung hiện tại của object (dưới dạng một version mới).</Alert>}
       <Box>
         <Button onClick={load} disabled={busy}>
           Làm mới
@@ -71,7 +81,7 @@ export default function VersionsTab({ at, startTransfer, onChanged, versioning }
               <Stack sx={{ flexGrow: 1, minWidth: 0 }}>
                 <Typography sx={{ fontFamily: "monospace", fontSize: 13, wordBreak: "break-all" }}>{ver.version_id}</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {shortTime(ver.last_modified)} UTC{ver.delete_marker ? "" : ` · ${formatBytes(ver.size)}`}
+                  {vnTime(ver.last_modified, true)} ({TZ}){ver.delete_marker ? "" : ` · ${formatBytes(ver.size)}`}
                 </Typography>
               </Stack>
               {ver.is_latest && <Chip size="small" color="success" variant="outlined" label="Mới nhất" />}
@@ -88,6 +98,7 @@ export default function VersionsTab({ at, startTransfer, onChanged, versioning }
               {!ver.delete_marker && !ver.is_latest && (
                 <Button
                   size="small"
+                  variant="contained"
                   onClick={() => setPending({ kind: "restore", version: ver })}
                   aria-label={`Khôi phục version ${ver.version_id}`}
                 >

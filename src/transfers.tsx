@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { Alert, Box, Button, LinearProgress, Paper, Snackbar, Stack, Typography } from "@mui/material";
 import { invoke } from "./api";
 import { explain } from "./errors";
-import { formatBytes } from "./format";
+import { formatBytes, TZ, vnTime } from "./format";
 
 export type Transfer = {
   id: string;
@@ -13,6 +13,8 @@ export type Transfer = {
   state: "queued" | "running" | "done" | "error" | "cancelled";
   /** Result line (where it was saved, how much was resumed) or the error. */
   note: string;
+  /** When it was queued (epoch ms). */
+  at: number;
 };
 /** Queues a transfer; `run` receives the id the backend reports progress under. Resolves when
  *  it has finished, with undefined when it failed or was cancelled. */
@@ -59,7 +61,7 @@ export function useTransfers() {
   const start: StartTransfer = (label, run, note) =>
     new Promise((resolve) => {
       const id = crypto.randomUUID();
-      setItems((list) => [...list, { id, label, done: 0, total: 0, state: "queued", note: "" }]);
+      setItems((list) => [...list, { id, label, done: 0, total: 0, state: "queued", note: "", at: Date.now() }]);
       waiting.current.push({
         id,
         begin: async () => {
@@ -114,7 +116,7 @@ export function TaskPanel({ tasks }: { tasks: ReturnType<typeof useTransfers> })
         <Paper variant="outlined" sx={{ p: 2, mb: 2 }} aria-label="Tasks">
           <Stack direction="row" sx={{ alignItems: "center", mb: 1 }}>
             <Typography variant="subtitle2" component="h2" sx={{ flexGrow: 1 }}>
-              Tasks — {count("running")} đang chạy, {count("queued")} đang chờ (tối đa {MAX_RUNNING} cùng lúc)
+              Tasks — {count("running")} đang chạy, {count("queued")} đang chờ (tối đa {MAX_RUNNING} cùng lúc) · giờ {TZ}
             </Typography>
             <Button size="small" onClick={clear}>
               Xoá mục đã xong
@@ -129,6 +131,9 @@ export function TaskPanel({ tasks }: { tasks: ReturnType<typeof useTransfers> })
                   <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
                     <Typography variant="body2" sx={{ flexGrow: 1, fontFamily: "monospace", wordBreak: "break-all" }}>
                       {t.label}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
+                      {vnTime(t.at, true).slice(11)}
                     </Typography>
                     <Typography variant="body2" color={bad ? "error" : "text.secondary"} sx={{ whiteSpace: "nowrap" }}>
                       {t.state === "running"
