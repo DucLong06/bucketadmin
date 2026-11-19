@@ -50,7 +50,7 @@
   const click = async (text) => (await waitFor(() => button(text), `button "${text}"`)).click();
   const clickSel = async (sel) => (await waitFor(() => last(all(sel)), sel)).click();
   function setValue(el, value) {
-    const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const proto = [HTMLSelectElement, HTMLTextAreaElement].find((c) => el instanceof c)?.prototype ?? HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
     el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
   }

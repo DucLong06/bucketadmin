@@ -18,12 +18,16 @@ cp "${1:?usage: ui-smoke.sh <debug app binary built by tauri build --debug>}" "$
 # The UI cannot create buckets, so the data it should show comes from two ignored tests.
 case "$FLOW" in
   admin)
-    FIXTURE_TEST=rgw_lab FIXTURE=ui_smoke_fixture ENTER_AT=06-secret-once
-    NAMES="01-users-no-cluster 02-clusters 03-users-page-1 04-users-all 05-create-user 06-secret-once - 07-users-filter 08-drawer-info 09-suspend-confirm 10-keys 11-rotate-secret 12-add-key-validation 13-subuser-secret 14-subusers 15-caps-error 16-quota 17-usage 18-audit 19-audit-filter 20-buckets 21-bucket-drawer 22-bucket-quota-policy 23-bucket-delete-confirm 24-buckets-after-delete 25-user-buckets 26-purge-confirm 27-buckets-after-purge 28-clusters-removed"
+    FIXTURE_TEST=rgw_lab FIXTURE=ui_smoke_fixture STEP=10000 ENTER_AT=06-secret-once
+    # Debug builds write exports (the onboarding report) here instead of ~/Downloads.
+    mkdir -p /tmp/ba-smoke/dl
+    rm -f /tmp/ba-smoke/dl/onboard-*.csv
+    export BUCKETADMIN_DEV_SAVE_DIR=/tmp/ba-smoke/dl
+    NAMES="01-users-no-cluster 02-clusters 03-users-page-1 04-users-all 04b-bulk-dry-run 04c-bulk-done 05-create-user 06-secret-once - 07-users-filter 08-drawer-info 09-suspend-confirm 10-keys 11-rotate-secret 12-add-key-validation 13-subuser-secret 14-subusers 15-caps-error 16-quota 17-usage 18-audit 19-audit-filter 20-buckets 21-bucket-drawer 22-bucket-quota-policy 23-bucket-delete-confirm 24-buckets-after-delete 25-user-buckets 26-purge-confirm 27-buckets-after-purge 28-clusters-removed"
     ;;
   browse)
-    FIXTURE_TEST=s3_lab FIXTURE=ui_smoke_browse_fixture STEP=10000 ENTER_AT=05-csv
-    NAMES="01-browse-session 02-bucket-root 03-text-find 04-json 05-csv - 06-parquet 07-image 08-audio 09-video 10-pdf 11-hex 12-presign 13-upload-done 14-versions 15-acl 16-bucket-acl 17-search 18-readonly-denied 19-audit 20-done"
+    FIXTURE_TEST=s3_lab FIXTURE=ui_smoke_browse_fixture STEP=10000 ENTER_AT="05-csv 17b-copy-url"
+    NAMES="01-browse-session 02-bucket-root 03-text-find 04-json 05-csv - 06-parquet 07-image 08-audio 09-video 10-pdf 11-hex 12-presign 12b-headers 12c-tags 13a-task-cancelled 13-upload-done 14-versions 15-acl 16-bucket-acl 17-search 17b-copy-url - 17c-create-bucket 17d-new-folder 17e-delete-confirm 18-readonly-denied 19-audit 20-done"
     # Files the flow uploads, and where its downloads go. Native file dialogs cannot be driven
     # under Xvfb, so debug builds take their answers from these two variables instead.
     rm -rf /tmp/ba-smoke/files /tmp/ba-smoke/dl
@@ -78,14 +82,15 @@ for name in $NAMES; do
   sleep "$(python3 -c "import time; print(max(0, ($START + $n*$STEP - 700)/1000 - time.time()))")"
   [ "$name" = "-" ] && continue
   shot "$name"
-  if [ "$name" = "$ENTER_AT" ]; then
+  if [[ " $ENTER_AT " == *" $name "* ]]; then
     # A real key press on the Copy button the flow focused: the clipboard API ignores synthetic clicks.
     xdotool key Return; sleep 0.5
     clip=$(timeout 3 xclip -o -selection clipboard 2>&1)
     if [ "$FLOW" = admin ]; then
       echo "clipboard after a real Enter on 'Copy access key': ${#clip} chars; looks like an access key: $(printf '%s' "$clip" | grep -cE '^[A-Z0-9]{20}$')"
     else
-      echo "clipboard after a real Enter on 'Copy dòng 1': $clip"
+      # A presigned URL is a credential: only its path is printed, never the signature.
+      echo "clipboard after a real Enter at $name: ${clip%%\?*}$([[ "$clip" == *X-Amz-Signature=* ]] && echo "?… (presigned, X-Amz-Expires=$(printf '%s' "$clip" | grep -o 'X-Amz-Expires=[0-9]*' | cut -d= -f2))")"
     fi
     shot "${name%%-*}b-copied"
   fi
@@ -93,6 +98,10 @@ done
 sleep 1.5; shot 99-final
 kill $APP; rm -f /tmp/ba-smoke/driver.js
 echo "== fixture: remove"; fixture remove
+if [ "$FLOW" = admin ]; then
+  echo "== onboarding report written by the app (keys masked here; file mode $(stat -c %a /tmp/ba-smoke/dl/onboard-report-*.csv 2>/dev/null | head -1))"
+  sed -E 's/,[A-Z0-9]{20},[A-Za-z0-9/+=]{40}\r?$/,<access key>,<secret key>/' /tmp/ba-smoke/dl/onboard-report-*.csv 2>/dev/null
+fi
 if [ "$FLOW" = browse ]; then
   echo "== files downloaded through the UI (bytes, name)"
   ls -l /tmp/ba-smoke/dl | awk 'NR > 1 { print $5, $9 }'

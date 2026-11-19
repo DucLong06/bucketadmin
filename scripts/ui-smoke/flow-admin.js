@@ -23,6 +23,30 @@
     check(rows() >= 30, `all fixture users are listed, got ${rows()}`);
     await shot("04-users-all");
 
+    // ---- CSV onboarding: dry run, run, report
+    await click("Onboard từ CSV");
+    const csv = [
+      "uid,display,email,caps,quota",
+      "ba-m5-ui-bulk-1,Bulk One,one@example.com,buckets=read;usage=read,10G",
+      "ba-m5-ui-bulk-2,Bulk Two,,,",
+      "bucketadmin,Already There,,,",
+      "bad uid,Broken Line,,,",
+    ].join("\n");
+    setValue(await waitFor(() => last(all(".MuiDialog-root textarea:not([aria-hidden])")), "CSV text area"), csv);
+    await waitFor(() => hasText("4 dòng: 3 hợp lệ, 1 sai."), "file parsed");
+    await click("Kiểm tra (dry-run)");
+    await waitFor(() => hasText("Dry-run: 2 user sẽ được tạo") && hasText("Đã tồn tại — bỏ qua") && hasText("Dòng sai"), "dry run result", 20000);
+    await shot("04b-bulk-dry-run");
+    await click("Tạo 2 user");
+    await waitFor(() => hasText("Đã chạy: 2 user được tạo."), "users created", 30000);
+    await click("Lưu report CSV");
+    await waitFor(() => hasText("Đã lưu vào") && hasText("onboard-report-"), "report saved");
+    await shot("04c-bulk-done");
+    await click("Đóng");
+    await dialogsGone();
+    await loadAllUsers();
+    check(!!document.querySelector('[aria-label="Mở chi tiết user ba-m5-ui-bulk-1"]'), "the onboarded user is listed");
+
     // ---- create user, one-time secret
     await click("Tạo user");
     await type("uid", UID);
@@ -149,7 +173,7 @@
     await type("Action", "subuser.create");
     await waitFor(() => rows() === 1 && hasText("subuser=swift1 access=full"), "subuser.create row");
     await type("Action", "caps.add");
-    await waitFor(() => rows() === 4, "4 caps.add rows");
+    await waitFor(() => rows() === 6, "6 caps.add rows (4 on the demo user, 2 from the onboarding)");
     await shot("19-audit-filter");
 
     // ---- Buckets page

@@ -863,6 +863,9 @@ const SMOKE_PAGING_USERS: usize = 27;
 async fn ui_smoke_cleanup(admin: &RgwAdmin) {
     let _ = admin.delete_user(SMOKE_DATA_UID, true).await;
     let _ = admin.delete_user("ba-m1-ui", true).await; // the driver's own user, after an aborted run
+    for uid in ["ba-m5-ui-bulk-1", "ba-m5-ui-bulk-2"] {
+        let _ = admin.delete_user(uid, true).await; // created by the onboarding step
+    }
     for i in 0..SMOKE_PAGING_USERS {
         let _ = admin.delete_user(&format!("ba-m3-ui-p{i:02}"), true).await;
     }

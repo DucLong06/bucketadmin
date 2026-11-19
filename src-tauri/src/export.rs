@@ -11,6 +11,12 @@ use std::path::{Path, PathBuf};
 // shortcut: a localised downloads folder is not looked up (xdg user-dirs); such desktops get
 // the app data folder. Read XDG_DOWNLOAD_DIR from user-dirs.dirs if that turns out to matter.
 pub fn export_dir() -> Result<PathBuf, String> {
+    // Debug builds only: the UI smoke test keeps its exports out of the real downloads folder.
+    if cfg!(debug_assertions) {
+        if let Some(dir) = std::env::var_os("BUCKETADMIN_DEV_SAVE_DIR") {
+            return Ok(PathBuf::from(dir));
+        }
+    }
     let downloads = std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Downloads"));
     match downloads {
         Some(dir) if dir.is_dir() => Ok(dir),
