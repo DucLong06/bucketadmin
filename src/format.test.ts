@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { formatBytes, prettyJson } from "./format";
+import { formatBytes, prettyJson, shortTime } from "./format";
 
 test("formatBytes uses binary units", () => {
   expect(formatBytes(0)).toBe("0 B");
@@ -14,4 +14,9 @@ test("formatBytes uses binary units", () => {
 test("prettyJson indents JSON and leaves other text alone", () => {
   expect(prettyJson('{"Version":"2012-10-17","Statement":[]}')).toBe('{\n  "Version": "2012-10-17",\n  "Statement": []\n}');
   expect(prettyJson("not json")).toBe("not json");
+});
+
+test("shortTime keeps date and minutes", () => {
+  expect(shortTime("2026-11-18T14:45:06.641Z")).toBe("2026-11-18 14:45");
+  expect(shortTime("")).toBe("");
 });

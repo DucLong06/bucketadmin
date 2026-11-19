@@ -67,3 +67,14 @@ export const bucketKey = (b: Bucket) => (b.tenant ? `${b.tenant}/${b.bucket}` : 
 export const bucketSize = (b: Bucket) => b.usage["rgw.main"]?.size ?? 0;
 /** Objects in every category (multipart parts included): any of them blocks a delete. */
 export const bucketObjects = (b: Bucket) => Object.values(b.usage).reduce((n, u) => n + u.num_objects, 0);
+
+export type BrowseBucket = { name: string; created: string };
+export type ObjectEntry = {
+  key: string;
+  size: number;
+  last_modified: string;
+  storage_class: string;
+  etag: string;
+  owner: string;
+};
+export type Listing = { prefixes: string[]; objects: ObjectEntry[]; next_token: string | null };

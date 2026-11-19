@@ -19,3 +19,6 @@ export function prettyJson(text: string): string {
     return text;
   }
 }
+
+/** "2026-11-18T14:45:06.641Z" -> "2026-11-18 14:45" (still UTC). */
+export const shortTime = (iso: string) => iso.slice(0, 16).replace("T", " ");
