@@ -27,7 +27,7 @@ import { formatBytes, shortTime } from "./format";
 import AclEditor from "./AclEditor";
 import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import ObjectDrawer, { type Versioning } from "./ObjectDrawer";
-import { TransferList, useTransfers } from "./transfers";
+import { TaskPanel, useTransfers } from "./transfers";
 import { explain } from "./errors";
 import { ClusterSelect, ConfirmDialog, copyText, ErrorAlert, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
@@ -143,11 +143,14 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   async function upload(paths: string[]) {
     const { uid: asUid, bucket: toBucket, prefix: toPrefix } = here.current;
     if (!asUid || !toBucket) return;
-    for (const path of paths) {
-      const key = toPrefix + path.slice(path.lastIndexOf("/") + 1);
-      const at = { clusterId, uid: asUid, bucket: toBucket, key };
-      await transfers.start(`↑ ${toBucket}/${key}`, (transferId) => invoke<number>("browse_upload", { at, path, transferId }));
-    }
+    // All queued at once: the task panel runs a few in parallel and holds the rest.
+    await Promise.all(
+      paths.map((path) => {
+        const key = toPrefix + path.slice(path.lastIndexOf("/") + 1);
+        const at = { clusterId, uid: asUid, bucket: toBucket, key };
+        return transfers.start(`↑ ${toBucket}/${key}`, (transferId) => invoke<number>("browse_upload", { at, path, transferId }));
+      }),
+    );
     const now = here.current;
     if (now.bucket === toBucket && now.prefix === toPrefix) load(toBucket, toPrefix, null);
   }
@@ -317,7 +320,7 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
       </Stack>
       {busy && <LinearProgress aria-label="Đang tải" />}
       {plan === null && <ErrorAlert error={error} sx={{ mb: 2 }} />}
-      <TransferList items={transfers.items} onClear={transfers.clear} />
+      <TaskPanel tasks={transfers} />
       {!session && !busy && !error && (
         <Alert severity="info">
           Nhập uid của user cần browse rồi bấm Mở, hoặc bấm "Browse" trong chi tiết user ở tab Users. Bạn chỉ thấy và làm
