@@ -235,7 +235,7 @@ function ParquetView({ at }: { at: ObjectAt }) {
           cell: (row: Record<string, unknown>) => {
             const text = cellText(row[c.name]);
             return (
-              <Box component="span" title={text.slice(0, 600)} sx={{ fontFamily: "monospace", opacity: row[c.name] === null ? 0.5 : 1 }}>
+              <Box component="span" title={text.slice(0, 600)} sx={{ fontVariantNumeric: "tabular-nums", opacity: row[c.name] === null ? 0.5 : 1 }}>
                 {text}
               </Box>
             );
@@ -293,7 +293,7 @@ function ParquetView({ at }: { at: ObjectAt }) {
           </Typography>
           <details>
             <summary>Schema ({page.columns.length} cột)</summary>
-            <Box component="ul" sx={{ m: 0, fontFamily: "monospace", fontSize: 13 }}>
+            <Box component="ul" sx={{ m: 0, fontSize: 13 }}>
               {page.columns.map((c) => (
                 <li key={c.name}>
                   {c.name}: {c.data_type}

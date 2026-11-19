@@ -1,16 +1,13 @@
 // UI smoke driver, evaluated in the app webview (debug builds, BUCKETADMIN_DEV_SCRIPT).
 // It acts through the DOM like a user; screenshots are taken by the shell on a shared clock.
-// ui-smoke.sh puts one of the flow-*.js files in place of the __FLOW__ line and creates the
-// data that flow expects on the cluster.
+// ui-smoke.sh puts flow-browse.js in place of the __FLOW__ line and creates the data the flow
+// expects on the cluster.
 (async () => {
   // The app runs this script on every page load; only the first one starts the flow.
   if (window.__smokeStarted) return;
   window.__smokeStarted = true;
   const CFG = __CFG__;
-  const { START, STEP, NAMES, UID } = CFG;
-  const DATA_UID = "ba-m3-ui-data";
-  const DATA_BUCKET = "ba-m3-ui-data-bucket";
-  const EMPTY_BUCKET = "ba-m3-ui-empty";
+  const { START, STEP, NAMES } = CFG;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const late = [];
   let n = 0;
@@ -28,7 +25,8 @@
     if (wait < 1500) late.push(`${name}:${wait}ms`);
     await sleep(Math.max(wait, 0));
   }
-  const visible = (e) => e.getClientRects().length > 0;
+  // A browse tab that is not on screen stays mounted but hidden (visibility), and so do its rows.
+  const visible = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden";
   const all = (sel) => [...document.querySelectorAll(sel)].filter(visible);
   const last = (a) => a[a.length - 1];
   const first = (a) => a[0];
@@ -46,7 +44,7 @@
     if (!ok) throw new Error("check failed: " + what);
   };
   // Last visible match: dialogs and drawers are appended after the page, so they win.
-  const button = (text) => last(all("button, [role=tab]").filter((e) => e.textContent.trim() === text && !e.disabled));
+  const button = (text) => last(all("button, [role=tab], [role=menuitem]").filter((e) => e.textContent.trim() === text && !e.disabled));
   const click = async (text) => (await waitFor(() => button(text), `button "${text}"`)).click();
   const clickSel = async (sel) => (await waitFor(() => last(all(sel)), sel)).click();
   function setValue(el, value) {
@@ -62,6 +60,7 @@
   const type = async (label, value, pick) => setValue(await field(label, pick), value);
   const dialogsGone = () => waitFor(() => all(".MuiDialog-root").length === 0, "dialog to close");
   const drawersGone = () => waitFor(() => all(".MuiDrawer-root").length === 0, "drawer to close");
+  const menusGone = () => waitFor(() => all(".MuiPopover-root").length === 0, "menu to close");
   const idle = (what) => waitFor(() => all(".MuiLinearProgress-root").length === 0, what, 20000);
   const openUser = (uid) => clickSel(`[aria-label="Mở chi tiết user ${uid}"]`);
   const openBucket = (name) => clickSel(`[aria-label="Mở chi tiết bucket ${name}"]`);

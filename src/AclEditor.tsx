@@ -182,7 +182,7 @@ export default function AclEditor({ at, recursive = false }: { at: ObjectAt; rec
       {acl && (
         <>
           <Typography variant="body2">
-            Owner: <Box component="span" sx={{ fontFamily: "monospace" }}>{acl.owner_id}</Box>
+            Owner: <Box component="span" sx={{ fontWeight: 600 }}>{acl.owner_id}</Box>
             {acl.owner_name && ` (${acl.owner_name})`}
             {folder && keys && ` · ACL đang hiện là của object đầu tiên trong thư mục (${keys[0]}).`}
           </Typography>

@@ -60,8 +60,8 @@ export function HeadersTab({ at }: ObjectTabProps) {
           <TableBody>
             {inspected.headers.map(([name, value], i) => (
               <TableRow key={i}>
-                <TableCell sx={{ fontFamily: "monospace", whiteSpace: "nowrap" }}>{name}</TableCell>
-                <TableCell sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>{value}</TableCell>
+                <TableCell sx={{ whiteSpace: "nowrap" }}>{name}</TableCell>
+                <TableCell sx={{ wordBreak: "break-all" }}>{value}</TableCell>
               </TableRow>
             ))}
           </TableBody>

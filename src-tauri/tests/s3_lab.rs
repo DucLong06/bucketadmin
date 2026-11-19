@@ -1322,13 +1322,30 @@ fn pdf(text: &str) -> Vec<u8> {
 
 /// A user owning a bucket with one object per viewer, a versioned key, and a second user who
 /// is granted everything on the bucket but is read-only by op-mask.
+/// A fixture user whose key is fixed (`BAM7UISMOKEKEY00000<n>`), so the UI driver can type it
+/// into the connection form the way a person would paste their own key.
+async fn smoke_user(admin: &RgwAdmin, uid: &str, n: u8) -> S3 {
+    remove_user(admin, uid).await; // leftover from an aborted run
+    let access = format!("BAM7UISMOKEKEY00000{n}");
+    let secret = format!("bam7uismokesecret00000000000000000000000{n}");
+    let created = admin
+        .create_user(uid, "M4 browse test", None, Some(&access), Some(&secret))
+        .await
+        .expect("create fixture user");
+    assert!(
+        created.caps.is_empty(),
+        "the fixture user has no admin caps"
+    );
+    S3::new(&endpoint(), &access, &secret)
+}
+
 #[tokio::test]
 #[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
 async fn ui_smoke_browse_fixture_create() {
     use aws_sdk_s3::types::{BucketVersioningStatus, VersioningConfiguration};
     let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
-    let (_, owner) = user(&admin, SMOKE_OWNER).await;
-    user(&admin, SMOKE_READ_ONLY).await;
+    let owner = smoke_user(&admin, SMOKE_OWNER, 1).await;
+    smoke_user(&admin, SMOKE_READ_ONLY, 2).await;
     let bucket = SMOKE_BUCKET;
     owner
         .client()

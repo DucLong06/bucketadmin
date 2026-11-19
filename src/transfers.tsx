@@ -109,21 +109,26 @@ const STATE_TEXT: Record<Transfer["state"], string> = {
 
 export function TaskPanel({ tasks }: { tasks: ReturnType<typeof useTransfers> }) {
   const { items, cancel, clear, toast, closeToast } = tasks;
+  // Folded to its one summary line when the user wants the room back.
+  const [folded, setFolded] = useState(false);
   const count = (state: Transfer["state"]) => items.filter((t) => t.state === state).length;
   return (
     <>
       {items.length > 0 && (
         // Bottom of the window, shared by every tab; a long queue scrolls inside its own box.
-        <Paper variant="outlined" square sx={{ px: 2, py: 1, flexShrink: 0, maxHeight: 190, overflow: "auto", borderWidth: "1px 0 0" }} aria-label="Tasks">
+        <Paper variant="outlined" square sx={{ px: 2, py: 1, flexShrink: 0, maxHeight: 168, overflow: "auto", borderWidth: "1px 0 0" }} aria-label="Tác vụ">
           <Stack direction="row" sx={{ alignItems: "center", mb: 1 }}>
             <Typography variant="subtitle2" component="h2" sx={{ flexGrow: 1 }}>
-              Tasks — {count("running")} đang chạy, {count("queued")} đang chờ (tối đa {MAX_RUNNING} cùng lúc) · giờ {TZ}
+              Tác vụ — {count("running")} đang chạy, {count("queued")} đang chờ (tối đa {MAX_RUNNING} cùng lúc) · giờ {TZ}
             </Typography>
+            <Button size="small" onClick={() => setFolded(!folded)} aria-expanded={!folded}>
+              {folded ? "Mở rộng" : "Thu gọn"}
+            </Button>
             <Button size="small" onClick={clear}>
               Xoá mục đã xong
             </Button>
           </Stack>
-          <Stack spacing={1}>
+          <Stack spacing={1} sx={{ display: folded ? "none" : undefined }}>
             {items.map((t) => {
               const active = t.state === "queued" || t.state === "running";
               const bad = t.state === "error";

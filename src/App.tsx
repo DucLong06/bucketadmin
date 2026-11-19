@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Alert,
-  AppBar,
   Box,
   Button,
   Chip,
@@ -15,18 +14,16 @@ import {
   Tab,
   Tabs,
   ThemeProvider,
-  Toolbar,
   Typography,
-  createTheme,
 } from "@mui/material";
 import { invoke, type Profile } from "./api";
 import Browse from "./Browse";
 import Connections from "./Connections";
 import { closeTab, cycleTab, placeLabel, samePlace, tabTitle, type BrowseTab, type Place } from "./tabs";
+import { theme, tokens } from "./theme";
 import { TaskPanel, useTransfers } from "./transfers";
 import { ErrorAlert } from "./ui";
 
-const theme = createTheme({ palette: { mode: "dark" } });
 /** A release whose tag is not this build's version (backend `update_check`). */
 type Update = { tag: string; url: string; current: string };
 
@@ -130,26 +127,33 @@ export default function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <Box sx={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-        <AppBar position="static" color="default">
-          <Toolbar variant="dense">
-            <Typography variant="h6" component="div" sx={{ mr: 4 }}>
-              BucketAdmin
-            </Typography>
-            <Tabs value={page} onChange={(_, value) => setPage(value)} aria-label="Điều hướng chính" sx={{ flexGrow: 1 }}>
-              <Tab value="browse" label="Browse" />
-              <Tab value="connections" label="Kết nối" />
-            </Tabs>
-            {update && (
-              <Chip
-                size="small"
-                color="info"
-                label={`Có bản mới ${update.tag}`}
-                onClick={openRelease}
-                title={`Đang dùng ${update.current}. Bấm để mở trang tải về: ${update.url}`}
-              />
-            )}
-          </Toolbar>
-        </AppBar>
+        <Box component="header" sx={{ display: "flex", alignItems: "center", gap: 4.5, height: 64, px: 5, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
+          <Typography component="div" sx={{ fontFamily: tokens.serif, fontStyle: "italic", fontWeight: 600, fontSize: 24, letterSpacing: "-0.01em" }}>
+            Bucket
+            <Box component="span" sx={{ color: "primary.main", fontStyle: "normal" }}>
+              Admin
+            </Box>
+          </Typography>
+          <Tabs
+            value={page}
+            onChange={(_, value) => setPage(value)}
+            aria-label="Điều hướng chính"
+            textColor="inherit"
+            sx={{ flexGrow: 1, alignSelf: "stretch", "& .MuiTabs-flexContainer": { height: "100%", gap: 2 } }}
+          >
+            <Tab value="browse" label="Browse" />
+            <Tab value="connections" label="Kết nối" />
+          </Tabs>
+          {update && (
+            <Chip
+              variant="outlined"
+              color="primary"
+              label={`Có bản mới ${update.tag}`}
+              onClick={openRelease}
+              title={`Đang dùng ${update.current}. Bấm để mở trang tải về: ${update.url}`}
+            />
+          )}
+        </Box>
         <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
           {/* The browse layer stays mounted (and keeps every tab's state) while Kết nối is shown. */}
           <Box sx={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", visibility: browsing ? "visible" : "hidden" }}>
@@ -157,7 +161,7 @@ export default function App() {
               direction="row"
               role="tablist"
               aria-label="Các tab browse"
-              sx={{ alignItems: "center", gap: 0.5, px: 2, pt: 1, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}
+              sx={{ alignItems: "flex-end", gap: 0.75, px: 5, pt: 1.25, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}
             >
               {tabs.map((t) => (
                 <Box
@@ -172,17 +176,18 @@ export default function App() {
                     display: "flex",
                     alignItems: "center",
                     gap: 0.5,
-                    pl: 1.5,
-                    pr: 0.5,
-                    height: 36,
-                    maxWidth: 220,
+                    pl: 2,
+                    pr: 0.75,
+                    height: 38,
+                    maxWidth: 240,
                     cursor: "pointer",
                     border: 1,
                     borderBottom: 0,
-                    borderColor: "divider",
-                    borderRadius: "8px 8px 0 0",
+                    borderColor: t.id === active ? "primary.main" : "divider",
+                    borderRadius: "14px 14px 0 0",
                     bgcolor: t.id === active ? "action.selected" : undefined,
                     color: t.id === active ? "text.primary" : "text.secondary",
+                    fontWeight: t.id === active ? 600 : 400,
                   }}
                 >
                   <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 14 }}>
@@ -202,11 +207,11 @@ export default function App() {
                   </IconButton>
                 </Box>
               ))}
-              <IconButton size="small" aria-label="Tab mới" title="Tab mới (Ctrl+T)" onClick={openEmptyTab} sx={{ width: 32, height: 32 }}>
+              <IconButton size="small" aria-label="Tab mới" title="Tab mới (Ctrl+T)" onClick={openEmptyTab} sx={{ width: 32, height: 32, mb: 0.375 }}>
                 +
               </IconButton>
               <Box sx={{ flexGrow: 1 }} />
-              <Button size="small" aria-haspopup="menu" onClick={(e) => setRecentMenu(e.currentTarget)}>
+              <Button size="small" aria-haspopup="menu" onClick={(e) => setRecentMenu(e.currentTarget)} sx={{ mb: 0.5 }}>
                 Gần đây
               </Button>
               <Menu anchorEl={recentMenu} open={recentMenu !== null} onClose={() => setRecentMenu(null)} slotProps={{ list: { "aria-label": "Vị trí mở gần đây (mở thành tab)" } }}>
@@ -225,7 +230,7 @@ export default function App() {
                   return (
                     // Hidden, not unmounted and not display:none: the tab keeps its state and its scroll position.
                     <Box key={t.id} role="tabpanel" aria-hidden={!shown} sx={{ position: "absolute", inset: 0, overflow: "auto", visibility: shown ? "visible" : "hidden" }}>
-                      <Container maxWidth="lg" sx={{ py: 3 }}>
+                      <Container maxWidth="xl" sx={{ py: 3, px: "40px !important" }}>
                         <Browse
                           profiles={profiles}
                           start={t.start}
@@ -244,7 +249,7 @@ export default function App() {
           </Box>
           {!browsing && (
             <Box sx={{ position: "absolute", inset: 0, overflow: "auto" }}>
-              <Container maxWidth="lg" sx={{ py: 3 }}>
+              <Container maxWidth="lg" sx={{ py: 4, px: "40px !important" }}>
                 <ErrorAlert error={error} />
                 <Connections profiles={profiles ?? []} onChanged={reload} />
               </Container>

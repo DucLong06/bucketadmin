@@ -79,7 +79,7 @@ export default function VersionsTab({ at, startTransfer, onChanged, versioning }
           <Paper key={ver.version_id} component="li" variant="outlined" sx={{ px: 2, py: 1 }}>
             <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
               <Stack sx={{ flexGrow: 1, minWidth: 0 }}>
-                <Typography sx={{ fontFamily: "monospace", fontSize: 13, wordBreak: "break-all" }}>{ver.version_id}</Typography>
+                <Typography sx={{ fontSize: 13, wordBreak: "break-all" }}>{ver.version_id}</Typography>
                 <Typography variant="body2" color="text.secondary">
                   {vnTime(ver.last_modified, true)} ({TZ}){ver.delete_marker ? "" : ` · ${formatBytes(ver.size)}`}
                 </Typography>
@@ -90,9 +90,9 @@ export default function VersionsTab({ at, startTransfer, onChanged, versioning }
                 <Button
                   size="small"
                   onClick={() => download({ ...at, version: ver.version_id }, startTransfer)}
-                  aria-label={`Tải về version ${ver.version_id}`}
+                  aria-label={`Tải xuống version ${ver.version_id}`}
                 >
-                  Tải về
+                  Tải xuống
                 </Button>
               )}
               {!ver.delete_marker && !ver.is_latest && (

@@ -15,6 +15,8 @@ import {
   List,
   ListItemButton,
   ListItemText,
+  Menu,
+  MenuItem,
   Paper,
   Snackbar,
   Stack,
@@ -28,8 +30,9 @@ import AclEditor from "./AclEditor";
 import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import { accessLevel, type Access } from "./caps";
 import MyInfo from "./MyInfo";
-import ObjectDrawer, { canUndelete, finalDeleteWarning, UNDELETE_HINT, type Versioning } from "./ObjectDrawer";
+import ObjectDrawer, { canUndelete, download, finalDeleteWarning, UNDELETE_HINT, type Versioning } from "./ObjectDrawer";
 import { placeLabel, type Place } from "./tabs";
+import { eyebrow, tokens } from "./theme";
 import type { StartTransfer } from "./transfers";
 import { explain } from "./errors";
 import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, useAction } from "./ui";
@@ -72,6 +75,23 @@ const STOPPED: Record<Found["stopped"], string> = {
 const COPY_URL_SECS = 900;
 const NO_VERSIONING: Versioning = { supported: false, status: "", reason: null };
 
+/** Rows of the object table that fit the window (the page itself scrolls for the rest). */
+function useTableHeight() {
+  const fit = () => Math.max(308, window.innerHeight - 500);
+  const [height, setHeight] = useState(fit);
+  useEffect(() => {
+    const onResize = () => setHeight(fit());
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return height;
+}
+const th = (text: string) => (
+  <Box component="span" sx={{ ...eyebrow, color: "text.secondary" }}>
+    {text}
+  </Box>
+);
+
 /** "a/b/c.txt" under prefix "a/b/" is shown as "c.txt". */
 const baseName = (key: string, prefix: string) => key.slice(prefix.length);
 
@@ -110,6 +130,15 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const request = useRef(0);
   const opening = useRef(0);
   const [selected, setSelected] = useState<ObjectEntry | null>(null);
+  // The tab the object sheet opens on, when the context menu asked for one.
+  const [startTab, setStartTab] = useState<string | undefined>();
+  const openObject = (object: ObjectEntry, tab?: string) => {
+    setStartTab(tab);
+    setSelected(object);
+  };
+  // Right-clicked row and where the pointer was.
+  const [menu, setMenu] = useState<{ row: Row; x: number; y: number } | null>(null);
+  const tableHeight = useTableHeight();
   const [versioning, setVersioning] = useState<Versioning>(NO_VERSIONING);
   // The prefix whose ACL dialog is open ("" = the bucket itself); null when closed.
   const [aclOf, setAclOf] = useState<string | null>(null);
@@ -134,10 +163,9 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
       return next;
     });
 
-  // A presigned GET URL of the one ticked object, straight to the clipboard.
-  async function copyUrl() {
+  // A presigned GET URL of one object, straight to the clipboard.
+  async function copyUrl(key: string) {
     if (!session) return;
-    const key = pickedOf("o")[0];
     const at = { clusterId, uid: session.uid, bucket, key };
     const url = await run(() => invoke<string>("browse_presign", { at, expiresSecs: COPY_URL_SECS }));
     if (!url) return;
@@ -146,9 +174,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   }
 
   // First a dry run: the confirmation states how many objects the selection really stands for.
-  async function planDelete() {
+  async function planDelete(keys: string[], prefixes: string[]) {
     if (!session) return;
-    const [keys, prefixes] = [pickedOf("o"), pickedOf("f")];
     const at = { clusterId, uid: session.uid, bucket };
     const report = await run(() => invoke<DeleteReport>("browse_delete_many", { at, keys, prefixes, dryRun: true }));
     if (report) setPlan({ objects: report.objects, keys, prefixes });
@@ -365,11 +392,11 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
         ),
     },
     {
-      header: "Tên",
+      header: th("Tên"),
       width: "minmax(240px, 4fr)",
       cell: (r) =>
         "folder" in r ? (
-          <Link component="button" onClick={() => load(bucket, r.folder, null)} aria-label={`Mở thư mục ${r.folder}`}>
+          <Link component="button" onClick={() => load(bucket, r.folder, null)} aria-label={`Mở thư mục ${r.folder}`} sx={{ fontFamily: tokens.mono, fontSize: 14 }}>
             {baseName(r.folder, prefix)}
           </Link>
         ) : (
@@ -377,9 +404,9 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
             component="button"
             color="inherit"
             underline="hover"
-            sx={{ fontFamily: "monospace" }}
+            sx={{ fontFamily: tokens.mono, fontSize: 14 }}
             onClick={() => {
-              setSelected(r.object);
+              openObject(r.object);
               // Reached through a search: the folder it lies in is worth finding again.
               if (found && session) remember({ clusterId, uid: session.uid, bucket, prefix: r.object.key.slice(0, r.object.key.lastIndexOf("/") + 1) });
             }}
@@ -390,10 +417,10 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
           </Link>
         ),
     },
-    { header: "Size", width: "100px", align: "right", cell: (r) => ("object" in r && !r.object.deleted ? formatBytes(r.object.size) : "—") },
-    { header: `Sửa lần cuối (${TZ})`, width: "160px", cell: (r) => ("object" in r ? vnTime(r.object.last_modified) : "") },
-    { header: "Storage class", width: "110px", cell: (r) => ("object" in r ? r.object.storage_class : "") },
-    { header: "Owner", width: "minmax(100px, 1fr)", cell: (r) => ("object" in r ? r.object.owner : "") },
+    { header: th("Kích thước"), width: "110px", align: "right", cell: (r) => ("object" in r && !r.object.deleted ? formatBytes(r.object.size) : "—") },
+    { header: th(`Sửa lần cuối (${TZ})`), width: "190px", cell: (r) => ("object" in r ? vnTime(r.object.last_modified) : "") },
+    // The owner is in the object's Thuộc tính; the concept's table stops at the storage class.
+    { header: th("Storage class"), width: "140px", cell: (r) => ("object" in r ? r.object.storage_class : "") },
   ];
 
   // Breadcrumb: bucket, then one link per folder level of the prefix.
@@ -408,172 +435,218 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   if (profiles.length === 0) {
     return <Alert severity="info">Chưa có kết nối nào. Hãy thêm một kết nối ở mục Kết nối trước.</Alert>;
   }
+  const label = profiles.find((p) => p.id === clusterId)?.label ?? "";
+  const card = { borderRadius: "16px" };
+  // What the context menu offers for the row under the pointer.
+  const menuRow = menu?.row;
+  const menuObject = menuRow && "object" in menuRow ? menuRow.object : null;
+  const menuFolder = menuRow && "folder" in menuRow ? menuRow.folder : null;
+  const pick = (action: () => void) => () => {
+    setMenu(null);
+    action();
+  };
   return (
     <CallerContext.Provider value={access?.uid ?? ""}>
-      <Typography variant="h5" component="h1" gutterBottom>
-        Browse
-      </Typography>
-      <Stack
-        component="form"
-        direction="row"
-        spacing={2}
-        sx={{ mb: 2, alignItems: "center" }}
-        onSubmit={(e: FormEvent) => {
-          e.preventDefault();
-          setError(null);
-          open(uidInput.trim());
-        }}
-      >
-        <ClusterSelect profiles={profiles} value={clusterId} onChange={setClusterId} />
-        {canBrowseAs && (
-          <>
-            <TextField label="Duyệt thay user (uid)" value={uidInput} onChange={(e) => setUidInput(e.target.value)} size="small" />
-            <Button type="submit" variant="outlined" disabled={busy || !uidInput.trim()}>
-              Mở
-            </Button>
-            {session?.uid && (
-              <Button
-                disabled={busy}
-                onClick={() => {
-                  setUidInput("");
-                  open("");
-                }}
-              >
-                Về key của tôi
-              </Button>
-            )}
-          </>
-        )}
-      </Stack>
-      {session && (
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          {session.uid
-            ? `Đang dùng key ${maskKey(session.access_key)} của chính user ${session.uid}.`
-            : `Đang dùng key ${maskKey(session.access_key)} của bạn (secret nằm trong keychain).`}
-        </Typography>
-      )}
-      {access && (access.users || access.usage) && (
-        // Keyed by cluster: another cluster's answer never shows under this one's name.
-        <MyInfo key={clusterId} clusterId={clusterId} access={access} defaultOpen={accessLevel(access) === "self"} />
-      )}
-      {busy && <LinearProgress aria-label="Đang tải" />}
-      {plan === null && switching === null && <ErrorAlert error={error} sx={{ mb: 2 }} />}
-
-      {session && (
-        <Stack direction="row" spacing={2} sx={{ alignItems: "flex-start" }}>
-          <Paper variant="outlined" sx={{ width: 260, flexShrink: 0 }}>
-            <Typography variant="subtitle2" component="h2" sx={{ px: 2, pt: 1.5 }}>
-              Bucket của {keyOwner(session.uid)}
-            </Typography>
-            <List dense aria-label="Danh sách bucket">
-              {session.buckets.map((b) => (
-                <ListItemButton key={b.name} selected={b.name === bucket} onClick={() => load(b.name, "", null)}>
-                  <ListItemText primary={b.name} slotProps={{ primary: { sx: { fontFamily: "monospace", fontSize: 14 } } }} />
-                </ListItemButton>
-              ))}
-            </List>
-            {session.buckets.length === 0 && (
-              <Typography variant="body2" color="text.secondary" sx={{ px: 2, pb: 1 }}>
-                User không sở hữu bucket nào.
-              </Typography>
-            )}
-            <Box sx={{ px: 2, pb: 1.5 }}>
-              <Button size="small" variant="outlined" fullWidth onClick={() => setCreating("bucket")}>
-                Tạo bucket
-              </Button>
-            </Box>
-            <Stack component="form" onSubmit={openByName} spacing={1} sx={{ p: 2, borderTop: 1, borderColor: "divider" }}>
-              <TextField
-                label="Mở bucket theo tên"
-                value={bucketInput}
-                onChange={(e) => setBucketInput(e.target.value)}
-                size="small"
-                helperText="Cho bucket được chia sẻ, S3 không liệt kê"
-              />
-              <Button type="submit" size="small" variant="outlined" disabled={!bucketInput.trim()}>
-                Mở bucket
+      <Box sx={{ display: "grid", gridTemplateColumns: "264px minmax(0, 1fr)", gap: 3, alignItems: "start" }}>
+        <Stack component="aside" spacing={2} aria-label="Kết nối, bucket và vị trí gần đây">
+          <ClusterSelect profiles={profiles} value={clusterId} onChange={setClusterId} />
+          {canBrowseAs && (
+            <Stack
+              component="form"
+              direction="row"
+              spacing={1}
+              onSubmit={(e: FormEvent) => {
+                e.preventDefault();
+                setError(null);
+                open(uidInput.trim());
+              }}
+            >
+              <TextField label="Duyệt thay user (uid)" value={uidInput} onChange={(e) => setUidInput(e.target.value)} size="small" fullWidth />
+              <Button type="submit" variant="outlined" disabled={busy || !uidInput.trim()}>
+                Mở
               </Button>
             </Stack>
-            {recents.length > 0 && (
-              <Box sx={{ borderTop: 1, borderColor: "divider" }}>
-                <Typography variant="subtitle2" component="h2" sx={{ px: 2, pt: 1.5 }}>
-                  Gần đây
+          )}
+          {session && (
+            <Typography variant="body2" color="text.secondary">
+              Đang dùng key{" "}
+              <Box component="span" sx={{ fontFamily: tokens.mono, fontSize: 13 }}>
+                {maskKey(session.access_key)}
+              </Box>{" "}
+              {session.uid ? `của user ${session.uid}.` : "của bạn."}
+              {session.uid && (
+                <Link
+                  component="button"
+                  sx={{ ml: 0.5 }}
+                  onClick={() => {
+                    setUidInput("");
+                    open("");
+                  }}
+                >
+                  Về key của tôi
+                </Link>
+              )}
+            </Typography>
+          )}
+          {session && (
+            <Paper variant="outlined" sx={card}>
+              <Typography component="h2" sx={{ ...eyebrow, color: "text.secondary", px: 2, pt: 2 }}>
+                Bucket của {keyOwner(session.uid)}
+              </Typography>
+              <List dense aria-label="Danh sách bucket">
+                {session.buckets.map((b) => (
+                  <ListItemButton key={b.name} selected={b.name === bucket} onClick={() => load(b.name, "", null)}>
+                    <ListItemText primary={b.name} slotProps={{ primary: { sx: { fontFamily: tokens.mono, fontSize: 14 } } }} />
+                  </ListItemButton>
+                ))}
+              </List>
+              {session.buckets.length === 0 && (
+                <Typography variant="body2" color="text.secondary" sx={{ px: 2, pb: 1 }}>
+                  User không sở hữu bucket nào.
                 </Typography>
-                <List dense aria-label="Vị trí mở gần đây">
-                  {recents.slice(0, RECENT_IN_SIDEBAR).map((place) => (
-                    <ListItemButton key={JSON.stringify(place)} onClick={() => onRecent(place)}>
-                      <ListItemText
-                        primary={placeLabel(place, profiles)}
-                        slotProps={{ primary: { sx: { fontSize: 13, wordBreak: "break-all" } } }}
-                      />
-                    </ListItemButton>
-                  ))}
-                </List>
+              )}
+              <Box sx={{ px: 2, pb: 2 }}>
+                <Button size="small" variant="outlined" fullWidth onClick={() => setCreating("bucket")}>
+                  Tạo bucket
+                </Button>
               </Box>
-            )}
-          </Paper>
+              <Stack component="form" onSubmit={openByName} spacing={1} sx={{ p: 2, borderTop: 1, borderColor: "divider" }}>
+                <TextField
+                  label="Mở bucket theo tên"
+                  value={bucketInput}
+                  onChange={(e) => setBucketInput(e.target.value)}
+                  size="small"
+                  helperText="Cho bucket được chia sẻ, S3 không liệt kê"
+                />
+                <Button type="submit" size="small" variant="outlined" disabled={!bucketInput.trim()}>
+                  Mở bucket
+                </Button>
+              </Stack>
+            </Paper>
+          )}
+          {recents.length > 0 && (
+            <Paper variant="outlined" sx={card}>
+              <Typography component="h2" sx={{ ...eyebrow, color: "text.secondary", px: 2, pt: 2 }}>
+                Gần đây
+              </Typography>
+              <List dense aria-label="Vị trí mở gần đây">
+                {recents.slice(0, RECENT_IN_SIDEBAR).map((place) => (
+                  <ListItemButton key={JSON.stringify(place)} onClick={() => onRecent(place)}>
+                    <ListItemText primary={placeLabel(place, profiles)} slotProps={{ primary: { sx: { fontSize: 13, wordBreak: "break-all" } } }} />
+                  </ListItemButton>
+                ))}
+              </List>
+            </Paper>
+          )}
+        </Stack>
 
-          <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-            {!bucket && <Typography color="text.secondary">Chọn một bucket để xem nội dung.</Typography>}
-            {bucket && (
-              <Stack spacing={1}>
-                <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-                  <Breadcrumbs aria-label="Đường dẫn" sx={{ flexGrow: 1 }}>
-                    <Link component="button" onClick={() => load(bucket, "", null)} sx={{ fontFamily: "monospace" }}>
+        <Stack spacing={2} sx={{ minWidth: 0 }}>
+          {busy && <LinearProgress aria-label="Đang tải" />}
+          {plan === null && switching === null && <ErrorAlert error={error} />}
+          {session && !bucket && (
+            <Box>
+              <Typography variant="overline" color="primary" component="p">
+                Browse · {label}
+              </Typography>
+              <Typography variant="h4" component="h1">
+                Chọn một bucket
+              </Typography>
+              <Typography color="text.secondary" sx={{ mt: 0.5, mb: 2.5 }}>
+                {session.buckets.length > 0
+                  ? "Các bucket mà key đang dùng sở hữu. Bucket được chia sẻ thì mở theo tên ở cột bên trái."
+                  : "Key đang dùng không sở hữu bucket nào. Tạo bucket mới, hoặc mở theo tên một bucket được chia sẻ, ở cột bên trái."}
+              </Typography>
+              <Box component="ul" aria-label="Bucket" sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 1.75, listStyle: "none", p: 0, m: 0 }}>
+                {session.buckets.map((b) => (
+                  <li key={b.name}>
+                    <Paper
+                      component="button"
+                      variant="outlined"
+                      onClick={() => load(b.name, "", null)}
+                      sx={{ ...card, display: "block", width: "100%", p: "14px 18px", textAlign: "left", color: "inherit", cursor: "pointer", "&:hover": { borderColor: "text.secondary" } }}
+                    >
+                      <Box component="strong" sx={{ display: "block", fontFamily: tokens.mono, fontSize: 15 }}>
+                        {b.name}
+                      </Box>
+                      <Typography variant="body2" color="text.secondary">
+                        {b.created ? `Tạo ${vnTime(b.created).slice(0, 10)}` : "Vừa tạo"}
+                      </Typography>
+                    </Paper>
+                  </li>
+                ))}
+              </Box>
+            </Box>
+          )}
+          {session && bucket && (
+            <>
+              <Stack direction="row" sx={{ alignItems: "flex-end", justifyContent: "space-between", gap: 3, flexWrap: "wrap" }}>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="overline" color="primary" component="p">
+                    Browse · {label}
+                  </Typography>
+                  <Breadcrumbs aria-label="Đường dẫn" separator="/" sx={{ fontFamily: tokens.serif, fontSize: 28, fontWeight: 600, lineHeight: 1.25, "& .MuiBreadcrumbs-separator": { color: "divider" } }}>
+                    <Link component="button" underline="none" color={crumbs.length ? "text.secondary" : "text.primary"} onClick={() => load(bucket, "", null)} sx={{ font: "inherit" }}>
                       {bucket}
                     </Link>
-                    {crumbs.map((c) => (
-                      <Link key={c.prefix} component="button" onClick={() => load(bucket, c.prefix, null)} sx={{ fontFamily: "monospace" }}>
+                    {crumbs.map((c, i) => (
+                      <Link
+                        key={c.prefix}
+                        component="button"
+                        underline="none"
+                        color={i === crumbs.length - 1 ? "text.primary" : "text.secondary"}
+                        onClick={() => load(bucket, c.prefix, null)}
+                        sx={{ font: "inherit" }}
+                      >
                         {c.name}
                       </Link>
                     ))}
                   </Breadcrumbs>
-                  {versioning.supported && (
-                    <>
-                      <Chip
-                        size="small"
-                        variant="outlined"
-                        color={versioning.status === "Enabled" ? "success" : versioning.status === "Suspended" ? "warning" : "default"}
-                        label={`Versioning: ${VERSIONING_LABEL[versioning.status] ?? versioning.status}`}
-                      />
-                      <Button size="small" disabled={busy} onClick={() => setSwitching(versioning.status !== "Enabled")}>
-                        {versioning.status === "Enabled" ? "Tắt versioning" : "Bật versioning"}
-                      </Button>
-                    </>
-                  )}
-                  <Button size="small" onClick={() => setAclOf("")}>
-                    ACL của bucket
+                </Box>
+                <Stack direction="row" spacing={1}>
+                  <Button variant="contained" onClick={async () => upload(await invoke<string[]>("browse_pick_upload"))}>
+                    Upload
                   </Button>
-                  {prefix && (
-                    <Button size="small" onClick={() => setAclOf(prefix)} title="Đặt một ACL cho mọi object trong thư mục đang mở">
-                      ACL thư mục
-                    </Button>
-                  )}
+                  <Button variant="outlined" onClick={() => setCreating("folder")}>
+                    Tạo thư mục
+                  </Button>
                   <Button
-                    size="small"
+                    variant="outlined"
                     disabled={busy || picked.size !== 1 || pickedOf("o").length !== 1}
-                    onClick={copyUrl}
+                    onClick={() => copyUrl(pickedOf("o")[0])}
                     title="Chọn đúng một object để copy presigned URL của nó"
                   >
                     Copy URL
                   </Button>
-                  <Button size="small" color="error" disabled={busy || picked.size === 0} onClick={planDelete}>
+                  <Button variant="outlined" color="error" disabled={busy || picked.size === 0} onClick={() => planDelete(pickedOf("o"), pickedOf("f"))}>
                     Xoá ({picked.size})
                   </Button>
-                  <Button size="small" onClick={() => setCreating("folder")}>
-                    Tạo thư mục
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="contained"
-                    onClick={async () => upload(await invoke<string[]>("browse_pick_upload"))}
-                  >
-                    Upload
-                  </Button>
-                  <Button size="small" onClick={() => load(bucket, prefix, null)} disabled={busy}>
-                    Làm mới
-                  </Button>
                 </Stack>
+              </Stack>
+              <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
+                {versioning.supported && (
+                  <>
+                    <Chip
+                      variant="outlined"
+                      color={versioning.status === "Enabled" ? "success" : versioning.status === "Suspended" ? "warning" : "default"}
+                      label={`Versioning: ${VERSIONING_LABEL[versioning.status] ?? versioning.status}`}
+                    />
+                    <Button size="small" disabled={busy} onClick={() => setSwitching(versioning.status !== "Enabled")}>
+                      {versioning.status === "Enabled" ? "Tắt versioning" : "Bật versioning"}
+                    </Button>
+                  </>
+                )}
+                <Button size="small" onClick={() => setAclOf("")}>
+                  ACL của bucket
+                </Button>
+                {prefix && (
+                  <Button size="small" onClick={() => setAclOf(prefix)} title="Đặt một ACL cho mọi object trong thư mục đang mở">
+                    ACL thư mục
+                  </Button>
+                )}
+                <Button size="small" onClick={() => load(bucket, prefix, null)} disabled={busy}>
+                  Làm mới
+                </Button>
+                <Box sx={{ flexGrow: 1 }} />
                 <Stack component="form" onSubmit={search} direction="row" spacing={1} sx={{ alignItems: "center" }}>
                   <TextField
                     label="Tìm trong thư mục này và các thư mục con"
@@ -581,75 +654,108 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                     value={pattern}
                     onChange={(e) => setPattern(e.target.value)}
                     size="small"
-                    sx={{ minWidth: 340 }}
+                    sx={{ width: 340 }}
+                    title={`* = chuỗi bất kỳ, ? = một ký tự. Mẫu không có / so với tên file, có / so với đường dẫn; một từ thường thì tìm trong cả đường dẫn. Tối đa ${SEARCH_RESULTS} kết quả hoặc ${SEARCH_SECONDS} giây.`}
                     slotProps={{ inputLabel: { shrink: true } }}
                   />
-                  <Button type="submit" size="small" variant="outlined" disabled={busy || !pattern.trim()}>
+                  <Button type="submit" variant="outlined" disabled={busy || !pattern.trim()}>
                     Tìm
                   </Button>
-                  <Typography variant="body2" color="text.secondary">
-                    * = chuỗi bất kỳ, ? = một ký tự. Mẫu không có / so với tên file, có / so với đường dẫn; một từ thường thì tìm
-                    trong cả đường dẫn. Tối đa {SEARCH_RESULTS} kết quả hoặc {SEARCH_SECONDS} giây.
-                  </Typography>
                 </Stack>
-                {found && (
-                  <Alert
-                    severity={found.stopped === "done" ? "success" : "warning"}
-                    action={
-                      <Button color="inherit" size="small" onClick={() => setFound(null)}>
-                        Đóng kết quả
-                      </Button>
-                    }
-                  >
-                    {found.matches.length} object khớp · đã quét {found.scanned} key · {STOPPED[found.stopped]}
-                    {found.stopped === "done" ? "." : " — có thể còn object khớp chưa được quét tới."}
-                  </Alert>
-                )}
-                <VirtualTable
-                  columns={columns}
-                  rows={rows}
-                  height={420}
-                  label="Danh sách object"
-                  empty={<Typography color="text.secondary">{found ? "Không có object nào khớp." : listing ? "Thư mục trống." : ""}</Typography>}
-                />
-                <Typography variant="body2" color="text.secondary">
-                  Kéo thả file vào cửa sổ để upload vào thư mục đang mở. File lớn hơn 8 MiB được upload theo từng phần.
-                </Typography>
-                {listing && !found && (
-                  <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
-                    <Typography variant="body2" color="text.secondary">
-                      {listing.prefixes.length} thư mục, {objects.length} object đã tải
-                      {listing.next_token ? " — còn nữa." : "."}
-                    </Typography>
-                    {listing.next_token && (
-                      <Button size="small" variant="outlined" disabled={busy} onClick={() => load(bucket, prefix, listing.next_token)}>
-                        Tải thêm
-                      </Button>
-                    )}
-                    {versioning.supported && versioning.status !== "" && (
-                      <Button
-                        size="small"
-                        onClick={() => {
-                          setShowDeleted(!showDeleted);
-                          setGone(null);
-                          if (!showDeleted) loadGone(bucket, prefix, request.current);
-                        }}
-                      >
-                        {showDeleted ? "Ẩn object đã xoá" : "Hiện object đã xoá"}
-                      </Button>
-                    )}
-                    {gone && (
-                      <Typography variant="body2" color="text.secondary">
-                        {gone.objects.length} object đã xoá còn khôi phục được{gone.truncated ? " (thư mục có quá nhiều version, danh sách chưa đủ)" : ""}.
-                      </Typography>
-                    )}
-                  </Stack>
-                )}
               </Stack>
-            )}
-          </Box>
+              {found && (
+                <Alert
+                  severity={found.stopped === "done" ? "success" : "warning"}
+                  action={
+                    <Button color="inherit" size="small" onClick={() => setFound(null)}>
+                      Đóng kết quả
+                    </Button>
+                  }
+                >
+                  {found.matches.length} object khớp · đã quét {found.scanned} key · {STOPPED[found.stopped]}
+                  {found.stopped === "done" ? "." : " — có thể còn object khớp chưa được quét tới."}
+                </Alert>
+              )}
+              <VirtualTable
+                columns={columns}
+                rows={rows}
+                height={tableHeight}
+                rowHeight={44}
+                label="Danh sách object"
+                onRowMenu={(row, e) => {
+                  e.preventDefault();
+                  setMenu({ row, x: e.clientX, y: e.clientY });
+                }}
+                empty={<Typography color="text.secondary">{found ? "Không có object nào khớp." : listing ? "Thư mục trống." : ""}</Typography>}
+              />
+              {listing && !found && (
+                <Stack direction="row" spacing={2} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
+                  <Typography variant="body2" color="text.secondary">
+                    {listing.prefixes.length} thư mục, {objects.length} object đã tải
+                    {listing.next_token ? " — còn nữa." : "."} Kéo thả file vào cửa sổ để upload vào thư mục đang mở; chuột phải vào một dòng để mở menu.
+                  </Typography>
+                  {listing.next_token && (
+                    <Button size="small" variant="outlined" disabled={busy} onClick={() => load(bucket, prefix, listing.next_token)}>
+                      Tải thêm
+                    </Button>
+                  )}
+                  {versioning.supported && versioning.status !== "" && (
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        setShowDeleted(!showDeleted);
+                        setGone(null);
+                        if (!showDeleted) loadGone(bucket, prefix, request.current);
+                      }}
+                    >
+                      {showDeleted ? "Ẩn object đã xoá" : "Hiện object đã xoá"}
+                    </Button>
+                  )}
+                  {gone && (
+                    <Typography variant="body2" color="text.secondary">
+                      {gone.objects.length} object đã xoá còn khôi phục được{gone.truncated ? " (thư mục có quá nhiều version, danh sách chưa đủ)" : ""}.
+                    </Typography>
+                  )}
+                </Stack>
+              )}
+            </>
+          )}
+          {access && (access.users || access.usage) && (
+            // Keyed by connection: another connection's answer never shows under this one's name.
+            <MyInfo key={clusterId} clusterId={clusterId} access={access} defaultOpen={false} />
+          )}
         </Stack>
-      )}
+      </Box>
+      <Menu
+        open={menu !== null}
+        onClose={() => setMenu(null)}
+        anchorReference="anchorPosition"
+        anchorPosition={menu ? { top: menu.y, left: menu.x } : undefined}
+        slotProps={{ list: { "aria-label": "Thao tác với dòng đã chọn" } }}
+      >
+        {menuObject && !menuObject.deleted && session && (
+          <MenuItem onClick={pick(() => download({ clusterId, uid: session.uid, bucket, key: menuObject.key }, startTransfer))}>Tải xuống</MenuItem>
+        )}
+        {menuObject && !menuObject.deleted && <MenuItem onClick={pick(() => copyUrl(menuObject.key))}>Copy URL</MenuItem>}
+        {menuObject && !menuObject.deleted && <MenuItem onClick={pick(() => openObject(menuObject, "ACL"))}>ACL</MenuItem>}
+        {menuObject && (
+          <MenuItem disabled={!versioning.supported} onClick={pick(() => openObject(menuObject, "Phiên bản"))}>
+            Phiên bản
+          </MenuItem>
+        )}
+        {menuObject && !menuObject.deleted && (
+          <MenuItem onClick={pick(() => planDelete([menuObject.key], []))} sx={{ color: "error.main" }}>
+            Xoá
+          </MenuItem>
+        )}
+        {menuFolder && <MenuItem onClick={pick(() => load(bucket, menuFolder, null))}>Mở</MenuItem>}
+        {menuFolder && <MenuItem onClick={pick(() => setAclOf(menuFolder))}>ACL</MenuItem>}
+        {menuFolder && (
+          <MenuItem onClick={pick(() => planDelete([], [menuFolder]))} sx={{ color: "error.main" }}>
+            Xoá
+          </MenuItem>
+        )}
+      </Menu>
       <ConfirmDialog
         open={plan !== null}
         title="Xoá các mục đã chọn?"
@@ -736,6 +842,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
         bucket={bucket}
         object={selected}
         versioning={versioning}
+        startTab={startTab}
         startTransfer={startTransfer}
         onChanged={() => load(bucket, prefix, null)}
         onDeleted={(key, marker) => {
