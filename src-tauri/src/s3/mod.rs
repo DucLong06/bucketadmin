@@ -4,6 +4,7 @@
 
 pub mod acl;
 pub mod parquet;
+pub mod search;
 pub mod transfer;
 
 use aws_sdk_s3::config::{

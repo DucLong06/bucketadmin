@@ -38,6 +38,15 @@ type Props = {
 };
 type Session = { uid: string; access_key: string; buckets: BrowseBucket[] };
 type Row = { folder: string } | { object: ObjectEntry };
+type Found = { matches: ObjectEntry[]; scanned: number; stopped: "done" | "results" | "time" };
+// Limits of one search; the backend enforces its own caps on top.
+const SEARCH_RESULTS = 500;
+const SEARCH_SECONDS = 20;
+const STOPPED: Record<Found["stopped"], string> = {
+  done: "đã quét hết",
+  results: `dừng vì đủ ${SEARCH_RESULTS} kết quả`,
+  time: `dừng vì hết ${SEARCH_SECONDS} giây`,
+};
 const NO_VERSIONING: Versioning = { supported: false, status: "", reason: null };
 
 /** "a/b/c.txt" under prefix "a/b/" is shown as "c.txt". */
@@ -55,6 +64,18 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   const [selected, setSelected] = useState<ObjectEntry | null>(null);
   const [versioning, setVersioning] = useState<Versioning>(NO_VERSIONING);
   const [bucketAcl, setBucketAcl] = useState(false);
+  const [pattern, setPattern] = useState("");
+  const [found, setFound] = useState<Found | null>(null);
+
+  async function search(e: FormEvent) {
+    e.preventDefault();
+    if (!session || !pattern.trim()) return;
+    const at = { clusterId, uid: session.uid, bucket };
+    const result = await run(() =>
+      invoke<Found>("browse_search", { at, prefix, pattern, maxResults: SEARCH_RESULTS, maxSecs: SEARCH_SECONDS }),
+    );
+    setFound(result ?? null);
+  }
   const transfers = useTransfers();
   // Where a dropped file goes: read by the drop listener, which outlives renders.
   const here = useRef({ uid: "", bucket: "", prefix: "" });
@@ -111,6 +132,7 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
       setBucket(toBucket);
       setPrefix(toPrefix);
       setListing(null);
+      setFound(null);
     }
     const page = await run(() =>
       invoke<Listing>("browse_list", { clusterId, uid: session.uid, bucket: toBucket, prefix: toPrefix, token }),
@@ -124,9 +146,12 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
     );
   }
 
-  const rows: Row[] = listing
-    ? [...listing.prefixes.map((folder) => ({ folder })), ...listing.objects.map((object) => ({ object }))]
-    : [];
+  // Search results replace the folder view until they are closed; keys stay relative to the open folder.
+  const rows: Row[] = found
+    ? found.matches.map((object) => ({ object }))
+    : listing
+      ? [...listing.prefixes.map((folder) => ({ folder })), ...listing.objects.map((object) => ({ object }))]
+      : [];
   const columns: Column<Row>[] = [
     {
       header: "Tên",
@@ -268,17 +293,48 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                     Làm mới
                   </Button>
                 </Stack>
+                <Stack component="form" onSubmit={search} direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                  <TextField
+                    label="Tìm trong thư mục này và các thư mục con"
+                    placeholder="*.parquet"
+                    value={pattern}
+                    onChange={(e) => setPattern(e.target.value)}
+                    size="small"
+                    sx={{ minWidth: 340 }}
+                    slotProps={{ inputLabel: { shrink: true } }}
+                  />
+                  <Button type="submit" size="small" variant="outlined" disabled={busy || !pattern.trim()}>
+                    Tìm
+                  </Button>
+                  <Typography variant="body2" color="text.secondary">
+                    * = chuỗi bất kỳ, ? = một ký tự. Mẫu không có / so với tên file, có / so với đường dẫn; một từ thường thì tìm
+                    trong cả đường dẫn. Tối đa {SEARCH_RESULTS} kết quả hoặc {SEARCH_SECONDS} giây.
+                  </Typography>
+                </Stack>
+                {found && (
+                  <Alert
+                    severity={found.stopped === "done" ? "success" : "warning"}
+                    action={
+                      <Button color="inherit" size="small" onClick={() => setFound(null)}>
+                        Đóng kết quả
+                      </Button>
+                    }
+                  >
+                    {found.matches.length} object khớp · đã quét {found.scanned} key · {STOPPED[found.stopped]}
+                    {found.stopped === "done" ? "." : " — có thể còn object khớp chưa được quét tới."}
+                  </Alert>
+                )}
                 <VirtualTable
                   columns={columns}
                   rows={rows}
                   height={420}
                   label="Danh sách object"
-                  empty={<Typography color="text.secondary">{listing ? "Thư mục trống." : ""}</Typography>}
+                  empty={<Typography color="text.secondary">{found ? "Không có object nào khớp." : listing ? "Thư mục trống." : ""}</Typography>}
                 />
                 <Typography variant="body2" color="text.secondary">
                   Kéo thả file vào cửa sổ để upload vào thư mục đang mở. File lớn hơn 8 MiB được upload theo từng phần.
                 </Typography>
-                {listing && (
+                {listing && !found && (
                   <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
                     <Typography variant="body2" color="text.secondary">
                       {listing.prefixes.length} thư mục, {listing.objects.length} object đã tải

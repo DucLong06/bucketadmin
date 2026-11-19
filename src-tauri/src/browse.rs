@@ -4,6 +4,7 @@
 use crate::rgw_admin::RgwAdmin;
 use crate::s3::acl::{Acl, AppliedAcl, Grant, VersionEntry, Versioning};
 use crate::s3::parquet::ParquetPage;
+use crate::s3::search::SearchResult;
 use crate::s3::transfer::{content_type_for, Downloaded};
 use crate::s3::{BucketEntry, Listing, LIST_PAGE, S3};
 use crate::AppState;
@@ -365,4 +366,21 @@ pub async fn browse_acl_put(state: St<'_>, at: ObjectRef, grants: Vec<Grant>) ->
     let detail = format!("grants={} verified={verified}", listed.join(","));
     state.audit_s3(&at, "acl.set", &detail, &result);
     result
+}
+
+// ---- search -------------------------------------------------------------------
+
+/// Keys under `prefix` (all levels) matching `pattern`, bounded by result count and time.
+#[tauri::command]
+pub async fn browse_search(
+    state: St<'_>,
+    at: ObjectRef,
+    prefix: String,
+    pattern: String,
+    max_results: usize,
+    max_secs: u64,
+) -> Cmd<SearchResult> {
+    let s3 = state.session(&at).await?;
+    s3.search(&at.bucket, &prefix, &pattern, max_results, max_secs)
+        .await
 }

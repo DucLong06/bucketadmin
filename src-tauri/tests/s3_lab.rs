@@ -27,9 +27,46 @@ fn lab() -> Option<RgwAdmin> {
     Some(RgwAdmin::new(&endpoint(), creds, ReqwestClient::new().unwrap()).unwrap())
 }
 
+/// Deletes a user with its data. The buckets are emptied first, many deletes at a time: one
+/// delete takes about a second on the lab, so RGW's own purge (one object after another)
+/// would outlast any HTTP timeout for a bucket of a thousand keys.
+async fn remove_user(admin: &RgwAdmin, uid: &str) {
+    use futures_util::StreamExt;
+    let found = admin.get_user(uid).await.ok();
+    if let Some(key) = found.and_then(|u| u.keys.into_iter().next()) {
+        let s3 = S3::new(&endpoint(), &key.access_key, &key.secret_key);
+        for bucket in s3.list_buckets().await.unwrap_or_default() {
+            while let Ok(page) = s3.search(&bucket.name, "", "*", 1000, 60).await {
+                if page.matches.is_empty() {
+                    break;
+                }
+                let deletes = page
+                    .matches
+                    .iter()
+                    .map(|o| s3.delete(&bucket.name, &o.key, None));
+                let done: Vec<_> = futures_util::stream::iter(deletes)
+                    .buffer_unordered(48)
+                    .collect()
+                    .await;
+                if done.iter().any(Result::is_err) {
+                    break; // e.g. the user was made read-only: leave the rest to the purge below
+                }
+            }
+        }
+    }
+    for _ in 0..30 {
+        let _ = admin.delete_user(uid, true).await;
+        if admin.get_user(uid).await.is_err() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    panic!("user {uid} could not be removed");
+}
+
 /// A fresh normal user (no admin caps) and an S3 session signed with that user's key.
 async fn user(admin: &RgwAdmin, uid: &str) -> (KeyPair, S3) {
-    let _ = admin.delete_user(uid, true).await; // leftover from an aborted run
+    remove_user(admin, uid).await; // leftover from an aborted run
     let created = admin
         .create_user(uid, "M4 browse test", None, None, None)
         .await
@@ -1103,4 +1140,131 @@ async fn m4_versions_and_acl() {
         .await
         .expect("cleanup");
     admin.delete_user("ba-m4-ver", true).await.expect("cleanup");
+}
+
+/// M4.5: recursive search with result and time limits.
+#[tokio::test]
+async fn m4_search_bounded() {
+    use futures_util::StreamExt;
+    let Some(admin) = lab() else { return };
+    let bucket = "ba-m4-search";
+    let (_, owner) = user(&admin, "ba-m4-search").await;
+    let (_, stranger) = user(&admin, "ba-m4-search-x").await;
+    owner
+        .client()
+        .create_bucket()
+        .bucket(bucket)
+        .send()
+        .await
+        .expect("create bucket");
+
+    // More than one listing page (1000 keys), so paging and the limits are really exercised.
+    let mut keys: Vec<String> = (0..1100).map(|i| format!("logs/2026/{i:04}.log")).collect();
+    keys.extend((0..30).map(|i| format!("data/year=2026/part-{i:03}.parquet")));
+    keys.push("Reports/Annual/Q1.PDF".into());
+    let total = keys.len() as u64;
+    let uploads = keys.iter().map(|key| put(&owner, bucket, key, b"x"));
+    let results: Vec<_> = futures_util::stream::iter(uploads)
+        .buffer_unordered(24)
+        .collect()
+        .await;
+    assert!(results.iter().all(Result::is_ok), "fixture upload");
+
+    let all = owner
+        .search(bucket, "", "*.parquet", 500, 20)
+        .await
+        .expect("search");
+    println!(
+        "*.parquet -> {} matches, scanned {} keys, stopped: {}",
+        all.matches.len(),
+        all.scanned,
+        all.stopped
+    );
+    assert_eq!(
+        (all.matches.len(), all.scanned, all.stopped),
+        (30, total, "done")
+    );
+    assert!(all
+        .matches
+        .iter()
+        .all(|m| m.key.ends_with(".parquet") && m.size == 1));
+
+    let word = owner.search(bucket, "", "q1.pdf", 500, 20).await.unwrap();
+    assert_eq!(
+        word.matches
+            .iter()
+            .map(|m| m.key.as_str())
+            .collect::<Vec<_>>(),
+        ["Reports/Annual/Q1.PDF"],
+        "plain words match anywhere in the path, ignoring case"
+    );
+    let by_path = owner
+        .search(bucket, "", "logs/2026/00?0.log", 500, 20)
+        .await
+        .unwrap();
+    let by_name = owner.search(bucket, "", "00?0.log", 500, 20).await.unwrap();
+    assert_eq!(
+        (by_path.matches.len(), by_name.matches.len()),
+        (10, 10),
+        "a pattern with / is a path, one without is a file name"
+    );
+    let folder = owner.search(bucket, "", "annual", 500, 20).await.unwrap();
+    assert_eq!(
+        folder.matches.len(),
+        1,
+        "a plain word also finds folder names"
+    );
+
+    // Scoped to a prefix: only that subtree is scanned.
+    let scoped = owner
+        .search(bucket, "data/", "part-01*", 500, 20)
+        .await
+        .unwrap();
+    println!(
+        "prefix data/ + part-01* -> {} matches, scanned {}",
+        scoped.matches.len(),
+        scoped.scanned
+    );
+    assert_eq!(
+        (scoped.matches.len(), scoped.scanned, scoped.stopped),
+        (10, 30, "done")
+    );
+
+    // Result limit: stops early and says so.
+    let capped = owner.search(bucket, "", "*.log", 25, 20).await.unwrap();
+    println!(
+        "*.log limit 25 -> {} matches, scanned {} of {total}, stopped: {}",
+        capped.matches.len(),
+        capped.scanned,
+        capped.stopped
+    );
+    assert_eq!((capped.matches.len(), capped.stopped), (25, "results"));
+    assert!(capped.scanned < total);
+
+    // Time limit (0 s here: one page of 1000 keys, then stop).
+    let timed = owner
+        .search(bucket, "", "no-such-name", 500, 0)
+        .await
+        .unwrap();
+    println!(
+        "time limit 0 s -> scanned {} of {total}, stopped: {}",
+        timed.scanned, timed.stopped
+    );
+    assert_eq!(
+        (timed.matches.len(), timed.scanned, timed.stopped),
+        (0, 1000, "time")
+    );
+
+    assert!(
+        owner.search(bucket, "", "  ", 500, 20).await.is_err(),
+        "an empty pattern is refused"
+    );
+    let denied = stranger
+        .search(bucket, "", "*.log", 500, 20)
+        .await
+        .unwrap_err();
+    assert!(denied.starts_with("S3 AccessDenied (403)"), "{denied}");
+
+    remove_user(&admin, "ba-m4-search-x").await;
+    remove_user(&admin, "ba-m4-search").await;
 }
