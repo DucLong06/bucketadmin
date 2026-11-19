@@ -88,12 +88,40 @@ pub struct UpdateSeen {
     pub url: String,
 }
 
+/// A place that was browsed: a prefix of a bucket, on a connection, with whose key.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Place {
+    pub cluster_id: String,
+    /// Empty: the connection's own key.
+    #[serde(default)]
+    pub uid: String,
+    pub bucket: String,
+    #[serde(default)]
+    pub prefix: String,
+}
+
+/// Recent places kept.
+pub const MAX_RECENT: usize = 20;
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
     pub proxy: Proxy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update: Option<UpdateSeen>,
+    /// Places opened last, newest first, at most [`MAX_RECENT`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent: Vec<Place>,
+}
+
+impl Settings {
+    /// Puts `place` at the front of the recent places; a place already listed moves up.
+    pub fn remember(&mut self, place: Place) {
+        self.recent.retain(|known| *known != place);
+        self.recent.insert(0, place);
+        self.recent.truncate(MAX_RECENT);
+    }
 }
 
 pub struct SettingsStore {
@@ -261,6 +289,25 @@ mod tests {
         store.change(|s| s.update = Some(seen.clone())).unwrap();
         let reloaded = SettingsStore::new(&dir).get().unwrap();
         assert_eq!((reloaded.proxy, reloaded.update), (Proxy::None, Some(seen)));
+        // ---- recent places: newest first, no duplicates, at most MAX_RECENT
+        let place = |n: usize| Place {
+            cluster_id: "c1".into(),
+            uid: String::new(),
+            bucket: "logs".into(),
+            prefix: format!("day-{n}/"),
+        };
+        for n in 0..MAX_RECENT + 5 {
+            store.change(|s| s.remember(place(n))).unwrap();
+        }
+        store.change(|s| s.remember(place(10))).unwrap();
+        let recent = SettingsStore::new(&dir).get().unwrap().recent;
+        assert_eq!(recent.len(), MAX_RECENT);
+        assert_eq!(recent[0], place(10), "opened again: moved to the front");
+        assert_eq!(recent[1], place(MAX_RECENT + 4));
+        assert_eq!(recent.iter().filter(|p| **p == place(10)).count(), 1);
+        assert!(!recent.contains(&place(0)), "the oldest fell off");
+        let json = std::fs::read_to_string(dir.join("settings.json")).unwrap();
+        assert!(json.contains(r#""clusterId": "c1""#), "{json}");
         // A file from before a field existed still loads.
         std::fs::write(dir.join("settings.json"), "{}").unwrap();
         assert_eq!(store.get().unwrap(), Settings::default());

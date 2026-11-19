@@ -21,7 +21,7 @@ use rgw_admin::{
     BucketInfo, Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin,
     Usage, UserInfo,
 };
-use settings::{EndpointKind, Proxy, SettingsStore};
+use settings::{EndpointKind, Place, Proxy, SettingsStore};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -111,7 +111,27 @@ fn add_profile(
 
 #[tauri::command(async)]
 fn remove_profile(state: St<'_>, id: String) -> Cmd<'_, ()> {
-    state.profiles.remove(&id)
+    state.profiles.remove(&id)?;
+    // Its recent places lead nowhere now.
+    let forgotten = state
+        .settings
+        .change(|s| s.recent.retain(|place| place.cluster_id != id));
+    forgotten.map(|_| ())
+}
+
+/// The places browsed last, newest first.
+#[tauri::command(async)]
+fn recent_list(state: St<'_>) -> Cmd<'_, Vec<Place>> {
+    Ok(state.settings.get()?.recent)
+}
+
+/// Remembers a place that was just opened and returns the updated list.
+#[tauri::command(async)]
+fn recent_add(state: St<'_>, place: Place) -> Cmd<'_, Vec<Place>> {
+    if place.cluster_id.is_empty() || place.bucket.is_empty() {
+        return Err("a recent place needs a connection and a bucket".into());
+    }
+    Ok(state.settings.change(|s| s.remember(place))?.recent)
 }
 
 /// Ticks or clears "I am a normal user" on a saved profile.
@@ -553,6 +573,8 @@ pub fn run() {
             list_profiles,
             add_profile,
             remove_profile,
+            recent_list,
+            recent_add,
             profile_set_proxy,
             network_get,
             network_set,

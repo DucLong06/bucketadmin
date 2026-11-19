@@ -29,16 +29,28 @@ import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import { accessLevel, type Access } from "./caps";
 import MyInfo from "./MyInfo";
 import ObjectDrawer, { canUndelete, finalDeleteWarning, UNDELETE_HINT, type Versioning } from "./ObjectDrawer";
-import { TaskPanel, useTransfers } from "./transfers";
+import { placeLabel, type Place } from "./tabs";
+import type { StartTransfer } from "./transfers";
 import { explain } from "./errors";
 import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
 
 type Props = {
   profiles: Profile[];
-  clusterId: string;
-  onClusterChange: (id: string) => void;
+  /** Where the tab starts; read once, when the tab is created. */
+  start: Place;
+  /** Whether this tab is the one on screen: only that one takes dropped files and shows toasts. */
+  active: boolean;
+  startTransfer: StartTransfer;
+  /** The tab is somewhere else now (also "no bucket open"): its title follows. */
+  onPlace: (at: Place) => void;
+  /** A place worth finding again was opened. */
+  remember: (at: Place) => void;
+  recents: Place[];
+  /** Go to a recent place (the app picks the tab). */
+  onRecent: (at: Place) => void;
 };
+const RECENT_IN_SIDEBAR = 6;
 /** `uid` is empty while browsing with the caller's own saved key. */
 type Session = { uid: string; access_key: string; buckets: BrowseBucket[] };
 type Row = { folder: string } | { object: ObjectEntry };
@@ -63,7 +75,14 @@ const NO_VERSIONING: Versioning = { supported: false, status: "", reason: null }
 /** "a/b/c.txt" under prefix "a/b/" is shown as "c.txt". */
 const baseName = (key: string, prefix: string) => key.slice(prefix.length);
 
-export default function Browse({ profiles, clusterId, onClusterChange }: Props) {
+export default function Browse({ profiles, start, active, startTransfer, onPlace, remember, recents, onRecent }: Props) {
+  const [clusterId, setClusterId] = useState(start.clusterId);
+  useEffect(() => {
+    // The tab's connection was removed (or there was none yet): fall back to the first one.
+    if (!profiles.some((p) => p.id === clusterId)) setClusterId(profiles[0]?.id ?? "");
+  }, [profiles]);
+  // Where to go once the first session is open; used up by that.
+  const first = useRef<Place | null>(start);
   // What this connection's key may read on the Admin API, asked once per connection. It only
   // decides two extras: the "Thông tin của tôi" box, and browsing with another user's key.
   const [access, setAccess] = useState<Access | null>(null);
@@ -200,7 +219,8 @@ export default function Browse({ profiles, clusterId, onClusterChange }: Props) 
     );
     setFound(result ?? null);
   }
-  const transfers = useTransfers();
+  const activeNow = useRef(active);
+  activeNow.current = active;
   // Where a dropped file goes: read by the drop listener, which outlives renders.
   const here = useRef({ open: false, uid: "", bucket: "", prefix: "" });
   here.current = { open: session !== null, uid: session?.uid ?? "", bucket, prefix };
@@ -213,7 +233,7 @@ export default function Browse({ profiles, clusterId, onClusterChange }: Props) 
       paths.map((path) => {
         const key = toPrefix + path.slice(path.lastIndexOf("/") + 1);
         const at = { clusterId, uid: asUid, bucket: toBucket, key };
-        return transfers.start(`↑ ${toBucket}/${key}`, (transferId) => invoke<number>("browse_upload", { at, path, transferId }));
+        return startTransfer(`↑ ${toBucket}/${key}`, (transferId) => invoke<number>("browse_upload", { at, path, transferId }));
       }),
     );
     const now = here.current;
@@ -226,7 +246,8 @@ export default function Browse({ profiles, clusterId, onClusterChange }: Props) 
   useEffect(() => {
     // The webview reports dropped files with their paths (not their content).
     const unlisten = getCurrentWebview().onDragDropEvent((e) => {
-      if (e.payload.type === "drop") uploadNow.current(e.payload.paths);
+      // Every tab listens; the drop belongs to the one on screen.
+      if (e.payload.type === "drop" && activeNow.current) uploadNow.current(e.payload.paths);
     });
     return () => {
       unlisten.then((stop) => stop());
@@ -245,22 +266,31 @@ export default function Browse({ profiles, clusterId, onClusterChange }: Props) 
     const opened = await run(() => invoke<Omit<Session, "uid">>("browse_open", { clusterId, uid: target }));
     // An answer for a connection or user that was left meanwhile must not become the session.
     if (mine !== opening.current) return;
-    if (opened) setSession({ uid: target, ...opened });
+    if (!opened) return;
+    setSession({ uid: target, ...opened });
+    const goTo = first.current;
+    first.current = null;
+    if (goTo?.bucket && goTo.clusterId === clusterId) load(goTo.bucket, goTo.prefix, null, target);
+    else onPlace({ clusterId, uid: target, bucket: "", prefix: "" });
   }
   useEffect(() => {
-    setUidInput("");
-    open("");
+    // The first session of a tab is the one its starting place names.
+    const as = first.current?.clusterId === clusterId ? first.current.uid : "";
+    setUidInput(as);
+    open(as);
   }, [clusterId]);
 
-  async function load(toBucket: string, toPrefix: string, token: string | null) {
-    if (!session) return;
+  // `as`: the session's uid when the session was opened in this very call (state not updated yet).
+  async function load(toBucket: string, toPrefix: string, token: string | null, as?: string) {
+    const uid = as ?? session?.uid;
+    if (uid === undefined) return;
     const mine = ++request.current;
     if (token === null) {
       if (toBucket !== bucket) {
         // Asked once per bucket; a key that may not ask simply gets no Versions tab.
         setVersioning(NO_VERSIONING);
         setShowDeleted(false);
-        const at = { clusterId, uid: session.uid, bucket: toBucket };
+        const at = { clusterId, uid, bucket: toBucket };
         invoke<Versioning>("browse_versioning", { at }).then(setVersioning, () => {});
       }
       setBucket(toBucket);
@@ -272,10 +302,15 @@ export default function Browse({ profiles, clusterId, onClusterChange }: Props) 
       if (showDeleted && toBucket === bucket) loadGone(toBucket, toPrefix, mine);
     }
     const page = await run(() =>
-      invoke<Listing>("browse_list", { clusterId, uid: session.uid, bucket: toBucket, prefix: toPrefix, token }),
+      invoke<Listing>("browse_list", { clusterId, uid, bucket: toBucket, prefix: toPrefix, token }),
     );
     // A slower answer for a folder the user already left must not overwrite the table.
     if (!page || mine !== request.current) return;
+    if (token === null) {
+      const at = { clusterId, uid, bucket: toBucket, prefix: toPrefix };
+      onPlace(at);
+      remember(at);
+    }
     setListing((old) =>
       token === null || !old
         ? page
@@ -343,7 +378,11 @@ export default function Browse({ profiles, clusterId, onClusterChange }: Props) 
             color="inherit"
             underline="hover"
             sx={{ fontFamily: "monospace" }}
-            onClick={() => setSelected(r.object)}
+            onClick={() => {
+              setSelected(r.object);
+              // Reached through a search: the folder it lies in is worth finding again.
+              if (found && session) remember({ clusterId, uid: session.uid, bucket, prefix: r.object.key.slice(0, r.object.key.lastIndexOf("/") + 1) });
+            }}
             aria-label={`Mở object ${r.object.key}`}
           >
             {baseName(r.object.key, prefix)}
@@ -385,7 +424,7 @@ export default function Browse({ profiles, clusterId, onClusterChange }: Props) 
           open(uidInput.trim());
         }}
       >
-        <ClusterSelect profiles={profiles} value={clusterId} onChange={onClusterChange} />
+        <ClusterSelect profiles={profiles} value={clusterId} onChange={setClusterId} />
         {canBrowseAs && (
           <>
             <TextField label="Duyệt thay user (uid)" value={uidInput} onChange={(e) => setUidInput(e.target.value)} size="small" />
@@ -419,7 +458,6 @@ export default function Browse({ profiles, clusterId, onClusterChange }: Props) 
       )}
       {busy && <LinearProgress aria-label="Đang tải" />}
       {plan === null && switching === null && <ErrorAlert error={error} sx={{ mb: 2 }} />}
-      <TaskPanel tasks={transfers} />
 
       {session && (
         <Stack direction="row" spacing={2} sx={{ alignItems: "flex-start" }}>
@@ -456,6 +494,23 @@ export default function Browse({ profiles, clusterId, onClusterChange }: Props) 
                 Mở bucket
               </Button>
             </Stack>
+            {recents.length > 0 && (
+              <Box sx={{ borderTop: 1, borderColor: "divider" }}>
+                <Typography variant="subtitle2" component="h2" sx={{ px: 2, pt: 1.5 }}>
+                  Gần đây
+                </Typography>
+                <List dense aria-label="Vị trí mở gần đây">
+                  {recents.slice(0, RECENT_IN_SIDEBAR).map((place) => (
+                    <ListItemButton key={JSON.stringify(place)} onClick={() => onRecent(place)}>
+                      <ListItemText
+                        primary={placeLabel(place, profiles)}
+                        slotProps={{ primary: { sx: { fontSize: 13, wordBreak: "break-all" } } }}
+                      />
+                    </ListItemButton>
+                  ))}
+                </List>
+              </Box>
+            )}
           </Paper>
 
           <Box sx={{ flexGrow: 1, minWidth: 0 }}>
@@ -634,7 +689,7 @@ export default function Browse({ profiles, clusterId, onClusterChange }: Props) 
         }}
       />
       {/* An undo stays on screen longer: it is the quick way back. */}
-      <Snackbar open={notice !== null} autoHideDuration={notice?.undo ? 20000 : 8000} onClose={() => setNotice(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
+      <Snackbar open={notice !== null && active} autoHideDuration={notice?.undo ? 20000 : 8000} onClose={() => setNotice(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
         <Alert
           severity={notice?.severity ?? "info"}
           variant="filled"
@@ -681,7 +736,7 @@ export default function Browse({ profiles, clusterId, onClusterChange }: Props) 
         bucket={bucket}
         object={selected}
         versioning={versioning}
-        startTransfer={transfers.start}
+        startTransfer={startTransfer}
         onChanged={() => load(bucket, prefix, null)}
         onDeleted={(key, marker) => {
           setNotice(deletedNotice(1, marker ? [{ key, version: marker }] : undefined));

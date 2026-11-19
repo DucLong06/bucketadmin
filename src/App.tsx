@@ -1,19 +1,50 @@
-import { useEffect, useState } from "react";
-import { Alert, AppBar, Button, Chip, Container, CssBaseline, Snackbar, Tab, Tabs, ThemeProvider, Toolbar, Typography, createTheme } from "@mui/material";
+import { useEffect, useRef, useState } from "react";
+import {
+  Alert,
+  AppBar,
+  Box,
+  Button,
+  Chip,
+  Container,
+  CssBaseline,
+  IconButton,
+  Menu,
+  MenuItem,
+  Snackbar,
+  Stack,
+  Tab,
+  Tabs,
+  ThemeProvider,
+  Toolbar,
+  Typography,
+  createTheme,
+} from "@mui/material";
 import { invoke, type Profile } from "./api";
 import Browse from "./Browse";
 import Connections from "./Connections";
+import { closeTab, cycleTab, placeLabel, samePlace, tabTitle, type BrowseTab, type Place } from "./tabs";
+import { TaskPanel, useTransfers } from "./transfers";
 import { ErrorAlert } from "./ui";
 
 const theme = createTheme({ palette: { mode: "dark" } });
 /** A release whose tag is not this build's version (backend `update_check`). */
 type Update = { tag: string; url: string; current: string };
 
+const newTab = (start: Place): BrowseTab => ({ id: crypto.randomUUID(), start, at: start });
+const nowhere = (clusterId: string): Place => ({ clusterId, uid: "", bucket: "", prefix: "" });
+
 export default function App() {
   const [page, setPage] = useState("browse");
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
-  const [clusterId, setClusterId] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Browser-like tabs, each at its own place. All stay mounted, so a tab keeps its listing,
+  // scroll position and selection while another one is on screen.
+  const [tabs, setTabs] = useState<BrowseTab[]>([]);
+  const [active, setActive] = useState("");
+  const [recents, setRecents] = useState<Place[]>([]);
+  const [recentMenu, setRecentMenu] = useState<HTMLElement | null>(null);
+  // One task queue for every tab: a transfer keeps running when its tab is left or closed.
+  const transfers = useTransfers();
   // A release newer than this build, found by the daily check; trouble checking is silent.
   const [update, setUpdate] = useState<Update | null>(null);
   const [updateToast, setUpdateToast] = useState<"new" | "no-browser" | null>(null);
@@ -29,47 +60,199 @@ export default function App() {
   const openRelease = () => invoke("update_open").then(() => setUpdateToast(null), () => setUpdateToast("no-browser"));
 
   const reload = () =>
-    invoke<Profile[]>("list_profiles")
-      .then((list) => {
+    Promise.all([invoke<Profile[]>("list_profiles"), invoke<Place[]>("recent_list")])
+      .then(([list, recent]) => {
         // Nothing to browse yet: start where a connection can be added.
         if (profiles === null && list.length === 0) setPage("connections");
         setProfiles(list);
-        // Keep the current connection while it still exists, otherwise fall back to the first one.
-        setClusterId((id) => (list.some((p) => p.id === id) ? id : (list[0]?.id ?? "")));
+        setRecents(recent);
+        setTabs((old) => {
+          if (old.length > 0) return old;
+          const tab = newTab(nowhere(list[0]?.id ?? ""));
+          setActive(tab.id);
+          return [tab];
+        });
       })
       .catch((e) => setError(String(e)));
   useEffect(() => {
     reload();
   }, []);
 
+  function openTab(start: Place) {
+    const tab = newTab(start);
+    setTabs((old) => [...old, tab]);
+    setActive(tab.id);
+    setPage("browse");
+  }
+  const activeCluster = () => tabs.find((t) => t.id === active)?.at.clusterId ?? profiles?.[0]?.id ?? "";
+  const openEmptyTab = () => openTab(nowhere(activeCluster()));
+  function close(id: string) {
+    const next = closeTab(tabs, active, id, newTab(nowhere(activeCluster())));
+    setTabs(next.tabs);
+    setActive(next.active);
+  }
+  // A place already open in a tab is shown there instead of being opened twice.
+  function goTo(place: Place) {
+    setRecentMenu(null);
+    const open = tabs.find((t) => samePlace(t.at, place));
+    if (!open) return openTab(place);
+    setActive(open.id);
+    setPage("browse");
+  }
+  const remember = (place: Place) => invoke<Place[]>("recent_add", { place }).then(setRecents, () => {});
+
+  // Ctrl+T new tab, Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab next / previous. The handler is
+  // registered once and reads the current state through this ref.
+  const keys = useRef({ openEmptyTab, close, tabs, active });
+  keys.current = { openEmptyTab, close, tabs, active };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.altKey || e.metaKey) return;
+      // A dialog, drawer or menu belongs to the tab on screen: no switching underneath it.
+      if (document.querySelector(".MuiDialog-root, .MuiDrawer-root, .MuiPopover-root")) return;
+      const now = keys.current;
+      const key = e.key.toLowerCase();
+      if (key === "t") now.openEmptyTab();
+      else if (key === "w") now.close(now.active);
+      else if (key === "tab") {
+        setActive(cycleTab(now.tabs, now.active, e.shiftKey ? -1 : 1));
+        setPage("browse");
+      } else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const browsing = page === "browse";
+  const known = recents.filter((r) => profiles?.some((p) => p.id === r.clusterId));
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <AppBar position="static" color="default">
-        <Toolbar variant="dense">
-          <Typography variant="h6" component="div" sx={{ mr: 4 }}>
-            BucketAdmin
-          </Typography>
-          <Tabs value={page} onChange={(_, value) => setPage(value)} aria-label="Điều hướng chính" sx={{ flexGrow: 1 }}>
-            <Tab value="browse" label="Browse" />
-            <Tab value="connections" label="Kết nối" />
-          </Tabs>
-          {update && (
-            <Chip
-              size="small"
-              color="info"
-              label={`Có bản mới ${update.tag}`}
-              onClick={openRelease}
-              title={`Đang dùng ${update.current}. Bấm để mở trang tải về: ${update.url}`}
-            />
+      <Box sx={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+        <AppBar position="static" color="default">
+          <Toolbar variant="dense">
+            <Typography variant="h6" component="div" sx={{ mr: 4 }}>
+              BucketAdmin
+            </Typography>
+            <Tabs value={page} onChange={(_, value) => setPage(value)} aria-label="Điều hướng chính" sx={{ flexGrow: 1 }}>
+              <Tab value="browse" label="Browse" />
+              <Tab value="connections" label="Kết nối" />
+            </Tabs>
+            {update && (
+              <Chip
+                size="small"
+                color="info"
+                label={`Có bản mới ${update.tag}`}
+                onClick={openRelease}
+                title={`Đang dùng ${update.current}. Bấm để mở trang tải về: ${update.url}`}
+              />
+            )}
+          </Toolbar>
+        </AppBar>
+        <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
+          {/* The browse layer stays mounted (and keeps every tab's state) while Kết nối is shown. */}
+          <Box sx={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", visibility: browsing ? "visible" : "hidden" }}>
+            <Stack
+              direction="row"
+              role="tablist"
+              aria-label="Các tab browse"
+              sx={{ alignItems: "center", gap: 0.5, px: 2, pt: 1, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}
+            >
+              {tabs.map((t) => (
+                <Box
+                  key={t.id}
+                  role="tab"
+                  tabIndex={0}
+                  aria-selected={t.id === active}
+                  title={placeLabel(t.at, profiles ?? [])}
+                  onClick={() => setActive(t.id)}
+                  onKeyDown={(e) => e.key === "Enter" && setActive(t.id)}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 0.5,
+                    pl: 1.5,
+                    pr: 0.5,
+                    height: 36,
+                    maxWidth: 220,
+                    cursor: "pointer",
+                    border: 1,
+                    borderBottom: 0,
+                    borderColor: "divider",
+                    borderRadius: "8px 8px 0 0",
+                    bgcolor: t.id === active ? "action.selected" : undefined,
+                    color: t.id === active ? "text.primary" : "text.secondary",
+                  }}
+                >
+                  <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 14 }}>
+                    {tabTitle(t.at)}
+                  </Box>
+                  <IconButton
+                    size="small"
+                    aria-label={`Đóng tab ${tabTitle(t.at)}`}
+                    title="Đóng tab (Ctrl+W)"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      close(t.id);
+                    }}
+                    sx={{ width: 24, height: 24, fontSize: 16 }}
+                  >
+                    ×
+                  </IconButton>
+                </Box>
+              ))}
+              <IconButton size="small" aria-label="Tab mới" title="Tab mới (Ctrl+T)" onClick={openEmptyTab} sx={{ width: 32, height: 32 }}>
+                +
+              </IconButton>
+              <Box sx={{ flexGrow: 1 }} />
+              <Button size="small" aria-haspopup="menu" onClick={(e) => setRecentMenu(e.currentTarget)}>
+                Gần đây
+              </Button>
+              <Menu anchorEl={recentMenu} open={recentMenu !== null} onClose={() => setRecentMenu(null)} slotProps={{ list: { "aria-label": "Vị trí mở gần đây (mở thành tab)" } }}>
+                {known.length === 0 && <MenuItem disabled>Chưa có vị trí nào.</MenuItem>}
+                {known.map((place) => (
+                  <MenuItem key={JSON.stringify(place)} onClick={() => goTo(place)}>
+                    {placeLabel(place, profiles ?? [])}
+                  </MenuItem>
+                ))}
+              </Menu>
+            </Stack>
+            <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
+              {profiles &&
+                tabs.map((t) => {
+                  const shown = browsing && t.id === active;
+                  return (
+                    // Hidden, not unmounted and not display:none: the tab keeps its state and its scroll position.
+                    <Box key={t.id} role="tabpanel" aria-hidden={!shown} sx={{ position: "absolute", inset: 0, overflow: "auto", visibility: shown ? "visible" : "hidden" }}>
+                      <Container maxWidth="lg" sx={{ py: 3 }}>
+                        <Browse
+                          profiles={profiles}
+                          start={t.start}
+                          active={shown}
+                          startTransfer={transfers.start}
+                          onPlace={(at) => setTabs((old) => old.map((tab) => (tab.id === t.id ? { ...tab, at } : tab)))}
+                          remember={remember}
+                          recents={known}
+                          onRecent={goTo}
+                        />
+                      </Container>
+                    </Box>
+                  );
+                })}
+            </Box>
+          </Box>
+          {!browsing && (
+            <Box sx={{ position: "absolute", inset: 0, overflow: "auto" }}>
+              <Container maxWidth="lg" sx={{ py: 3 }}>
+                <ErrorAlert error={error} />
+                <Connections profiles={profiles ?? []} onChanged={reload} />
+              </Container>
+            </Box>
           )}
-        </Toolbar>
-      </AppBar>
-      <Container maxWidth="lg" sx={{ py: 3 }}>
-        <ErrorAlert error={error} />
-        {page === "browse" && profiles && <Browse profiles={profiles} clusterId={clusterId} onClusterChange={setClusterId} />}
-        {page === "connections" && <Connections profiles={profiles ?? []} onChanged={reload} />}
-      </Container>
+        </Box>
+        <TaskPanel tasks={transfers} />
+      </Box>
       <Snackbar
         open={updateToast !== null}
         autoHideDuration={updateToast === "new" ? 12000 : null}

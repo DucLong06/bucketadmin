@@ -113,7 +113,8 @@ export function TaskPanel({ tasks }: { tasks: ReturnType<typeof useTransfers> })
   return (
     <>
       {items.length > 0 && (
-        <Paper variant="outlined" sx={{ p: 2, mb: 2 }} aria-label="Tasks">
+        // Bottom of the window, shared by every tab; a long queue scrolls inside its own box.
+        <Paper variant="outlined" square sx={{ px: 2, py: 1, flexShrink: 0, maxHeight: 190, overflow: "auto", borderWidth: "1px 0 0" }} aria-label="Tasks">
           <Stack direction="row" sx={{ alignItems: "center", mb: 1 }}>
             <Typography variant="subtitle2" component="h2" sx={{ flexGrow: 1 }}>
               Tasks — {count("running")} đang chạy, {count("queued")} đang chờ (tối đa {MAX_RUNNING} cùng lúc) · giờ {TZ}
