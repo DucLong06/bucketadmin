@@ -12,7 +12,7 @@ import {
   Typography,
 } from "@mui/material";
 import { invoke } from "./api";
-import { bucketNameError } from "./names";
+import { bucketNameError, folderNameError } from "./names";
 import { ErrorAlert, useAction } from "./ui";
 
 type BucketProps = {
@@ -78,6 +78,76 @@ export function CreateBucketDialog({ clusterId, uid, open, onClose, onCreated }:
           <Button onClick={close}>Huỷ</Button>
           <Button type="submit" variant="contained" disabled={busy || !name || !!nameError}>
             Tạo bucket
+          </Button>
+        </DialogActions>
+      </form>
+    </Dialog>
+  );
+}
+
+type FolderProps = {
+  clusterId: string;
+  uid: string;
+  bucket: string;
+  /** The folder being browsed; the new folder is created inside it. */
+  prefix: string;
+  open: boolean;
+  onClose: () => void;
+  onCreated: () => void;
+};
+
+export function CreateFolderDialog({ clusterId, uid, bucket, prefix, open, onClose, onCreated }: FolderProps) {
+  const [name, setName] = useState("");
+  const { busy, error, run, setError } = useAction();
+  const nameError = name ? folderNameError(name) : null;
+
+  const close = () => {
+    setName("");
+    setError(null);
+    onClose();
+  };
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    const at = { clusterId, uid, bucket, key: prefix };
+    const done = await run(() => invoke<string>("browse_create_folder", { at, name }).then(() => true));
+    if (done) {
+      onCreated();
+      close();
+    }
+  }
+
+  return (
+    <Dialog open={open} onClose={close} maxWidth="sm" fullWidth aria-labelledby="create-folder-title">
+      <form onSubmit={submit}>
+        <DialogTitle id="create-folder-title">Tạo thư mục</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              S3 không có thư mục thật: app tạo một object rỗng tên{" "}
+              <code>
+                {prefix}
+                {name.trim() || "<tên>"}/
+              </code>{" "}
+              trong bucket {bucket}, theo quy ước chung của các công cụ S3.
+            </Typography>
+            <TextField
+              label="Tên thư mục"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              size="small"
+              fullWidth
+              required
+              autoFocus
+              error={!!nameError}
+              helperText={nameError ?? "Không chứa dấu /"}
+            />
+            <ErrorAlert error={error} />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={close}>Huỷ</Button>
+          <Button type="submit" variant="contained" disabled={busy || !name.trim() || !!nameError}>
+            Tạo thư mục
           </Button>
         </DialogActions>
       </form>

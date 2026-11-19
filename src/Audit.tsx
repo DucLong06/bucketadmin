@@ -44,6 +44,7 @@ const ACTIONS = [
   "version.delete",
   "acl.set",
   "bucket.create",
+  "folder.create",
 ];
 
 const native = { select: { native: true } };

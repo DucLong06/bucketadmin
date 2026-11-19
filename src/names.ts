@@ -9,3 +9,13 @@ export function bucketNameError(name: string): string | null {
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(name)) return "Tên bucket không được có dạng địa chỉ IP.";
   return null;
 }
+
+/** Why `name` cannot be a folder name (one path segment), or null when it can. */
+export function folderNameError(name: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return "Nhập tên thư mục.";
+  if (trimmed.includes("/")) return "Tên thư mục không chứa dấu /.";
+  if (trimmed === "." || trimmed === "..") return "Tên này không dùng được.";
+  if (trimmed.length > 255) return "Tên thư mục quá dài.";
+  return null;
+}

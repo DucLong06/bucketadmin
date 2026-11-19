@@ -23,7 +23,7 @@ import { invoke, maskKey, type BrowseBucket, type Listing, type ObjectEntry, typ
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { formatBytes, shortTime } from "./format";
 import AclEditor from "./AclEditor";
-import { CreateBucketDialog } from "./BrowseDialogs";
+import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import ObjectDrawer, { type Versioning } from "./ObjectDrawer";
 import { TransferList, useTransfers } from "./transfers";
 import { ClusterSelect, ErrorAlert, useAction } from "./ui";
@@ -158,11 +158,13 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
     load(name, "", null);
   }
 
+  // A folder made by an S3 tool has a zero-byte marker object named like the folder itself: not content.
+  const objects = (listing?.objects ?? []).filter((o) => o.key !== prefix);
   // Search results replace the folder view until they are closed; keys stay relative to the open folder.
   const rows: Row[] = found
     ? found.matches.map((object) => ({ object }))
     : listing
-      ? [...listing.prefixes.map((folder) => ({ folder })), ...listing.objects.map((object) => ({ object }))]
+      ? [...listing.prefixes.map((folder) => ({ folder })), ...objects.map((object) => ({ object }))]
       : [];
   const columns: Column<Row>[] = [
     {
@@ -299,6 +301,9 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                   <Button size="small" onClick={() => setBucketAcl(true)}>
                     ACL của bucket
                   </Button>
+                  <Button size="small" onClick={() => setCreating("folder")}>
+                    Tạo thư mục
+                  </Button>
                   <Button
                     size="small"
                     variant="contained"
@@ -354,7 +359,7 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                 {listing && !found && (
                   <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
                     <Typography variant="body2" color="text.secondary">
-                      {listing.prefixes.length} thư mục, {listing.objects.length} object đã tải
+                      {listing.prefixes.length} thư mục, {objects.length} object đã tải
                       {listing.next_token ? " — còn nữa." : "."}
                     </Typography>
                     {listing.next_token && (
@@ -375,6 +380,15 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         open={creating === "bucket"}
         onClose={() => setCreating(null)}
         onCreated={onBucketCreated}
+      />
+      <CreateFolderDialog
+        clusterId={clusterId}
+        uid={session?.uid ?? ""}
+        bucket={bucket}
+        prefix={prefix}
+        open={creating === "folder"}
+        onClose={() => setCreating(null)}
+        onCreated={() => load(bucket, prefix, null)}
       />
       <Dialog open={bucketAcl} onClose={() => setBucketAcl(false)} maxWidth="md" fullWidth aria-labelledby="bucket-acl-title">
         <DialogTitle id="bucket-acl-title">ACL của bucket {bucket}</DialogTitle>
