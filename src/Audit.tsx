@@ -41,6 +41,7 @@ const ACTIONS = [
   "object.delete",
   "object.delete_many",
   "object.presign",
+  "object.tags.set",
   "version.restore",
   "version.delete",
   "acl.set",

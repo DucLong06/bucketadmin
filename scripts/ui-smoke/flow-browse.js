@@ -124,7 +124,7 @@
     await click("Tải thêm 4 KiB");
     await waitFor(() => hasText("Đã tải 8.00 KiB / 10.0 KiB") && hasText("00001000  "), "next 4 KiB");
     await shot("11-hex");
-    await click("Chi tiết");
+    await click("Properties");
     await type("Hết hạn sau", "30");
     await type("Đơn vị", "s");
     await click("Tạo URL");
@@ -140,7 +140,7 @@
     await waitFor(() => hasText("Xong · 20.0 MiB") && objectLink("bin/upload-20m.bin"), "multipart upload listed", 90000);
     await shot("13-upload-done");
     await openObject("bin/upload-20m.bin");
-    await click("Chi tiết");
+    await click("Properties");
     await click("Tải về");
     await waitFor(() => hasText("/dl/upload-20m.bin"), "20 MiB download finished", 90000);
     await closeDrawer();
@@ -194,7 +194,7 @@
     // ---- delete an object
     await openFolder("bin/");
     await openObject("bin/upload-20m.bin");
-    await click("Chi tiết");
+    await click("Properties");
     await click("Xoá object");
     await waitFor(() => hasText("Xoá object?"), "delete confirmation");
     await click("Xoá object");
