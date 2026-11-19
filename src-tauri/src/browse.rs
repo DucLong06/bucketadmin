@@ -283,8 +283,9 @@ pub async fn browse_delete(state: St<'_>, at: ObjectRef) -> Cmd<()> {
 
 /// Largest piece one `browse_read` returns.
 const MAX_READ: u64 = 4 * 1024 * 1024;
-/// How long a URL handed to the webview for inline display stays valid.
-const MEDIA_URL_SECS: u64 = 3600;
+/// How long a URL handed to the preview frame stays valid. It is never shown or logged; a
+/// video paused for longer than this has to be reopened.
+const MEDIA_URL_SECS: u64 = 900;
 
 /// Bytes `[start, start + len)` of the object, raw (the text, CSV and hex viewers).
 #[tauri::command]

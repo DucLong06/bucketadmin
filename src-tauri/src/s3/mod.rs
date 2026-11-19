@@ -23,6 +23,8 @@ pub const LIST_PAGE: i32 = 1000;
 pub struct S3 {
     client: Client,
     access_key: String,
+    /// The cluster endpoint this session talks to; presigned URLs must point at it.
+    endpoint: String,
     /// Footer of the Parquet object previewed last, so paging through it does not fetch it again.
     parquet_footer: parquet::FooterCache,
 }
@@ -112,6 +114,7 @@ impl S3 {
         Self {
             client: Client::from_conf(config),
             access_key: access_key.to_string(),
+            endpoint: endpoint.trim_end_matches('/').to_string(),
             parquet_footer: Default::default(),
         }
     }
