@@ -6,6 +6,7 @@ pub mod ops;
 pub mod rgw_admin;
 pub mod s3;
 pub mod settings;
+pub mod update;
 
 use audit::{Audit, AuditEntry};
 /// How a browse session gets its S3 client; public so the lab tests build one the app's way.
@@ -139,6 +140,29 @@ fn network_set(state: St<'_>, proxy: Proxy) -> Cmd<'_, Proxy> {
     let saved = state.settings.change(|s| s.proxy = proxy)?;
     state.forget_sessions();
     Ok(saved.proxy)
+}
+
+/// The release to tell the user about, if the latest one is not this build. Never an error.
+#[tauri::command]
+async fn update_check(state: St<'_>) -> Cmd<'_, Option<update::Update>> {
+    Ok(update::check(&state.settings).await)
+}
+
+/// Opens the release page found by the last check in the desktop's browser.
+#[tauri::command(async)]
+fn update_open(state: St<'_>) -> Cmd<'_, ()> {
+    let seen = state.settings.get()?.update;
+    // The file can be edited by hand: only a release page of this app is ever opened.
+    let url = seen
+        .map(|seen| seen.url)
+        .filter(|url| url.starts_with(update::RELEASES))
+        .ok_or("no release page to open")?;
+    let opened = std::process::Command::new("xdg-open").arg(&url).status();
+    match opened {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(format!("cannot open the browser: xdg-open {status}")),
+        Err(e) => Err(format!("cannot open the browser: {e}")),
+    }
 }
 
 /// What the endpoint's host looks like from here, to suggest "no proxy" for internal ones.
@@ -487,6 +511,8 @@ pub fn run() {
             network_get,
             network_set,
             endpoint_kind,
+            update_check,
+            update_open,
             test_connection,
             test_profile,
             caller_access,

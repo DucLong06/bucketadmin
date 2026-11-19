@@ -1,5 +1,8 @@
     await waitFor(() => button("Clusters"), "app to load", 30000);
     await waitFor(() => hasText("Chưa có cluster nào"), "no-cluster hint");
+    // The daily update check (its answer is canned for this run): a toast once, a badge that stays.
+    await waitFor(() => hasText("Có bản mới v9.9.9 (đang dùng ") && button("Mở trang tải về"), "update toast");
+    check(all(".MuiChip-root").some((c) => c.textContent === "Có bản mới v9.9.9"), "update badge in the header");
     await shot("01-users-no-cluster");
 
     await click("Clusters");
