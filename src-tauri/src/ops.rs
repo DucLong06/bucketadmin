@@ -106,6 +106,33 @@ pub struct UsageSupport {
     pub reason: Option<String>,
 }
 
+/// What the cluster's saved key may read on the Admin API, found by asking each endpoint.
+#[derive(Debug, Default, PartialEq, Serialize)]
+pub struct CallerAccess {
+    /// The user the key belongs to.
+    pub uid: String,
+    /// Caps as RGW lists them on that user; empty when the key may not read its own record.
+    pub caps: Vec<Capability>,
+    /// One flag per cap type: whether a read of that kind got past RGW's caps check.
+    pub info: bool,
+    pub users: bool,
+    pub metadata: bool,
+    pub buckets: bool,
+    pub usage: bool,
+}
+
+/// Whether a read probe got past the caps check. A refusal is an answer; an error that says
+/// nothing about caps (network, wrong key, a failing RGW) stays an error.
+fn allowed<T>(probe: &Result<T, RgwError>) -> Result<bool, String> {
+    match probe {
+        Ok(_) | Err(RgwError::NoSuchBucket | RgwError::NoSuchUser) => Ok(true),
+        Err(RgwError::AccessDenied) => Ok(false),
+        // 404 / 405: this RGW does not have the endpoint, so the feature is not usable.
+        Err(RgwError::Api { status, .. }) if (400..500).contains(status) => Ok(false),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct TrimmedUsage {
     /// Bucket-hour records that were in the range just before the trim.
@@ -608,6 +635,29 @@ impl<H: HttpClient> Ops<'_, H> {
     pub async fn delete_bucket(&self, bucket: &str) -> Result<(), String> {
         let result = self.admin.delete_bucket(bucket).await;
         self.record("bucket.delete", bucket, "", result)
+    }
+
+    /// What the key of this cluster profile, which belongs to `uid`, may read: one small
+    /// request per cap type, all about the caller itself or about nothing. Read-only.
+    pub async fn caller_access(&self, uid: &str) -> Result<CallerAccess, String> {
+        let admin = &self.admin;
+        let tiny = (Some("1970-01-02"), Some("1970-01-03"));
+        let (info, user, listing, bucket, usage) = futures_util::join!(
+            admin.get_info(),
+            admin.get_user(uid),
+            admin.list_users_page(None, 1),
+            admin.get_bucket("bucketadmin-caps-probe"),
+            admin.get_usage(Some(uid), tiny.0, tiny.1),
+        );
+        Ok(CallerAccess {
+            uid: uid.to_string(),
+            info: allowed(&info)?,
+            users: allowed(&user)?,
+            metadata: allowed(&listing)?,
+            buckets: allowed(&bucket)?,
+            usage: allowed(&usage)?,
+            caps: user.map(|u| u.caps).unwrap_or_default(),
+        })
     }
 
     /// Whether this cluster answers usage queries at all. `/admin/info` says nothing about
@@ -1236,6 +1286,65 @@ mod tests {
                 "start=2026-11-18 end=2026-11-19 records=2".into(),
                 true
             )]
+        );
+    }
+
+    #[tokio::test]
+    async fn caller_access_asks_each_endpoint_once() {
+        let audit = Audit::in_memory().unwrap();
+        let denied = r#"{"Code":"AccessDenied"}"#;
+        // users=read and usage=read only: the "my own info" case.
+        let mock = Mock::reply(403, denied)
+            .then(
+                200,
+                r#"{"user_id":"me","caps":[{"type":"users","perm":"read"}]}"#,
+            )
+            .then(403, denied)
+            .then(403, denied)
+            .then(200, r#"{"entries":[],"summary":[]}"#);
+        let access = ops(&mock, &audit).caller_access("me").await.unwrap();
+        assert_eq!(
+            mock.calls(),
+            [
+                "GET /admin/info?format=json",
+                "GET /admin/user?format=json&uid=me",
+                "GET /admin/metadata/user?format=json&max-entries=1",
+                "GET /admin/bucket?bucket=bucketadmin-caps-probe&format=json",
+                "GET /admin/usage?end=1970-01-03&format=json&start=1970-01-02&uid=me",
+            ]
+        );
+        assert_eq!((access.uid.as_str(), access.caps.len()), ("me", 1));
+        let flags = |a: &CallerAccess| [a.info, a.users, a.metadata, a.buckets, a.usage];
+        assert_eq!(flags(&access), [false, true, false, false, true]);
+
+        // A full admin: the bucket probe answers "no such bucket", which means it was allowed.
+        let info = r#"{"info":{"storage_backends":[{"cluster_id":"c"}]}}"#;
+        let mock = Mock::reply(200, info)
+            .then(200, r#"{"user_id":"me"}"#)
+            .then(200, r#"{"keys":[],"truncated":false}"#)
+            .then(404, r#"{"Code":"NoSuchBucket"}"#)
+            .then(200, r#"{"entries":[],"summary":[]}"#);
+        let access = ops(&mock, &audit).caller_access("me").await.unwrap();
+        assert_eq!(flags(&access), [true; 5]);
+
+        // No caps at all: five refusals, no error. An RGW without the usage endpoint: no usage.
+        let mut mock = Mock::default();
+        for _ in 0..5 {
+            mock = mock.then(403, denied);
+        }
+        let access = ops(&mock, &audit).caller_access("me").await.unwrap();
+        assert_eq!((flags(&access), access.caps.len()), ([false; 5], 0));
+        // Nothing can be said when the cluster does not answer, or answers with a server error.
+        assert!(ops(&Mock::default(), &audit)
+            .caller_access("me")
+            .await
+            .is_err());
+        let broken = Mock::reply(500, r#"{"Code":"InternalError"}"#);
+        assert!(ops(&broken, &audit).caller_access("me").await.is_err());
+        assert_eq!(
+            audit.recent(None, None).unwrap().len(),
+            0,
+            "probing is not audited"
         );
     }
 

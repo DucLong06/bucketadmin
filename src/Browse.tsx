@@ -26,6 +26,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { formatBytes, shortTime } from "./format";
 import AclEditor from "./AclEditor";
 import { CreateBucketDialog, CreateFolderDialog, OwnKeyDialog } from "./BrowseDialogs";
+import { accessLevel, type Access } from "./caps";
+import MyInfo from "./MyInfo";
 import ObjectDrawer, { type Versioning } from "./ObjectDrawer";
 import { TaskPanel, useTransfers } from "./transfers";
 import { explain } from "./errors";
@@ -41,6 +43,8 @@ type Props = {
   onUid: (uid: string) => void;
   /** A personal key was saved or deleted: the profile list has to be read again. */
   onProfilesChanged: () => void;
+  /** What the cluster key may do on the Admin API; null while unknown or not asked. */
+  access: Access | null;
 };
 /** `uid` is empty while browsing with the caller's own saved key. */
 type Session = { uid: string; access_key: string; buckets: BrowseBucket[] };
@@ -63,7 +67,7 @@ const NO_VERSIONING: Versioning = { supported: false, status: "", reason: null }
 /** "a/b/c.txt" under prefix "a/b/" is shown as "c.txt". */
 const baseName = (key: string, prefix: string) => key.slice(prefix.length);
 
-export default function Browse({ profiles, clusterId, onClusterChange, uid, onUid, onProfilesChanged }: Props) {
+export default function Browse({ profiles, clusterId, onClusterChange, uid, onUid, onProfilesChanged, access }: Props) {
   // The personal key saved for this cluster ("my own key" mode), by its access key.
   const ownKey = profiles.find((p) => p.id === clusterId)?.browse_access_key ?? null;
   const [keyDialog, setKeyDialog] = useState(false);
@@ -355,6 +359,10 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
             ? `Đang dùng key ${maskKey(session.access_key)} của chính user ${session.uid}. Admin secret không được dùng để browse.`
             : `Đang dùng key ${maskKey(session.access_key)} của bạn (lưu trong keychain). Chế độ này không gọi Admin API.`}
         </Typography>
+      )}
+      {access && (access.users || access.usage) && (
+        // Keyed by cluster: another cluster's answer never shows under this one's name.
+        <MyInfo key={clusterId} clusterId={clusterId} access={access} defaultOpen={accessLevel(access) === "self"} />
       )}
       {busy && <LinearProgress aria-label="Đang tải" />}
       {plan === null && !forgetting && <ErrorAlert error={error} sx={{ mb: 2 }} />}

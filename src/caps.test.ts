@@ -1,0 +1,48 @@
+import { expect, test } from "vitest";
+import { accessLevel, capsCommand, hasCap, missingCaps, missingForFull, TAB_CAPS, type Access } from "./caps";
+
+const none: Access = { uid: "me", caps: [], info: false, users: false, metadata: false, buckets: false, usage: false };
+const full: Access = {
+  uid: "admin",
+  caps: ["users", "buckets", "usage"].map((type) => ({ type, perm: "*" })),
+  info: true,
+  users: true,
+  metadata: true,
+  buckets: true,
+  usage: true,
+};
+
+test("level follows what RGW let through", () => {
+  expect(accessLevel(none)).toBe("browse");
+  // info=read alone opens no screen.
+  expect(accessLevel({ ...none, info: true })).toBe("browse");
+  expect(accessLevel({ ...none, users: true })).toBe("self");
+  expect(accessLevel({ ...none, usage: true })).toBe("self");
+  expect(accessLevel(full)).toBe("admin");
+  // The Buckets tab works but nothing else does.
+  expect(accessLevel({ ...none, buckets: true })).toBe("partial");
+  // Reads everything, may change nothing.
+  expect(accessLevel({ ...full, caps: [] })).toBe("partial");
+});
+
+test("write caps come from the caps listed on the user", () => {
+  expect(hasCap(full, "users=write")).toBe(true);
+  expect(hasCap({ ...full, caps: [{ type: "users", perm: "read" }] }, "users=write")).toBe(false);
+  expect(hasCap({ ...full, caps: [{ type: "users", perm: "write" }] }, "users=write")).toBe(true);
+  expect(hasCap(full, "no-such-type=read")).toBe(false);
+});
+
+test("missing caps for a tab and for the whole app", () => {
+  expect(missingCaps(none, TAB_CAPS.users)).toEqual(["users=read", "metadata=read"]);
+  expect(missingCaps({ ...none, users: true }, TAB_CAPS.users)).toEqual(["metadata=read"]);
+  expect(missingCaps(full, TAB_CAPS.buckets)).toEqual([]);
+  expect(missingForFull(full)).toEqual([]);
+  expect(missingForFull({ ...full, caps: [{ type: "users", perm: "*" }] })).toEqual(["buckets=write", "usage=write"]);
+});
+
+test("sample command", () => {
+  expect(capsCommand("longhd", ["users=read", "metadata=read"])).toBe(
+    'radosgw-admin caps add --uid=longhd --caps="users=read;metadata=read"',
+  );
+  expect(capsCommand("", ["usage=read"])).toBe('radosgw-admin caps add --uid=<uid> --caps="usage=read"');
+});

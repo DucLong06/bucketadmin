@@ -21,6 +21,7 @@ export type UserInfo = {
   display_name: string;
   email: string;
   suspended: number;
+  max_buckets?: number;
   keys: KeyPair[];
   caps: Capability[];
   subusers: Subuser[];

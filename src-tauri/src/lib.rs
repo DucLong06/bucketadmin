@@ -11,7 +11,8 @@ use audit::{Audit, AuditEntry};
 pub use browse::connect as browse_connect;
 use clusters::{ClusterProfile, ProfileStore};
 use ops::{
-    BucketDetail, NewSubuser, Ops, Quotas, RotatedKey, TrimmedUsage, UsageSupport, UsersPage,
+    BucketDetail, CallerAccess, NewSubuser, Ops, Quotas, RotatedKey, TrimmedUsage, UsageSupport,
+    UsersPage,
 };
 use ops::{OnboardResult, OnboardRow};
 use rgw_admin::{
@@ -102,6 +103,16 @@ async fn test_connection(
 async fn test_profile(state: St<'_>, id: String) -> Cmd<'_, ClusterInfo> {
     let (endpoint, creds) = state.profiles.credentials(&id)?;
     state.cluster_info(&endpoint, creds).await
+}
+
+/// Who the saved key belongs to (asked over S3, which needs no cap) and what it may read on
+/// the Admin API. Decides which admin screens the UI offers.
+#[tauri::command]
+async fn caller_access(state: St<'_>, cluster_id: String) -> Cmd<'_, CallerAccess> {
+    let (endpoint, creds) = state.profiles.credentials(&cluster_id)?;
+    let own = s3::S3::new(&endpoint, &creds.access_key, &creds.secret_key);
+    let uid = own.whoami().await?;
+    state.ops(&cluster_id)?.caller_access(&uid).await
 }
 
 // ---- users ----------------------------------------------------------------
@@ -399,6 +410,7 @@ pub fn run() {
             remove_profile,
             test_connection,
             test_profile,
+            caller_access,
             users_list,
             user_get,
             user_create,

@@ -15,6 +15,7 @@ import { invoke, type Profile } from "./api";
 import Audit from "./Audit";
 import Browse from "./Browse";
 import Buckets from "./Buckets";
+import type { Access } from "./caps";
 import Clusters from "./Clusters";
 import { ErrorAlert } from "./ui";
 import Users from "./Users";
@@ -44,6 +45,21 @@ export default function App() {
   useEffect(() => {
     reload();
   }, []);
+
+  // What this cluster's key may do on the Admin API: asked once per cluster.
+  const [access, setAccess] = useState<Access | null>(null);
+  useEffect(() => {
+    setAccess(null);
+    if (!clusterId) return;
+    let stale = false;
+    invoke<Access>("caller_access", { clusterId }).then(
+      (answer) => stale || setAccess(answer),
+      () => {}, // unknown: every screen stays reachable and reports its own errors
+    );
+    return () => {
+      stale = true;
+    };
+  }, [clusterId]);
 
   return (
     <ThemeProvider theme={theme}>
@@ -75,6 +91,7 @@ export default function App() {
             uid={browseUid}
             onUid={setBrowseUid}
             onProfilesChanged={reload}
+            access={access}
           />
         )}
         {page === "buckets" && <Buckets profiles={profiles} clusterId={clusterId} onClusterChange={setClusterId} />}
