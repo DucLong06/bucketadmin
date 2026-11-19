@@ -8,7 +8,7 @@ use crate::rgw_admin::{
     RgwError, Subuser, Usage, UserIdPage, UserInfo, UserModify,
 };
 use futures_util::{stream, StreamExt};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// `get_user` calls in flight while loading the user list.
 const USER_FETCH_CONCURRENCY: usize = 4;
@@ -33,6 +33,70 @@ pub struct RotatedKey {
     pub key: KeyPair,
     /// Set when the new key exists but the old one could not be removed.
     pub remove_error: Option<String>,
+}
+
+/// One line of an onboarding file.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct OnboardRow {
+    pub uid: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub email: String,
+    /// Admin caps to grant, each as `type=perm`.
+    #[serde(default)]
+    pub caps: Vec<String>,
+    /// User quota (total size) in KiB; `None` leaves the quota off.
+    #[serde(default)]
+    pub quota_kb: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OnboardResult {
+    pub uid: String,
+    /// `would_create` (dry run), `exists` (left untouched), `created`, or `error`.
+    pub status: &'static str,
+    pub message: String,
+    /// The new user's key pair: only for `created`, and for an `error` that happened after the
+    /// user was created. This is the one time the secret leaves the backend.
+    pub access_key: String,
+    pub secret_key: String,
+}
+
+impl OnboardResult {
+    fn new(
+        row: &OnboardRow,
+        status: &'static str,
+        message: impl Into<String>,
+        key: Option<&KeyPair>,
+    ) -> Self {
+        Self {
+            uid: row.uid.clone(),
+            status,
+            message: message.into(),
+            access_key: key.map(|k| k.access_key.clone()).unwrap_or_default(),
+            secret_key: key.map(|k| k.secret_key.clone()).unwrap_or_default(),
+        }
+    }
+}
+
+/// Checks one onboarding row before anything is sent.
+pub fn validate_onboard_row(row: &OnboardRow) -> Result<(), String> {
+    let uid_ok = !row.uid.is_empty()
+        && row.uid.len() <= 128
+        && !row.uid.chars().any(|c| c.is_whitespace() || c.is_control());
+    if !uid_ok {
+        return Err(format!("invalid uid {:?}: required, no spaces", row.uid));
+    }
+    if row.display_name.trim().is_empty() {
+        return Err("display name is required".into());
+    }
+    for cap in &row.caps {
+        validate_cap(cap)?;
+    }
+    if row.quota_kb.is_some_and(|kb| kb <= 0) {
+        return Err("quota must be greater than zero".into());
+    }
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]
@@ -416,6 +480,86 @@ impl<H: HttpClient> Ops<'_, H> {
             .set_quota(uid, quota_type, enabled, max_size_kb, max_objects)
             .await;
         self.record("quota.set", uid, &detail, result)
+    }
+
+    async fn onboard_one(&self, row: &OnboardRow, dry_run: bool) -> OnboardResult {
+        if let Err(e) = validate_onboard_row(row) {
+            return OnboardResult::new(row, "error", e, None);
+        }
+        match self.admin.get_user(&row.uid).await {
+            Ok(_) => {
+                return OnboardResult::new(
+                    row,
+                    "exists",
+                    "user already exists; left unchanged",
+                    None,
+                )
+            }
+            Err(RgwError::NoSuchUser) => {}
+            Err(e) => return OnboardResult::new(row, "error", e.to_string(), None),
+        }
+        if dry_run {
+            return OnboardResult::new(row, "would_create", "", None);
+        }
+        let email = Some(row.email.trim().to_string());
+        let created = self
+            .create_user(&row.uid, &row.display_name, &email, &None, &None)
+            .await;
+        let user = match created {
+            Ok(user) => user,
+            Err(e) => return OnboardResult::new(row, "error", e, None),
+        };
+        // From here on the user exists: its key is returned even if a later step fails.
+        let key = user.keys.first();
+        for cap in &row.caps {
+            if let Err(e) = self.add_cap(&row.uid, cap).await {
+                let message = format!("user created, but cap {cap} could not be added: {e}");
+                return OnboardResult::new(row, "error", message, key);
+            }
+        }
+        if let Some(kb) = row.quota_kb {
+            let set = self
+                .set_quota(&row.uid, QuotaType::User, true, kb, -1)
+                .await;
+            if let Err(e) = set {
+                let message = format!("user created, but the quota could not be set: {e}");
+                return OnboardResult::new(row, "error", message, key);
+            }
+        }
+        OnboardResult::new(row, "created", "", key)
+    }
+
+    /// Creates the users of an onboarding file with their caps and quota, a few at a time,
+    /// and answers one result per row, in order. Existing users are never modified. With
+    /// `dry_run` nothing is changed. Every change goes through the audited single-user calls.
+    pub async fn onboard(&self, rows: &[OnboardRow], dry_run: bool) -> Vec<OnboardResult> {
+        // Owned rows per future: a closure over borrowed rows is not general enough for a Send future.
+        let jobs: Vec<(OnboardRow, bool)> = rows
+            .iter()
+            .enumerate()
+            .map(|(i, row)| {
+                (
+                    row.clone(),
+                    rows[..i].iter().any(|earlier| earlier.uid == row.uid),
+                )
+            })
+            .collect();
+        let this = self;
+        stream::iter(jobs)
+            .map(|(row, repeated)| async move {
+                if repeated {
+                    return OnboardResult::new(
+                        &row,
+                        "error",
+                        "this uid appears earlier in the file",
+                        None,
+                    );
+                }
+                this.onboard_one(&row, dry_run).await
+            })
+            .buffered(USER_FETCH_CONCURRENCY)
+            .collect()
+            .await
     }
 
     /// Buckets with stats, all of the cluster or one user's. Not audited (read-only).
@@ -1141,6 +1285,130 @@ mod tests {
         ] {
             assert!(validate_date(bad).is_err(), "{bad:?} should be rejected");
         }
+    }
+
+    fn onboard_row(uid: &str, caps: &[&str], quota_kb: Option<i64>) -> OnboardRow {
+        OnboardRow {
+            uid: uid.into(),
+            display_name: format!("User {uid}"),
+            email: String::new(),
+            caps: caps.iter().map(|c| c.to_string()).collect(),
+            quota_kb,
+        }
+    }
+
+    #[tokio::test]
+    async fn onboard_dry_run_changes_nothing() {
+        let mock = Mock::reply(404, r#"{"Code":"NoSuchUser"}"#)
+            .then(200, &user_json("bob", &[("AK", "S")]));
+        let audit = Audit::in_memory().unwrap();
+        let ops = ops(&mock, &audit);
+        let new = ops
+            .onboard(&[onboard_row("alice", &["usage=read"], Some(1024))], true)
+            .await;
+        let old = ops.onboard(&[onboard_row("bob", &[], None)], true).await;
+        assert_eq!((new[0].status, old[0].status), ("would_create", "exists"));
+        assert_eq!(
+            mock.calls(),
+            [
+                "GET /admin/user?format=json&uid=alice",
+                "GET /admin/user?format=json&uid=bob"
+            ],
+            "a dry run only looks"
+        );
+        assert!(rows(&audit).is_empty());
+        assert!(
+            old[0].secret_key.is_empty(),
+            "an existing user's key is never handed out"
+        );
+    }
+
+    #[tokio::test]
+    async fn onboard_creates_user_caps_and_quota_and_returns_the_key_once() {
+        let mock = Mock::reply(404, r#"{"Code":"NoSuchUser"}"#)
+            .then(200, &user_json("alice", &[("AKNEW", "TOPSECRET")]))
+            .then(200, r#"[{"type":"buckets","perm":"read"}]"#)
+            .then(
+                200,
+                r#"[{"type":"buckets","perm":"read"},{"type":"usage","perm":"read"}]"#,
+            )
+            .then(200, "");
+        let audit = Audit::in_memory().unwrap();
+        let ops = ops(&mock, &audit);
+        let row = onboard_row("alice", &["buckets=read", "usage=read"], Some(2048));
+        let result = &ops.onboard(&[row], false).await[0];
+        assert_eq!(
+            (
+                result.status,
+                result.access_key.as_str(),
+                result.secret_key.as_str()
+            ),
+            ("created", "AKNEW", "TOPSECRET")
+        );
+        assert_eq!(mock.calls().len(), 5);
+        assert!(
+            mock.calls()[4].contains("max-size-kb=2048")
+                && mock.calls()[4].contains("quota-type=user")
+        );
+        let actions: Vec<String> = rows(&audit).into_iter().map(|r| r.0).collect();
+        assert_eq!(
+            actions,
+            ["user.create", "caps.add", "caps.add", "quota.set"]
+        );
+        assert!(!format!("{:?}", audit.recent(None, None).unwrap()).contains("TOPSECRET"));
+    }
+
+    #[tokio::test]
+    async fn onboard_reports_a_failed_step_and_still_returns_the_key() {
+        let mock = Mock::reply(404, r#"{"Code":"NoSuchUser"}"#)
+            .then(200, &user_json("alice", &[("AKNEW", "TOPSECRET")]))
+            .then(400, r#"{"Code":"InvalidCapability"}"#);
+        let audit = Audit::in_memory().unwrap();
+        let result = &ops(&mock, &audit)
+            .onboard(&[onboard_row("alice", &["zones=read"], Some(1))], false)
+            .await[0];
+        assert_eq!(result.status, "error");
+        assert!(
+            result
+                .message
+                .starts_with("user created, but cap zones=read"),
+            "{}",
+            result.message
+        );
+        assert_eq!(
+            result.secret_key, "TOPSECRET",
+            "the user exists, so its key must not be lost"
+        );
+        assert_eq!(
+            mock.calls().len(),
+            3,
+            "the quota is not attempted after a failed cap"
+        );
+    }
+
+    #[tokio::test]
+    async fn onboard_refuses_bad_and_repeated_rows_without_calling_rgw() {
+        let mock = Mock::reply(404, r#"{"Code":"NoSuchUser"}"#);
+        let audit = Audit::in_memory().unwrap();
+        let ops = ops(&mock, &audit);
+        let rows = [
+            onboard_row("alice", &[], None),
+            onboard_row("alice", &[], None),
+            onboard_row("has space", &[], None),
+            onboard_row("carol", &["usage=bogus"], None),
+            onboard_row("dave", &[], Some(0)),
+        ];
+        let results = ops.onboard(&rows, true).await;
+        let statuses: Vec<&str> = results.iter().map(|r| r.status).collect();
+        assert_eq!(
+            statuses,
+            ["would_create", "error", "error", "error", "error"]
+        );
+        assert!(results[1].message.contains("appears earlier"));
+        assert_eq!(mock.calls().len(), 1, "only the one valid row reached RGW");
+        let mut unnamed = onboard_row("erin", &[], None);
+        unnamed.display_name = " ".into();
+        assert!(validate_onboard_row(&unnamed).is_err());
     }
 
     #[test]

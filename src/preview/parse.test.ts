@@ -1,5 +1,16 @@
 import { expect, test } from "vitest";
-import { cellText, displayText, hexLines, matchingLines, parseDelimited, previewKind, shortType } from "./parse";
+import {
+  PREVIEW_CAP,
+  cellText,
+  displayText,
+  hexLines,
+  loadableBytes,
+  matchingLines,
+  parseDelimited,
+  previewKind,
+  previewPlan,
+  shortType,
+} from "./parse";
 
 test("viewer is chosen by extension, hex for the unknown", () => {
   expect(previewKind("a/b/config.YAML")).toBe("text");
@@ -65,4 +76,21 @@ test("Parquet cells and type labels", () => {
   expect(shortType("Int64")).toBe("Int64");
   expect(shortType("List(Utf8)")).toBe("List(Utf8)");
   expect(shortType('Struct("shard": non-null Int32, "region": non-null Utf8)')).toBe("Struct");
+});
+
+test("big objects are never loaded whole", () => {
+  const big = PREVIEW_CAP + 1;
+  expect(previewPlan("text", PREVIEW_CAP)).toBe("full");
+  for (const kind of ["text", "json", "csv", "tsv"] as const) expect(previewPlan(kind, big), kind).toBe("prefix");
+  for (const kind of ["image", "pdf"] as const) expect(previewPlan(kind, big), kind).toBe("ask");
+  // These fetch only what they show, whatever the size.
+  for (const kind of ["parquet", "hex", "audio", "video"] as const) expect(previewPlan(kind, 500 * big), kind).toBe("full");
+});
+
+test("chunked viewers stop at the cap", () => {
+  expect(loadableBytes(0, 1000)).toBe(1000);
+  expect(loadableBytes(1000, 1000)).toBe(0);
+  expect(loadableBytes(0, 10 * PREVIEW_CAP)).toBe(PREVIEW_CAP);
+  expect(loadableBytes(PREVIEW_CAP - 5, 10 * PREVIEW_CAP)).toBe(5);
+  expect(loadableBytes(PREVIEW_CAP, 10 * PREVIEW_CAP)).toBe(0);
 });

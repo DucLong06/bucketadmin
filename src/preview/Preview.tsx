@@ -5,7 +5,19 @@ import { formatBytes } from "../format";
 import type { ObjectAt, ObjectTabProps } from "../ObjectDrawer";
 import { CopyButton, ErrorAlert, useAction } from "../ui";
 import { VirtualTable, type Column } from "../virtual";
-import { cellText, displayText, hexLines, matchingLines, parseDelimited, previewKind, shortType, type PreviewKind } from "./parse";
+import {
+  PREVIEW_CAP,
+  cellText,
+  displayText,
+  hexLines,
+  loadableBytes,
+  matchingLines,
+  parseDelimited,
+  previewKind,
+  previewPlan,
+  shortType,
+  type PreviewKind,
+} from "./parse";
 
 const TEXT_CHUNK = 256 * 1024;
 const HEX_CHUNK = 4096;
@@ -16,8 +28,9 @@ function useChunks(at: ObjectAt, size: number, chunk: number) {
   const [bytes, setBytes] = useState(new Uint8Array());
   const { busy, error, run } = useAction();
   const more = async () => {
-    if (bytes.length >= size) return;
-    const got = await run(() => invoke<ArrayBuffer>("browse_read", { at, start: bytes.length, len: chunk }));
+    const len = Math.min(chunk, loadableBytes(bytes.length, size));
+    if (len === 0) return;
+    const got = await run(() => invoke<ArrayBuffer>("browse_read", { at, start: bytes.length, len }));
     if (!got) return;
     const next = new Uint8Array(bytes.length + got.byteLength);
     next.set(bytes);
@@ -27,7 +40,8 @@ function useChunks(at: ObjectAt, size: number, chunk: number) {
   useEffect(() => {
     more();
   }, []);
-  return { bytes, more, busy, error, complete: bytes.length >= size };
+  // `capped`: the viewer holds as much as it may, and the object has more.
+  return { bytes, more, busy, error, complete: bytes.length >= size, capped: bytes.length < size && loadableBytes(bytes.length, size) === 0 };
 }
 
 type Loaded = ReturnType<typeof useChunks>;
@@ -39,10 +53,15 @@ function LoadMore({ loaded, size, label }: { loaded: Loaded; size: number; label
         Đã tải {formatBytes(loaded.bytes.length)} / {formatBytes(size)}
         {loaded.complete ? " — đã tải hết." : "."}
       </Typography>
-      {!loaded.complete && (
+      {!loaded.complete && !loaded.capped && (
         <Button size="small" variant="outlined" onClick={loaded.more} disabled={loaded.busy}>
           {label}
         </Button>
+      )}
+      {loaded.capped && (
+        <Typography variant="body2" color="warning.main">
+          Đã tới giới hạn xem trước {formatBytes(PREVIEW_CAP)}. Tải file về để xem phần còn lại.
+        </Typography>
       )}
     </Stack>
   );
@@ -308,53 +327,55 @@ function HexView({ at, size }: { at: ObjectAt; size: number }) {
   );
 }
 
-/** Image, audio, video and PDF are shown straight from a short-lived presigned URL, so the
- *  webview streams them from RGW itself (range requests) instead of through the app. */
+const FRAME_HEIGHT: Partial<Record<PreviewKind, number>> = { image: 480, audio: 64, video: 500, pdf: 560 };
+
+/** Image, audio, video and PDF are shown by /preview.html in a frame: that page loads the
+ *  object straight from RGW (a 15-minute presigned URL, so media streams by range requests)
+ *  and is the only place in the app allowed to load anything remote. */
 function MediaView({ at, kind, name }: { at: ObjectAt; kind: PreviewKind; name: string }) {
   const [url, setUrl] = useState("");
   const [zoom, setZoom] = useState(0); // 0 = fit the panel, otherwise percent of the natural size
-  const [natural, setNatural] = useState(0);
+  const frame = useRef<HTMLIFrameElement>(null);
   const { busy, error, run } = useAction();
   useEffect(() => {
     run(() => invoke<string>("browse_media_url", { at })).then((u) => setUrl(u ?? ""));
   }, []);
+  const zoomTo = (percent: number) => {
+    setZoom(percent);
+    frame.current?.contentWindow?.postMessage({ zoom: percent }, "*");
+  };
 
   return (
     <Stack spacing={1}>
       {busy && <LinearProgress aria-label="Đang chuẩn bị" />}
       <ErrorAlert error={error} />
       {url && kind === "image" && (
-        <>
-          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-            <Button size="small" variant="outlined" onClick={() => setZoom((z) => Math.max(10, (z || 100) / 1.5))} aria-label="Thu nhỏ">
-              −
-            </Button>
-            <Button size="small" variant="outlined" onClick={() => setZoom((z) => Math.min(1600, (z || 100) * 1.5))} aria-label="Phóng to">
-              +
-            </Button>
-            <Button size="small" onClick={() => setZoom(100)}>
-              100%
-            </Button>
-            <Button size="small" onClick={() => setZoom(0)}>
-              Vừa khung
-            </Button>
-            <Typography variant="body2" aria-live="polite">
-              {zoom ? `${Math.round(zoom)}%` : "vừa khung"}
-            </Typography>
-          </Stack>
-          <Box sx={{ overflow: "auto", maxHeight: 480, bgcolor: "background.default", borderRadius: 1 }}>
-            <img
-              src={url}
-              alt={name}
-              onLoad={(e) => setNatural(e.currentTarget.naturalWidth)}
-              style={zoom && natural ? { width: (natural * zoom) / 100, display: "block" } : { maxWidth: "100%", display: "block" }}
-            />
-          </Box>
-        </>
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+          <Button size="small" variant="outlined" onClick={() => zoomTo(Math.max(10, (zoom || 100) / 1.5))} aria-label="Thu nhỏ">
+            −
+          </Button>
+          <Button size="small" variant="outlined" onClick={() => zoomTo(Math.min(1600, (zoom || 100) * 1.5))} aria-label="Phóng to">
+            +
+          </Button>
+          <Button size="small" onClick={() => zoomTo(100)}>
+            100%
+          </Button>
+          <Button size="small" onClick={() => zoomTo(0)}>
+            Vừa khung
+          </Button>
+          <Typography variant="body2" aria-live="polite">
+            {zoom ? `${Math.round(zoom)}%` : "vừa khung"}
+          </Typography>
+        </Stack>
       )}
-      {url && kind === "audio" && <audio controls src={url} aria-label={name} style={{ width: "100%" }} />}
-      {url && kind === "video" && <video controls src={url} aria-label={name} style={{ maxWidth: "100%", maxHeight: 480 }} />}
-      {url && kind === "pdf" && <iframe src={url} title={name} style={{ width: "100%", height: 560, border: 0, background: "#fff" }} />}
+      {url && (
+        <iframe
+          ref={frame}
+          title={`Xem trước ${name}`}
+          src={`/preview.html#${new URLSearchParams({ kind, url, name })}`}
+          style={{ width: "100%", height: FRAME_HEIGHT[kind], border: 0, borderRadius: 4 }}
+        />
+      )}
     </Stack>
   );
 }
@@ -375,7 +396,9 @@ const KIND_LABEL: Record<PreviewKind, string> = {
 export default function PreviewTab({ at, object }: ObjectTabProps) {
   const kind = previewKind(object.key);
   const [asHex, setAsHex] = useState(false);
+  const [allowBig, setAllowBig] = useState(false);
   const shown = asHex ? "hex" : kind;
+  const plan = previewPlan(shown, object.size);
   if (object.size === 0) return <Alert severity="info">Object rỗng (0 byte), không có gì để xem.</Alert>;
   const name = object.key.slice(object.key.lastIndexOf("/") + 1);
   return (
@@ -394,7 +417,26 @@ export default function PreviewTab({ at, object }: ObjectTabProps) {
       {(shown === "csv" || shown === "tsv") && <CsvView at={at} size={object.size} delimiter={shown === "csv" ? "," : "\t"} />}
       {shown === "parquet" && <ParquetView at={at} />}
       {shown === "hex" && <HexView key="hex" at={at} size={object.size} />}
-      {(shown === "image" || shown === "audio" || shown === "video" || shown === "pdf") && <MediaView at={at} kind={shown} name={name} />}
+      {plan === "prefix" && (
+        <Alert severity="info">
+          File lớn ({formatBytes(object.size)}): chỉ phần đầu được tải. Bấm "Tải thêm" để xem tiếp, tối đa {formatBytes(PREVIEW_CAP)}.
+        </Alert>
+      )}
+      {plan === "ask" && !allowBig && (
+        <Alert
+          severity="warning"
+          action={
+            <Button color="inherit" size="small" onClick={() => setAllowBig(true)}>
+              Vẫn xem
+            </Button>
+          }
+        >
+          {KIND_LABEL[shown]} này nặng {formatBytes(object.size)} và sẽ được tải toàn bộ vào bộ nhớ để hiển thị.
+        </Alert>
+      )}
+      {(shown === "audio" || shown === "video" || ((shown === "image" || shown === "pdf") && (plan !== "ask" || allowBig))) && (
+        <MediaView at={at} kind={shown} name={name} />
+      )}
     </Stack>
   );
 }

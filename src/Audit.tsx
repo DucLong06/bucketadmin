@@ -39,10 +39,14 @@ const ACTIONS = [
   "usage.trim",
   "object.upload",
   "object.delete",
+  "object.delete_many",
   "object.presign",
+  "object.tags.set",
   "version.restore",
   "version.delete",
   "acl.set",
+  "bucket.create",
+  "folder.create",
 ];
 
 const native = { select: { native: true } };

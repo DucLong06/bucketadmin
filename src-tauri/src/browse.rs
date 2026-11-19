@@ -3,10 +3,11 @@
 
 use crate::rgw_admin::RgwAdmin;
 use crate::s3::acl::{Acl, AppliedAcl, Grant, VersionEntry, Versioning};
+use crate::s3::manage::{DeleteReport, ObjectTag, MAX_DELETE};
 use crate::s3::parquet::ParquetPage;
 use crate::s3::search::SearchResult;
-use crate::s3::transfer::{content_type_for, Downloaded};
-use crate::s3::{BucketEntry, Listing, LIST_PAGE, S3};
+use crate::s3::transfer::{content_type_for, Cancel, Downloaded};
+use crate::s3::{BucketEntry, Listing, ObjectHead, LIST_PAGE, S3};
 use crate::AppState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -21,6 +22,26 @@ type St<'a> = State<'a, AppState>;
 /// One S3 client per (cluster, uid), so the user's key is looked up once, not per request.
 #[derive(Default)]
 pub struct Sessions(Mutex<HashMap<(String, String), S3>>);
+
+/// Cancel flags of the transfers in flight, by the id the UI gave them.
+#[derive(Default)]
+pub struct Transfers(Mutex<HashMap<String, Cancel>>);
+
+impl Transfers {
+    fn begin(&self, id: &str) -> Cancel {
+        let cancel = Cancel::default();
+        if let Ok(mut running) = self.0.lock() {
+            running.insert(id.to_string(), cancel.clone());
+        }
+        cancel
+    }
+
+    fn end(&self, id: &str) {
+        if let Ok(mut running) = self.0.lock() {
+            running.remove(id);
+        }
+    }
+}
 
 /// What a command acts on, and as whom. `key` is empty for bucket-level commands.
 #[derive(Deserialize)]
@@ -218,9 +239,11 @@ pub async fn browse_upload(
     at.require_key()?;
     let s3 = state.session(&at).await?;
     let progress = report(&app, &transfer_id);
+    let cancel = state.transfers.begin(&transfer_id);
     let result = s3
-        .upload(&at.bucket, &at.key, Path::new(&path), progress)
+        .upload_with(&at.bucket, &at.key, Path::new(&path), progress, &cancel)
         .await;
+    state.transfers.end(&transfer_id);
     let detail = match &result {
         Ok(size) => format!("size={size}"),
         Err(_) => String::new(),
@@ -241,14 +264,13 @@ pub async fn browse_download(
     at.require_key()?;
     let s3 = state.session(&at).await?;
     let progress = report(&app, &transfer_id);
-    s3.download(
-        &at.bucket,
-        &at.key,
-        at.version(),
-        Path::new(&dest),
-        progress,
-    )
-    .await
+    let cancel = state.transfers.begin(&transfer_id);
+    let dest = Path::new(&dest);
+    let result = s3
+        .download_with(&at.bucket, &at.key, at.version(), dest, progress, &cancel)
+        .await;
+    state.transfers.end(&transfer_id);
+    result
 }
 
 /// A time-limited GET URL signed with the browsed user's key. The URL is a bearer credential,
@@ -283,8 +305,9 @@ pub async fn browse_delete(state: St<'_>, at: ObjectRef) -> Cmd<()> {
 
 /// Largest piece one `browse_read` returns.
 const MAX_READ: u64 = 4 * 1024 * 1024;
-/// How long a URL handed to the webview for inline display stays valid.
-const MEDIA_URL_SECS: u64 = 3600;
+/// How long a URL handed to the preview frame stays valid. It is never shown or logged; a
+/// video paused for longer than this has to be reopened.
+const MEDIA_URL_SECS: u64 = 900;
 
 /// Bytes `[start, start + len)` of the object, raw (the text, CSV and hex viewers).
 #[tauri::command]
@@ -399,4 +422,108 @@ pub async fn browse_search(
     let s3 = state.session(&at).await?;
     s3.search(&at.bucket, &prefix, &pattern, max_results, max_secs)
         .await
+}
+
+/// Asks a running upload or download to stop at its next part. False when it is not running.
+#[tauri::command]
+pub fn browse_cancel(state: St<'_>, transfer_id: String) -> bool {
+    let running = state.transfers.0.lock();
+    let flag = running.ok().and_then(|map| map.get(&transfer_id).cloned());
+    flag.is_some_and(|cancel| {
+        cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+        true
+    })
+}
+
+// ---- buckets, folders, multi-delete, properties, tags ----------------------------
+
+/// Creates the bucket `at.bucket`, owned by the browsed user.
+#[tauri::command]
+pub async fn browse_create_bucket(state: St<'_>, at: ObjectRef, versioning: bool) -> Cmd<()> {
+    let s3 = state.session(&at).await?;
+    let result = s3.create_bucket(&at.bucket, versioning).await;
+    let detail = format!("versioning={versioning}");
+    state.audit_s3(&at, "bucket.create", &detail, &result);
+    result
+}
+
+/// Creates the folder `name` under the prefix `at.key` (empty for the bucket root).
+#[tauri::command]
+pub async fn browse_create_folder(state: St<'_>, at: ObjectRef, name: String) -> Cmd<String> {
+    let s3 = state.session(&at).await?;
+    let result = s3.create_folder(&at.bucket, &at.key, &name).await;
+    let detail = format!("folder={}", name.trim());
+    state.audit_s3(&at, "folder.create", &detail, &result);
+    result
+}
+
+/// Deletes the selected objects and everything under the selected folders. With `dry_run`
+/// nothing is deleted: the report only says how many objects the selection stands for.
+#[tauri::command]
+pub async fn browse_delete_many(
+    state: St<'_>,
+    at: ObjectRef,
+    keys: Vec<String>,
+    prefixes: Vec<String>,
+    dry_run: bool,
+) -> Cmd<DeleteReport> {
+    let s3 = state.session(&at).await?;
+    let all = s3.expand(&at.bucket, &keys, &prefixes, MAX_DELETE).await?;
+    if dry_run {
+        return Ok(DeleteReport {
+            objects: all.len(),
+            ..Default::default()
+        });
+    }
+    let report = s3.delete_many(&at.bucket, all).await;
+    let detail = format!(
+        "objects={} deleted={} failed={} folders={}",
+        report.objects,
+        report.deleted,
+        report.failed.len(),
+        prefixes.join(",")
+    );
+    let outcome = match report.failed.first() {
+        None => Ok(()),
+        Some(first) => Err(format!("{}: {}", first.key, first.error)),
+    };
+    state.audit_s3(&at, "object.delete_many", &detail, &outcome);
+    Ok(report)
+}
+
+#[derive(Serialize)]
+pub struct Inspected {
+    head: ObjectHead,
+    /// Every header of the HEAD response, as RGW sent them.
+    headers: Vec<(String, String)>,
+}
+
+/// Properties and raw HEAD headers of the object.
+#[tauri::command]
+pub async fn browse_inspect(state: St<'_>, at: ObjectRef) -> Cmd<Inspected> {
+    at.require_key()?;
+    let s3 = state.session(&at).await?;
+    Ok(Inspected {
+        head: s3.head(&at.bucket, &at.key, at.version()).await?,
+        headers: s3.head_headers(&at.bucket, &at.key, at.version()).await?,
+    })
+}
+
+#[tauri::command]
+pub async fn browse_tags_get(state: St<'_>, at: ObjectRef) -> Cmd<Vec<ObjectTag>> {
+    at.require_key()?;
+    let s3 = state.session(&at).await?;
+    s3.get_tags(&at.bucket, &at.key, at.version()).await
+}
+
+/// Replaces the object's tags.
+#[tauri::command]
+pub async fn browse_tags_put(state: St<'_>, at: ObjectRef, tags: Vec<ObjectTag>) -> Cmd<()> {
+    at.require_key()?;
+    let s3 = state.session(&at).await?;
+    let result = s3.put_tags(&at.bucket, &at.key, at.version(), &tags).await;
+    let keys: Vec<&str> = tags.iter().map(|t| t.key.as_str()).collect();
+    let detail = format!("tags={}", keys.join(","));
+    state.audit_s3(&at, "object.tags.set", &detail, &result);
+    result
 }

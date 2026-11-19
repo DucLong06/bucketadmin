@@ -3,6 +3,9 @@
 // ui-smoke.sh puts one of the flow-*.js files in place of the __FLOW__ line and creates the
 // data that flow expects on the cluster.
 (async () => {
+  // The app runs this script on every page load; only the first one starts the flow.
+  if (window.__smokeStarted) return;
+  window.__smokeStarted = true;
   const CFG = __CFG__;
   const { START, STEP, NAMES, UID } = CFG;
   const DATA_UID = "ba-m3-ui-data";
@@ -47,7 +50,7 @@
   const click = async (text) => (await waitFor(() => button(text), `button "${text}"`)).click();
   const clickSel = async (sel) => (await waitFor(() => last(all(sel)), sel)).click();
   function setValue(el, value) {
-    const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    const proto = [HTMLSelectElement, HTMLTextAreaElement].find((c) => el instanceof c)?.prototype ?? HTMLInputElement.prototype;
     Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
     el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
   }

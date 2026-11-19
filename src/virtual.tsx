@@ -15,7 +15,7 @@ export function visibleRange(
 }
 
 export type Column<T> = {
-  header: string;
+  header: ReactNode;
   /** A CSS grid track, e.g. "minmax(200px, 3fr)" or "120px". */
   width: string;
   align?: "right";

@@ -4,6 +4,7 @@ import {
   Box,
   Breadcrumbs,
   Button,
+  Checkbox,
   Chip,
   Dialog,
   DialogActions,
@@ -15,6 +16,7 @@ import {
   ListItemButton,
   ListItemText,
   Paper,
+  Snackbar,
   Stack,
   TextField,
   Typography,
@@ -23,9 +25,11 @@ import { invoke, maskKey, type BrowseBucket, type Listing, type ObjectEntry, typ
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { formatBytes, shortTime } from "./format";
 import AclEditor from "./AclEditor";
+import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import ObjectDrawer, { type Versioning } from "./ObjectDrawer";
-import { TransferList, useTransfers } from "./transfers";
-import { ClusterSelect, ErrorAlert, useAction } from "./ui";
+import { TaskPanel, useTransfers } from "./transfers";
+import { explain } from "./errors";
+import { ClusterSelect, ConfirmDialog, copyText, ErrorAlert, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
 
 type Props = {
@@ -38,6 +42,8 @@ type Props = {
 };
 type Session = { uid: string; access_key: string; buckets: BrowseBucket[] };
 type Row = { folder: string } | { object: ObjectEntry };
+type DeleteReport = { objects: number; deleted: number; failed: { key: string; error: string }[] };
+type Notice = { severity: "success" | "error" | "info"; text: string };
 type Found = { matches: ObjectEntry[]; scanned: number; stopped: "done" | "results" | "time" };
 // Limits of one search; the backend enforces its own caps on top.
 const SEARCH_RESULTS = 500;
@@ -47,6 +53,8 @@ const STOPPED: Record<Found["stopped"], string> = {
   results: `dừng vì đủ ${SEARCH_RESULTS} kết quả`,
   time: `dừng vì hết ${SEARCH_SECONDS} giây`,
 };
+// Expiry of a URL made by the Copy URL button (the Properties tab offers other expiries).
+const COPY_URL_SECS = 900;
 const NO_VERSIONING: Versioning = { supported: false, status: "", reason: null };
 
 /** "a/b/c.txt" under prefix "a/b/" is shown as "c.txt". */
@@ -66,6 +74,57 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   const [bucketAcl, setBucketAcl] = useState(false);
   const [pattern, setPattern] = useState("");
   const [found, setFound] = useState<Found | null>(null);
+  const [creating, setCreating] = useState<"bucket" | "folder" | null>(null);
+  // Ticked rows: "f:<prefix>" for folders, "o:<key>" for objects.
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [plan, setPlan] = useState<{ objects: number; keys: string[]; prefixes: string[] } | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const rowId = (r: Row) => ("folder" in r ? `f:${r.folder}` : `o:${r.object.key}`);
+  const pickedOf = (kind: "f" | "o") => [...picked].filter((id) => id.startsWith(`${kind}:`)).map((id) => id.slice(2));
+  const toggle = (id: string) =>
+    setPicked((old) => {
+      const next = new Set(old);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+
+  // A presigned GET URL of the one ticked object, straight to the clipboard.
+  async function copyUrl() {
+    if (!session) return;
+    const key = pickedOf("o")[0];
+    const at = { clusterId, uid: session.uid, bucket, key };
+    const url = await run(() => invoke<string>("browse_presign", { at, expiresSecs: COPY_URL_SECS }));
+    if (!url) return;
+    await copyText(url);
+    setNotice({ severity: "success", text: `Đã copy presigned URL của ${key}. URL hết hạn sau ${COPY_URL_SECS / 60} phút; ai có URL đều tải được object.` });
+  }
+
+  // First a dry run: the confirmation states how many objects the selection really stands for.
+  async function planDelete() {
+    if (!session) return;
+    const [keys, prefixes] = [pickedOf("o"), pickedOf("f")];
+    const at = { clusterId, uid: session.uid, bucket };
+    const report = await run(() => invoke<DeleteReport>("browse_delete_many", { at, keys, prefixes, dryRun: true }));
+    if (report) setPlan({ objects: report.objects, keys, prefixes });
+  }
+  async function deletePicked() {
+    if (!session || !plan) return;
+    const at = { clusterId, uid: session.uid, bucket };
+    const { keys, prefixes } = plan;
+    const report = await run(() => invoke<DeleteReport>("browse_delete_many", { at, keys, prefixes, dryRun: false }));
+    if (!report) return;
+    setPlan(null);
+    const first = report.failed[0];
+    setNotice(
+      first
+        ? {
+            severity: "error",
+            text: `Đã xoá ${report.deleted}/${report.objects} object; ${report.failed.length} object không xoá được. Lỗi đầu tiên (${first.key}): ${explain(first.error).message}`,
+          }
+        : { severity: "success", text: `Đã xoá ${report.deleted} object.` },
+    );
+    load(bucket, prefix, null);
+  }
 
   async function search(e: FormEvent) {
     e.preventDefault();
@@ -84,11 +143,14 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
   async function upload(paths: string[]) {
     const { uid: asUid, bucket: toBucket, prefix: toPrefix } = here.current;
     if (!asUid || !toBucket) return;
-    for (const path of paths) {
-      const key = toPrefix + path.slice(path.lastIndexOf("/") + 1);
-      const at = { clusterId, uid: asUid, bucket: toBucket, key };
-      await transfers.start(`↑ ${toBucket}/${key}`, (transferId) => invoke<number>("browse_upload", { at, path, transferId }));
-    }
+    // All queued at once: the task panel runs a few in parallel and holds the rest.
+    await Promise.all(
+      paths.map((path) => {
+        const key = toPrefix + path.slice(path.lastIndexOf("/") + 1);
+        const at = { clusterId, uid: asUid, bucket: toBucket, key };
+        return transfers.start(`↑ ${toBucket}/${key}`, (transferId) => invoke<number>("browse_upload", { at, path, transferId }));
+      }),
+    );
     const now = here.current;
     if (now.bucket === toBucket && now.prefix === toPrefix) load(toBucket, toPrefix, null);
   }
@@ -137,6 +199,7 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
       setPrefix(toPrefix);
       setListing(null);
       setFound(null);
+      setPicked(new Set());
     }
     const page = await run(() =>
       invoke<Listing>("browse_list", { clusterId, uid: session.uid, bucket: toBucket, prefix: toPrefix, token }),
@@ -150,13 +213,45 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
     );
   }
 
+  function onBucketCreated(name: string) {
+    const byName = (a: BrowseBucket, b: BrowseBucket) => a.name.localeCompare(b.name);
+    setSession((s) => s && { ...s, buckets: [...s.buckets, { name, created: "" }].sort(byName) });
+    load(name, "", null);
+  }
+
+  // A folder made by an S3 tool has a zero-byte marker object named like the folder itself: not content.
+  const objects = (listing?.objects ?? []).filter((o) => o.key !== prefix);
   // Search results replace the folder view until they are closed; keys stay relative to the open folder.
   const rows: Row[] = found
     ? found.matches.map((object) => ({ object }))
     : listing
-      ? [...listing.prefixes.map((folder) => ({ folder })), ...listing.objects.map((object) => ({ object }))]
+      ? [...listing.prefixes.map((folder) => ({ folder })), ...objects.map((object) => ({ object }))]
       : [];
+  const allPicked = rows.length > 0 && rows.every((r) => picked.has(rowId(r)));
+  const nameOf = (r: Row) => baseName("folder" in r ? r.folder : r.object.key, prefix);
   const columns: Column<Row>[] = [
+    {
+      header: (
+        <Checkbox
+          size="small"
+          sx={{ p: 0 }}
+          checked={allPicked}
+          indeterminate={picked.size > 0 && !allPicked}
+          onChange={(e) => setPicked(e.target.checked ? new Set(rows.map(rowId)) : new Set())}
+          slotProps={{ input: { "aria-label": "Chọn tất cả các dòng đang hiện" } }}
+        />
+      ),
+      width: "28px",
+      cell: (r) => (
+        <Checkbox
+          size="small"
+          sx={{ p: 0 }}
+          checked={picked.has(rowId(r))}
+          onChange={() => toggle(rowId(r))}
+          slotProps={{ input: { "aria-label": `Chọn ${nameOf(r)}` } }}
+        />
+      ),
+    },
     {
       header: "Tên",
       width: "minmax(240px, 4fr)",
@@ -224,8 +319,8 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
         )}
       </Stack>
       {busy && <LinearProgress aria-label="Đang tải" />}
-      <ErrorAlert error={error} sx={{ mb: 2 }} />
-      <TransferList items={transfers.items} onClear={transfers.clear} />
+      {plan === null && <ErrorAlert error={error} sx={{ mb: 2 }} />}
+      <TaskPanel tasks={transfers} />
       {!session && !busy && !error && (
         <Alert severity="info">
           Nhập uid của user cần browse rồi bấm Mở, hoặc bấm "Browse" trong chi tiết user ở tab Users. Bạn chỉ thấy và làm
@@ -251,6 +346,11 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                 User không sở hữu bucket nào.
               </Typography>
             )}
+            <Box sx={{ px: 2, pb: 1.5 }}>
+              <Button size="small" variant="outlined" fullWidth onClick={() => setCreating("bucket")}>
+                Tạo bucket
+              </Button>
+            </Box>
             <Stack component="form" onSubmit={openByName} spacing={1} sx={{ p: 2, borderTop: 1, borderColor: "divider" }}>
               <TextField
                 label="Mở bucket theo tên"
@@ -285,6 +385,20 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                   )}
                   <Button size="small" onClick={() => setBucketAcl(true)}>
                     ACL của bucket
+                  </Button>
+                  <Button
+                    size="small"
+                    disabled={busy || picked.size !== 1 || pickedOf("o").length !== 1}
+                    onClick={copyUrl}
+                    title="Chọn đúng một object để copy presigned URL của nó"
+                  >
+                    Copy URL
+                  </Button>
+                  <Button size="small" color="error" disabled={busy || picked.size === 0} onClick={planDelete}>
+                    Xoá ({picked.size})
+                  </Button>
+                  <Button size="small" onClick={() => setCreating("folder")}>
+                    Tạo thư mục
                   </Button>
                   <Button
                     size="small"
@@ -341,7 +455,7 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
                 {listing && !found && (
                   <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
                     <Typography variant="body2" color="text.secondary">
-                      {listing.prefixes.length} thư mục, {listing.objects.length} object đã tải
+                      {listing.prefixes.length} thư mục, {objects.length} object đã tải
                       {listing.next_token ? " — còn nữa." : "."}
                     </Typography>
                     {listing.next_token && (
@@ -356,6 +470,46 @@ export default function Browse({ profiles, clusterId, onClusterChange, uid, onUi
           </Box>
         </Stack>
       )}
+      <ConfirmDialog
+        open={plan !== null}
+        title="Xoá các mục đã chọn?"
+        text={
+          plan
+            ? `Xoá vĩnh viễn ${plan.objects} object trong bucket ${bucket}: ${plan.keys.length} object được chọn${
+                plan.prefixes.length ? ` và toàn bộ nội dung của ${plan.prefixes.length} thư mục (${plan.prefixes.join(", ")})` : ""
+              }. Nếu bucket không bật versioning thì không khôi phục được.`
+            : ""
+        }
+        confirmLabel={`Xoá ${plan?.objects ?? 0} object`}
+        busy={busy}
+        error={error}
+        onConfirm={deletePicked}
+        onClose={() => {
+          setPlan(null);
+          setError(null);
+        }}
+      />
+      <Snackbar open={notice !== null} autoHideDuration={8000} onClose={() => setNotice(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
+        <Alert severity={notice?.severity ?? "info"} variant="filled" onClose={() => setNotice(null)}>
+          {notice?.text}
+        </Alert>
+      </Snackbar>
+      <CreateBucketDialog
+        clusterId={clusterId}
+        uid={session?.uid ?? ""}
+        open={creating === "bucket"}
+        onClose={() => setCreating(null)}
+        onCreated={onBucketCreated}
+      />
+      <CreateFolderDialog
+        clusterId={clusterId}
+        uid={session?.uid ?? ""}
+        bucket={bucket}
+        prefix={prefix}
+        open={creating === "folder"}
+        onClose={() => setCreating(null)}
+        onCreated={() => load(bucket, prefix, null)}
+      />
       <Dialog open={bucketAcl} onClose={() => setBucketAcl(false)} maxWidth="md" fullWidth aria-labelledby="bucket-acl-title">
         <DialogTitle id="bucket-acl-title">ACL của bucket {bucket}</DialogTitle>
         <DialogContent>

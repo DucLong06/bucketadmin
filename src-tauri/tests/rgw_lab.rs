@@ -863,6 +863,9 @@ const SMOKE_PAGING_USERS: usize = 27;
 async fn ui_smoke_cleanup(admin: &RgwAdmin) {
     let _ = admin.delete_user(SMOKE_DATA_UID, true).await;
     let _ = admin.delete_user("ba-m1-ui", true).await; // the driver's own user, after an aborted run
+    for uid in ["ba-m5-ui-bulk-1", "ba-m5-ui-bulk-2"] {
+        let _ = admin.delete_user(uid, true).await; // created by the onboarding step
+    }
     for i in 0..SMOKE_PAGING_USERS {
         let _ = admin.delete_user(&format!("ba-m3-ui-p{i:02}"), true).await;
     }
@@ -920,4 +923,114 @@ async fn ui_smoke_fixture_create() {
 async fn ui_smoke_fixture_remove() {
     let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
     ui_smoke_cleanup(&admin).await;
+}
+
+/// M5.10: onboarding 20 users with caps and quota in one go; must take under a minute.
+#[tokio::test]
+async fn m5_bulk_onboard_20_users() {
+    use bucketadmin_lib::audit::Audit;
+    use bucketadmin_lib::ops::{OnboardRow, Ops};
+    let Some(admin) = lab() else { return };
+    let rows: Vec<OnboardRow> = (1..=20)
+        .map(|i| OnboardRow {
+            uid: format!("ba-m5-bulk-{i:02}"),
+            display_name: format!("Bulk user {i}"),
+            email: format!("bulk{i}@example.com"),
+            caps: vec!["buckets=read".into(), "usage=read".into()],
+            quota_kb: Some(10 * 1024 * 1024),
+        })
+        .collect();
+    for row in &rows {
+        let _ = admin.delete_user(&row.uid, true).await; // leftover from an aborted run
+    }
+    let audit = Audit::in_memory().unwrap();
+    let ops = Ops {
+        admin,
+        audit: &audit,
+        cluster_id: "lab".into(),
+    };
+
+    let plan = ops.onboard(&rows, true).await;
+    assert!(
+        plan.iter().all(|r| r.status == "would_create"),
+        "dry run: every user is new"
+    );
+    assert!(
+        ops.admin.get_user("ba-m5-bulk-01").await.is_err(),
+        "the dry run created nothing"
+    );
+
+    let started = std::time::Instant::now();
+    let results = ops.onboard(&rows, false).await;
+    let took = started.elapsed();
+    let created = results.iter().filter(|r| r.status == "created").count();
+    println!(
+        "onboard 20 users (2 caps + 10 GiB quota each) -> {created} created in {:.1} s",
+        took.as_secs_f32()
+    );
+    for r in results.iter().filter(|r| r.status != "created") {
+        println!("  {} -> {} {}", r.uid, r.status, r.message);
+    }
+    assert_eq!(created, 20);
+    assert!(took.as_secs() < 60, "onboarding took {took:?}");
+    assert!(
+        results
+            .iter()
+            .all(|r| r.access_key.len() == 20 && r.secret_key.len() == 40),
+        "every new user comes with its key"
+    );
+    assert_eq!(
+        results.iter().map(|r| r.uid.as_str()).collect::<Vec<_>>(),
+        rows.iter().map(|r| r.uid.as_str()).collect::<Vec<_>>(),
+        "results keep the file's order"
+    );
+
+    let seventh = ops.admin.get_user("ba-m5-bulk-07").await.expect("get_user");
+    let caps: Vec<String> = seventh
+        .caps
+        .iter()
+        .map(|c| format!("{}={}", c.cap_type, c.perm))
+        .collect();
+    let quota = ops
+        .get_quotas("ba-m5-bulk-07")
+        .await
+        .expect("get_quotas")
+        .user;
+    println!(
+        "ba-m5-bulk-07 -> email {}, caps {caps:?}, user quota enabled={} max_size_kb={}",
+        seventh.email, quota.enabled, quota.max_size_kb
+    );
+    assert_eq!(caps, ["buckets=read", "usage=read"]);
+    assert!(quota.enabled && quota.max_size_kb == 10 * 1024 * 1024);
+
+    let again = ops.onboard(&rows, false).await;
+    assert!(
+        again
+            .iter()
+            .all(|r| r.status == "exists" && r.secret_key.is_empty()),
+        "a second run touches nothing and reveals no keys"
+    );
+
+    let log = audit.recent(None, None).unwrap();
+    let count = |action: &str| audit.recent(Some(action), None).unwrap().len();
+    println!(
+        "audit rows -> user.create {}, caps.add {}, quota.set {} (page of {})",
+        count("user.create"),
+        count("caps.add"),
+        count("quota.set"),
+        log.len()
+    );
+    assert_eq!((count("user.create"), count("quota.set")), (20, 20));
+    let dump = format!("{log:?}");
+    assert!(
+        results.iter().all(|r| !dump.contains(&r.secret_key)),
+        "no secret key in the audit log"
+    );
+
+    for row in &rows {
+        ops.admin
+            .delete_user(&row.uid, false)
+            .await
+            .expect("cleanup");
+    }
 }
