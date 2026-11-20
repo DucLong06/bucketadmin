@@ -2,6 +2,7 @@
 //! The cluster's admin secret is never used here: what this module can see or change is
 //! exactly what that user's key is allowed to.
 
+pub mod access;
 pub mod acl;
 pub mod manage;
 pub mod parquet;

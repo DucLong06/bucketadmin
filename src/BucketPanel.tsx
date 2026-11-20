@@ -1,8 +1,7 @@
-import { type FormEvent, type KeyboardEvent, type MouseEvent, type Ref, useEffect, useRef, useState } from "react";
-import { Alert, Box, Button, InputAdornment, List, ListItemButton, ListItemText, Paper, Stack, TextField, Typography } from "@mui/material";
+import { type KeyboardEvent, type MouseEvent, useEffect, useRef, useState } from "react";
+import { Alert, Box, Button, InputAdornment, List, ListItemButton, ListItemText, Paper, TextField, Typography } from "@mui/material";
 import type { BrowseBucket } from "./api";
 import { t } from "./i18n";
-import { splitPath } from "./paths";
 import { eyebrow, thinScroll, tokens } from "./theme";
 
 /** The filter field is only worth its row above this many buckets. */
@@ -42,20 +41,13 @@ type Props = {
   onCreate: () => void;
   /** A bucket row was right-clicked. */
   onBucketMenu?: (bucket: string, e: MouseEvent) => void;
-  /** The Open-path field, so other parts of the page can send the user there. */
-  pathRef?: Ref<HTMLInputElement>;
+  /** Go to the path picker: any path the key may use is typed (or picked) there. */
+  onPickPath: () => void;
 };
 
-/** The sidebar's bucket card: the key's buckets in a list of bounded height with a filter, and a
- *  field that opens any path the key may use. Only the list scrolls; the controls stay put. */
-export default function BucketPanel({ title, buckets, bucketsError, current, active, onOpen, onCreate, onBucketMenu, pathRef }: Props) {
-  const [path, setPath] = useState("");
-  const split = splitPath(path);
-  const field = useRef<HTMLInputElement | null>(null);
-  // A key that may not list buckets has one thing to do here: type the path it was given.
-  useEffect(() => {
-    if (bucketsError && active && !current) field.current?.focus();
-  }, [bucketsError]);
+/** The sidebar's bucket card: the key's buckets in a list of bounded height with a filter, and the
+ *  way to the path picker. Only the list scrolls; the controls stay put. */
+export default function BucketPanel({ title, buckets, bucketsError, current, active, onOpen, onCreate, onBucketMenu, onPickPath }: Props) {
 
   // The filter belongs to this tab and is not saved.
   const [filter, setFilter] = useState("");
@@ -91,10 +83,6 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
       if (picked) onOpen(picked.name, "");
     } else return;
     e.preventDefault();
-  }
-  function openPath(e: FormEvent) {
-    e.preventDefault();
-    if (!split.error) onOpen(split.bucket, split.prefix);
   }
   return (
     <Paper variant="outlined" sx={{ borderRadius: "16px" }}>
@@ -162,37 +150,12 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
           {t("browse.createBucket")}
         </Button>
       </Box>
-      <Stack component="form" onSubmit={openPath} sx={{ px: 2, pt: 2, pb: 1.5, borderTop: 1, borderColor: "divider" }}>
-        <TextField
-          label={t("browse.openPath")}
-          placeholder={t("browse.openPathSample")}
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          size="small"
-          error={!!path.trim() && !!split.error}
-          helperText={path.trim() && split.error ? t(split.error) : t("browse.openPathHelp")}
-          inputRef={(input: HTMLInputElement | null) => {
-            field.current = input;
-            if (typeof pathRef === "function") pathRef(input);
-            else if (pathRef) pathRef.current = input;
-          }}
-          slotProps={{
-            htmlInput: { style: { fontFamily: tokens.mono }, spellCheck: false },
-            inputLabel: { shrink: true },
-            // The button sits in the field: one row less in a column that has none to spare.
-            input: {
-              sx: { pr: 0.5 },
-              endAdornment: (
-                <InputAdornment position="end">
-                  <Button type="submit" size="small" disabled={!!split.error} sx={{ minWidth: 0 }}>
-                    {t("common.open")}
-                  </Button>
-                </InputAdornment>
-              ),
-            },
-          }}
-        />
-      </Stack>
+      <Box sx={{ px: 2, pt: 2, pb: 2, borderTop: 1, borderColor: "divider" }}>
+        {/* For a key that may not list buckets this is the way in, so it is the filled button. */}
+        <Button size="small" variant={bucketsError ? "contained" : "outlined"} fullWidth onClick={onPickPath} title={t("browse.openPathHelp")}>
+          {t("browse.openPath")}
+        </Button>
+      </Box>
     </Paper>
   );
 }

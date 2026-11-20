@@ -6,7 +6,7 @@ import { applyLang, t } from "./i18n";
 
 const nothing = () => {};
 const panel = (props: Partial<Parameters<typeof BucketPanel>[0]>) =>
-  renderToString(createElement(BucketPanel, { title: "Your buckets", buckets: [], bucketsError: null, current: "", active: true, onOpen: nothing, onCreate: nothing, ...props }));
+  renderToString(createElement(BucketPanel, { title: "Your buckets", buckets: [], bucketsError: null, current: "", active: true, onOpen: nothing, onCreate: nothing, onPickPath: nothing, ...props }));
 // Text as a user reads it: tags dropped, entities of the apostrophes and quotes put back.
 const text = (html: string) => html.replace(/<style[^>]*>.*?<\/style>/gs, " ").replace(/<[^>]*>/g, " ").replaceAll("&quot;", '"').replaceAll("&#x27;", "'");
 
@@ -17,7 +17,10 @@ test("a key that may not list buckets gets a notice instead of the empty-list te
   expect(denied).toContain("This key may not list buckets — open a path directly below or use a pinned place");
   expect(denied).not.toContain(t("browse.noBuckets"));
   expect(denied).toContain(t("browse.openPath"));
-  expect(denied).toContain("Bucket or bucket/folder/ — use this when you may only list one folder");
+  // The way to the path picker is the filled button here; what it is for is its tooltip.
+  expect(panel({ bucketsError: "AccessDenied" })).toContain('title="Bucket or bucket/folder/ — use this when you may only list one folder"');
+  expect(panel({ bucketsError: "AccessDenied" })).toMatch(/MuiButton-contained[^>]*>Open path/);
+  expect(panel({})).toMatch(/MuiButton-outlined[^>]*>Open path/);
   // Not an error: the notice is an info alert.
   expect(panel({ bucketsError: "AccessDenied" })).toMatch(/MuiAlert-[a-zA-Z]*[iI]nfo/);
   expect(panel({ bucketsError: "AccessDenied" })).not.toMatch(/MuiAlert-[a-zA-Z]*[eE]rror/);

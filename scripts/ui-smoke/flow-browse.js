@@ -530,8 +530,10 @@
     await waitFor(() => hasText(T("browse.usingKeyOfUser", { uid: OWNER })) && all(bucketButtons).length === 2, "browsing with the owner's key", 20000);
     await click(T("browse.backToMyKey"));
     await waitFor(() => hasText(T("browse.usingKeyMine")) && hasText(T("browse.noBuckets")), "back on my own key", 20000);
+    await click(T("browse.openPath"));
     await type(T("browse.openPath"), BUCKET);
     (await field(T("browse.openPath"))).form.requestSubmit();
+    await dialogsGone();
     await waitFor(() => hasText(loaded(4, 0)), "the read-only user can list");
     await click(T("common.upload"));
     await waitFor(() => hasText(T("error.s3.AccessDenied")), "upload refused for the read-only user", 30000);
@@ -625,6 +627,23 @@
     press("d");
     await waitFor(() => pinnedRows().length === 3, "and it is unpinned again");
 
+    // ---- M10.1 the path picker: known places as chips, and the folders S3 lists at the typed path
+    const chipPaths = () => all(`${sel("pathPicker.chips")} [role=listitem]`).map((c) => c.textContent.trim());
+    const children = () => all(`${sel("pathPicker.children")} [role=listitem]`);
+    await click(T("browse.openPath"));
+    const picker = await field(T("browse.openPath"));
+    await waitFor(() => document.activeElement === picker, "the picker opens with the keyboard in its field");
+    check([`${BUCKET}/notes/`, `${BUCKET}/media/`, BUCKET].every((path) => chipPaths().includes(path)) && all(`${sel("pathPicker.chips")} [data-source=pin]`).length === 3, `pins and recent places are chips: ${chipPaths().join(" ")}`);
+    setValue(picker, BUCKET);
+    await waitFor(() => children().length === 4, "the bucket's folders are suggested", 15000);
+    children().find((c) => c.textContent.trim() === "media").click();
+    await waitFor(() => picker.value === `${BUCKET}/media/` && children().length < 4, "a click on a folder appends it, and the new path is asked about", 15000);
+    check(paneErrors() === 0, "no error on the way");
+    await shot("38b-path-picker");
+    picker.form.requestSubmit();
+    await dialogsGone();
+    await waitFor(() => objectLink("media/icon.png"), "the picked path opens", 20000);
+
     // ---- M9.1 a key that was granted one folder: start path, the refused root, Open path
     await addConnection("du-an", SCOPED, "my bucket/notes");
     await waitFor(() => hasText(T("paths.bucketSpace")), "a start path that cannot be one is refused while typing");
@@ -649,11 +668,18 @@
     await shot("39-scoped-denied");
     await click(T("browse.openPath"));
     const pathField = await field(T("browse.openPath"));
-    await waitFor(() => document.activeElement === pathField, "the hint puts the keyboard in the Open-path field");
+    await waitFor(() => document.activeElement === pathField, "the hint opens the path picker, keyboard in its field");
+    check(chipPaths()[0] === `${BUCKET}/notes/` && all(`${sel("pathPicker.chips")} [role=listitem]`)[0].querySelector("[data-source=start]"), `the connection's start path is the first chip: ${chipPaths().join(" ")}`);
     setValue(pathField, "bad bucket/x");
     await waitFor(() => hasText(T("paths.bucketSpace")), "a path that cannot be one says why");
+    // Only the bucket typed: its root is refused. An amber hint; the path can still be submitted.
+    setValue(pathField, BUCKET);
+    await waitFor(() => hasText(T("pathPicker.deniedHint")) && button(T("common.open")), "a refused probe is a hint, and Open stays enabled", 15000);
+    check(paneErrors() === 1, "the hint is no new error");
+    await shot("39b-picker-denied");
     setValue(pathField, `s3://${BUCKET}/notes/readme.txt`);
     pathField.form.requestSubmit();
+    await dialogsGone();
     await waitFor(() => objectLink("notes/readme.txt") && hasText(loaded(0, 3)) && paneErrors() === 0 && !hasText(T("browse.deniedHint")), "a file's path opens the folder the file is in", 20000);
     check(fits(), "nothing scrolls sideways");
     await shot("40-scoped-path");
@@ -668,7 +694,9 @@
     await useConnection("no-list");
     await waitFor(() => hasText(T("browse.bucketsDenied")) && hasText(T("browse.chooseBucketDenied")), "the bucket panel explains instead of failing", 20000);
     check(paneErrors() === 0 && !hasText(T("browse.noBuckets")), "no error, and not the empty-list text");
-    await waitFor(() => document.activeElement === last(all("aside form input")), "the Open-path field has the keyboard");
+    // No bucket list to choose from: the path picker is on the page itself, with the keyboard.
+    const inline = await field(T("browse.openPath"));
+    await waitFor(() => document.activeElement === inline && !inline.closest(".MuiDialog-root"), "the path picker on the page has the keyboard");
     await shot("41-no-list");
 
     // ---- M9.2 many buckets: a list of bounded height with a filter

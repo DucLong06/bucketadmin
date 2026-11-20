@@ -33,6 +33,7 @@ import BucketPanel from "./BucketPanel";
 import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import { accessLevel, type Access } from "./caps";
 import MyInfo from "./MyInfo";
+import { PathPicker, PathPickerDialog } from "./PathPicker";
 import PinnedPanel from "./PinnedPanel";
 import { isPinned, type Pin, type PinOps } from "./pins";
 import ObjectDrawer, { canUndelete, download, finalDeleteWarning, undeleteHint, type Versioning } from "./ObjectDrawer";
@@ -64,6 +65,8 @@ type Props = {
   pinOps: PinOps;
   /** Open a place in a new tab. */
   onOpenTab: (at: Place) => void;
+  /** Pin a path of a connection, typed or picked in the path picker. */
+  onPinPath: (clusterId: string) => void;
 };
 const RECENT_IN_SIDEBAR = 6;
 /** `uid` is empty while browsing with the caller's own saved key. */
@@ -103,7 +106,7 @@ const th = (text: string) => (
 /** "a/b/c.txt" under prefix "a/b/" is shown as "c.txt". */
 const baseName = (key: string, prefix: string) => key.slice(prefix.length);
 
-export default function Browse({ profiles, start, active, startTransfer, onPlace, remember, recents, onRecent, pins, pinOps, onOpenTab }: Props) {
+export default function Browse({ profiles, start, active, startTransfer, onPlace, remember, recents, onRecent, pins, pinOps, onOpenTab, onPinPath }: Props) {
   const [clusterId, setClusterId] = useState(start.clusterId);
   // Wide enough for every column of the object list (CSS px: the zoom setting narrows the page).
   const roomy = useMediaQuery("(min-width:1150px)");
@@ -134,8 +137,11 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const [session, setSession] = useState<Session | null>(null);
   const [bucket, setBucket] = useState("");
   const [prefix, setPrefix] = useState("");
-  // The Open-path field of the sidebar: where a key that was refused a listing is sent.
-  const pathField = useRef<HTMLInputElement | null>(null);
+  // The path picker. For a key that may not list buckets it is the page itself (typed here);
+  // otherwise it is a dialog.
+  const [picking, setPicking] = useState(false);
+  const [typedPath, setTypedPath] = useState("");
+  const inlinePath = useRef<HTMLInputElement | null>(null);
   // The last listing was refused by S3 (AccessDenied): the error gains the way out.
   const [denied, setDenied] = useState(false);
   const [listing, setListing] = useState<Listing | null>(null);
@@ -464,6 +470,10 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   if (profiles.length === 0) {
     return <Alert severity="info">{t("browse.noConnection")}</Alert>;
   }
+  // No bucket list to choose from: the chips and the probe of the picker are the way in.
+  const pickerIsThePage = !!session?.buckets_error && !bucket;
+  const pickPath = () => (pickerIsThePage ? inlinePath.current?.focus() : setPicking(true));
+  const typed = splitPath(typedPath);
   const label = profiles.find((p) => p.id === clusterId)?.label ?? "";
   const card = { borderRadius: "16px" };
   // What the context menu offers for the row under the pointer.
@@ -517,7 +527,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               )}
             </Typography>
           )}
-          <PinnedPanel pins={pins} profiles={profiles} clusterId={clusterId} onOpen={goHere} onOpenTab={onOpenTab} ops={pinOps} />
+          <PinnedPanel pins={pins} profiles={profiles} clusterId={clusterId} onOpen={goHere} onOpenTab={onOpenTab} ops={pinOps} onAdd={() => onPinPath(clusterId)} />
           {session && (
             <BucketPanel
               title={session.uid ? t("browse.bucketsOfUser", { uid: session.uid }) : t("browse.bucketsMine")}
@@ -531,7 +541,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                 e.preventDefault();
                 setBucketMenu({ bucket: name, x: e.clientX, y: e.clientY });
               }}
-              pathRef={pathField}
+              onPickPath={pickPath}
             />
           )}
           {recents.length > 0 && (
@@ -566,7 +576,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               {denied && (
                 <Box sx={{ mt: 0.5 }}>
                   {t("browse.deniedHint")}{" "}
-                  <Link component="button" color="inherit" onClick={() => pathField.current?.focus()} sx={{ fontWeight: 600, verticalAlign: "baseline" }}>
+                  <Link component="button" color="inherit" onClick={pickPath} sx={{ fontWeight: 600, verticalAlign: "baseline" }}>
                     {t("browse.openPath")}
                   </Link>
                 </Box>
@@ -584,6 +594,32 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               <Typography color="text.secondary" sx={{ mt: 0.5, mb: 2.5 }}>
                 {t(session.buckets_error ? "browse.chooseBucketDenied" : session.buckets.length > 0 ? "browse.chooseBucketHint" : "browse.chooseBucketNone")}
               </Typography>
+              {pickerIsThePage && (
+                <Paper
+                  variant="outlined"
+                  component="form"
+                  onSubmit={(e: FormEvent) => {
+                    e.preventDefault();
+                    if (!typed.error) load(typed.bucket, typed.prefix, null);
+                  }}
+                  sx={{ ...card, p: 2.5, maxWidth: 720 }}
+                >
+                  <PathPicker
+                    clusterId={clusterId}
+                    uid={session.uid}
+                    value={typedPath}
+                    onChange={setTypedPath}
+                    label={t("browse.openPath")}
+                    autoFocus={active}
+                    inputRef={inlinePath}
+                    action={
+                      <Button type="submit" size="small" disabled={!!typed.error} sx={{ minWidth: 0 }}>
+                        {t("common.open")}
+                      </Button>
+                    }
+                  />
+                </Paper>
+              )}
               <Box component="ul" aria-label={t("browse.bucketCards")} sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 1.75, listStyle: "none", p: 0, m: 0 }}>
                 {session.buckets.map((b) => (
                   <li key={b.name}>
@@ -886,6 +922,15 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
           {notice?.text}
         </Alert>
       </Snackbar>
+      <PathPickerDialog
+        open={picking}
+        title={t("pathPicker.openTitle")}
+        submitLabel={t("common.open")}
+        clusterId={clusterId}
+        uid={session?.uid ?? ""}
+        onSubmit={(toBucket, toPrefix) => load(toBucket, toPrefix, null)}
+        onClose={() => setPicking(false)}
+      />
       <CreateBucketDialog
         clusterId={clusterId}
         uid={session?.uid ?? ""}

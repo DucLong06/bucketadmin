@@ -3,6 +3,7 @@ import { Alert, Box, Button, Paper, Stack, TextField, Tooltip, Typography } from
 import { invoke, isInternal, maskKey, type EndpointKind, type Opened, type Profile, type Proxy } from "./api";
 import { endpointError } from "./endpoint";
 import { t, type Key } from "./i18n";
+import { PathPicker } from "./PathPicker";
 import { startPath } from "./paths";
 import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
 import { ErrorAlert, LangToggle } from "./ui";
@@ -84,16 +85,8 @@ function ProfileStartPath({ profile, onChanged, fail }: { profile: Profile; onCh
   const next = startPath(draft);
   return (
     <Stack direction="row" spacing={1} sx={{ mt: 1.5, alignItems: "flex-start" }}>
-      <TextField
-        label={t("conn.startPath")}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        size="small"
-        fullWidth
-        error={!!next.error}
-        helperText={next.error ? t(next.error) : t("conn.startPathHelp")}
-        slotProps={{ htmlInput: { style: { fontFamily: "monospace" }, spellCheck: false, "aria-label": t("conn.startPathOf", { label: profile.label }) } }}
-      />
+      {/* Asks nothing until it is typed in: every saved connection has one of these. */}
+      <PathPicker clusterId={profile.id} lazy optional value={draft} onChange={setDraft} label={t("conn.startPath")} helperText={t("conn.startPathHelp")} ariaLabel={t("conn.startPathOf", { label: profile.label })} />
       <Button
         onClick={() => next.error || invoke("profile_set_start_path", { id: profile.id, startPath: next.path }).then(onChanged).catch(fail)}
         disabled={!!next.error || next.path === saved}
@@ -254,12 +247,8 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
             autoComplete: "off",
             helperText: t("conn.secretHelp"),
           })}
-          {field("startPath", t("conn.startPath"), {
-            placeholder: t("browse.openPathSample"),
-            error: !!start.error,
-            helperText: start.error ? t(start.error) : t("conn.startPathHelp"),
-            slotProps: { htmlInput: { style: { fontFamily: "monospace" }, spellCheck: false } },
-          })}
+          {/* No connection yet, so nothing to ask S3: the picker only checks the text. */}
+          <PathPicker clusterId="" optional value={form.startPath} onChange={(startPath) => setForm({ ...form, startPath })} label={t("conn.startPath")} helperText={t("conn.startPathHelp")} />
           <details>
             <summary>{t("conn.adminKey")}</summary>
             <Stack spacing={2} sx={{ mt: 2 }}>

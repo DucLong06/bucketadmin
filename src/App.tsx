@@ -18,6 +18,7 @@ import {
 } from "@mui/material";
 import { invoke, type Profile } from "./api";
 import { explain } from "./errors";
+import { AccessContext, PathPickerDialog } from "./PathPicker";
 import { isPinned, movePin, pinLabel, togglePin, type Pin, type PinOps } from "./pins";
 import Browse from "./Browse";
 import Connections from "./Connections";
@@ -53,6 +54,8 @@ export default function App() {
   const [pins, setPins] = useState<Pin[]>([]);
   const [pinMenu, setPinMenu] = useState<HTMLElement | null>(null);
   const [pinError, setPinError] = useState<string | null>(null);
+  // The connection a path is being pinned on, while the path picker is open for that.
+  const [pinning, setPinning] = useState<string | null>(null);
   function savePins(guess: Pin[], command: string, args: Record<string, unknown>) {
     setPins(guess);
     invoke<Pin[]>(command, args).then(setPins, (e) => {
@@ -196,6 +199,7 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
+      <AccessContext.Provider value={{ profiles: profiles ?? [], pins: knownPins, recents: known }}>
       <Box sx={{ display: "flex", flexDirection: "column", height: "100vh" }}>
         <Box component="header" sx={{ display: "flex", alignItems: "center", gap: 4.5, height: 68, px: 5, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
           <Typography component="div" sx={{ fontFamily: tokens.serif, fontStyle: "italic", fontWeight: 600, fontSize: 25, letterSpacing: "-0.01em" }}>
@@ -291,6 +295,16 @@ export default function App() {
                     {t("app.pinned.none")}
                   </MenuItem>
                 )}
+                <MenuItem
+                  disabled={!activeCluster()}
+                  onClick={() => {
+                    setPinMenu(null);
+                    setPinning(activeCluster());
+                  }}
+                  sx={{ color: "primary.main" }}
+                >
+                  {t("pins.add")}
+                </MenuItem>
                 {knownPins.slice(0, PINS_IN_MENU).map((pin) => (
                   <MenuItem key={JSON.stringify(pin.place)} title={placeLabel(pin.place, profiles ?? [])} onClick={() => goTo(pin.place)}>
                     {pin.label ? `${pin.label} · ${placeLabel(pin.place, profiles ?? [])}` : placeLabel(pin.place, profiles ?? [])}
@@ -330,6 +344,7 @@ export default function App() {
                           pins={knownPins}
                           pinOps={pinOps}
                           onOpenTab={openTab}
+                          onPinPath={setPinning}
                         />
                       </Container>
                     </Box>
@@ -348,6 +363,18 @@ export default function App() {
         </Box>
         <TaskPanel tasks={transfers} />
       </Box>
+      <PathPickerDialog
+        open={pinning !== null}
+        title={t("pins.addTitle")}
+        submitLabel={t("pins.addSubmit")}
+        clusterId={pinning ?? ""}
+        onSubmit={(bucket, prefix) => {
+          const place = { clusterId: pinning ?? "", uid: "", bucket, prefix };
+          if (!isPinned(pins, place)) pinOps.toggle(place);
+        }}
+        onClose={() => setPinning(null)}
+      />
+      </AccessContext.Provider>
       <Snackbar open={pinError !== null} autoHideDuration={8000} onClose={() => setPinError(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
         <Alert severity="error" variant="filled" onClose={() => setPinError(null)}>
           {pinError ? explain(pinError).message : ""}

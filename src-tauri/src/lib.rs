@@ -40,6 +40,7 @@ pub(crate) struct AppState {
     http: Mutex<HashMap<Proxy, ReqwestClient>>,
     pub(crate) browse: browse::Sessions,
     pub(crate) transfers: browse::Transfers,
+    pub(crate) policies: browse::PolicyCache,
 }
 
 impl AppState {
@@ -86,6 +87,7 @@ impl AppState {
     /// Browse sessions were built with the proxy choice of their time: drop them.
     fn forget_sessions(&self) {
         self.browse.clear();
+        self.policies.clear();
     }
 }
 
@@ -673,6 +675,7 @@ pub fn run() {
                 http: Mutex::default(),
                 browse: browse::Sessions::default(),
                 transfers: browse::Transfers::default(),
+                policies: browse::PolicyCache::default(),
             });
             // Before the first paint: the window never shows at another size than the saved one.
             if let Some(window) = app.get_webview_window("main") {
@@ -712,6 +715,8 @@ pub fn run() {
             usage_get,
             browse::browse_key_set,
             browse::browse_open,
+            browse::path_probe,
+            browse::accessible_prefixes,
             browse::browse_list,
             browse::browse_pick_upload,
             browse::browse_pick_save,
