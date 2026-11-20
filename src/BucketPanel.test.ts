@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { beforeEach, expect, test } from "vitest";
-import BucketPanel from "./BucketPanel";
+import BucketPanel, { filterBuckets, LIST_MAX_HEIGHT, moveHighlight } from "./BucketPanel";
 import { applyLang, t } from "./i18n";
 
 const nothing = () => {};
@@ -34,4 +34,53 @@ test("a key that lists nothing keeps the empty-list text, and one with buckets s
   expect(some).toContain("logs");
   expect(some).toContain("team-bucket");
   expect(some).not.toContain(t("browse.noBuckets"));
+});
+
+const many = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `team-${String(i + 1).padStart(3, "0")}-Data`, created: "" }));
+const listTag = (html: string) => /<ul[^>]*aria-label="Bucket list"[^>]*>/.exec(html)?.[0] ?? "";
+
+test("150 buckets: the list has a height limit of its own and scrolls inside the card; header, filter and controls are outside it", () => {
+  const html = panel({ buckets: many(150), current: "team-120-Data" });
+  expect(LIST_MAX_HEIGHT).toBe("max(200px, 38vh)");
+  expect(listTag(html)).toContain(`style="max-height:${LIST_MAX_HEIGHT}"`);
+  // The scrolling itself and the thin themed bar come from the list's class.
+  const cls = /class="([^"]*)"/.exec(listTag(html))?.[1].split(" ").find((c) => c.startsWith("css-")) ?? "";
+  const css = [...html.matchAll(/<style[^>]*>(.*?)<\/style>/gs)].map((m) => m[1]).join("");
+  const rule = new RegExp(`\\.${cls}\\{([^}]*)\\}`).exec(css)?.[1] ?? "";
+  expect(rule).toContain("overflow-y:auto");
+  expect(rule).toContain("scrollbar-width:thin");
+  expect(css).toContain(`.${cls}::-webkit-scrollbar{width:8px;}`);
+  // All 150 rows are in the list; everything else of the card is not.
+  const inside = html.slice(html.indexOf(listTag(html)), html.indexOf("</ul>"));
+  expect(inside.match(/role="button"/g)).toHaveLength(150);
+  const outside = text(html.replace(inside, ""));
+  expect(outside).toContain("Your buckets · 150");
+  expect(outside).toContain("Create bucket");
+  expect(outside).toContain("Open path");
+  expect(html.replace(inside, "")).toContain('placeholder="Filter buckets…"');
+  expect(text(inside)).not.toContain("Create bucket");
+});
+
+test("the filter field appears above 8 buckets only; the header counts the buckets", () => {
+  expect(panel({ buckets: many(8) })).not.toContain("Filter buckets…");
+  expect(panel({ buckets: many(9) })).toContain("Filter buckets…");
+  expect(text(panel({ buckets: many(8) }))).toContain("Your buckets · 8");
+  expect(text(panel({ buckets: [] }))).toContain("Your buckets · 0");
+  // Not counted when the key may not list them: there is no number to show.
+  expect(text(panel({ bucketsError: "AccessDenied" }))).not.toContain("·");
+});
+
+test("filtering is a case-insensitive substring match; arrow keys stay inside the list", () => {
+  const buckets = [{ name: "Team-Logs" }, { name: "team-data" }, { name: "archive" }];
+  expect(filterBuckets(buckets, "TEAM").map((b) => b.name)).toEqual(["Team-Logs", "team-data"]);
+  expect(filterBuckets(buckets, " logs ").map((b) => b.name)).toEqual(["Team-Logs"]);
+  expect(filterBuckets(buckets, "")).toBe(buckets);
+  expect(filterBuckets(buckets, "nope")).toEqual([]);
+  expect(moveHighlight(0, "ArrowDown", 3)).toBe(1);
+  expect(moveHighlight(2, "ArrowDown", 3)).toBe(2);
+  expect(moveHighlight(0, "ArrowUp", 3)).toBe(0);
+  expect(moveHighlight(2, "ArrowUp", 3)).toBe(1);
+  // A highlight left over from a longer list points at the last row; an empty list has none to open.
+  expect(moveHighlight(7, "", 3)).toBe(2);
+  expect(moveHighlight(0, "ArrowDown", 0)).toBe(0);
 });
