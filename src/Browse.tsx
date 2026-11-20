@@ -13,6 +13,7 @@ import {
   LinearProgress,
   Link,
   List,
+  ListItem,
   ListItemButton,
   ListItemText,
   Menu,
@@ -32,14 +33,16 @@ import BucketPanel from "./BucketPanel";
 import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import { accessLevel, type Access } from "./caps";
 import MyInfo from "./MyInfo";
+import PinnedPanel from "./PinnedPanel";
+import { isPinned, type Pin, type PinOps } from "./pins";
 import ObjectDrawer, { canUndelete, download, finalDeleteWarning, undeleteHint, type Versioning } from "./ObjectDrawer";
 import { splitPath } from "./paths";
-import { placeLabel, type Place } from "./tabs";
+import { placeLabel, placePath, type Place } from "./tabs";
 import { eyebrow, tokens } from "./theme";
 import type { StartTransfer } from "./transfers";
 import { explain } from "./errors";
 import { t, type Key } from "./i18n";
-import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, useAction } from "./ui";
+import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, PinToggle, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
 
 type Props = {
@@ -56,6 +59,11 @@ type Props = {
   recents: Place[];
   /** Go to a recent place (the app picks the tab). */
   onRecent: (at: Place) => void;
+  /** Pinned places of every connection, in the user's order, and how to change them. */
+  pins: Pin[];
+  pinOps: PinOps;
+  /** Open a place in a new tab. */
+  onOpenTab: (at: Place) => void;
 };
 const RECENT_IN_SIDEBAR = 6;
 /** `uid` is empty while browsing with the caller's own saved key. */
@@ -95,7 +103,7 @@ const th = (text: string) => (
 /** "a/b/c.txt" under prefix "a/b/" is shown as "c.txt". */
 const baseName = (key: string, prefix: string) => key.slice(prefix.length);
 
-export default function Browse({ profiles, start, active, startTransfer, onPlace, remember, recents, onRecent }: Props) {
+export default function Browse({ profiles, start, active, startTransfer, onPlace, remember, recents, onRecent, pins, pinOps, onOpenTab }: Props) {
   const [clusterId, setClusterId] = useState(start.clusterId);
   // Wide enough for every column of the object list (CSS px: the zoom setting narrows the page).
   const roomy = useMediaQuery("(min-width:1150px)");
@@ -143,6 +151,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   };
   // Right-clicked row and where the pointer was.
   const [menu, setMenu] = useState<{ row: Row; x: number; y: number } | null>(null);
+  // The same for a bucket of the sidebar list.
+  const [bucketMenu, setBucketMenu] = useState<{ bucket: string; x: number; y: number } | null>(null);
   const tableHeight = useTableHeight();
   const [versioning, setVersioning] = useState<Versioning>(NO_VERSIONING);
   // The prefix whose ACL dialog is open ("" = the bucket itself); null when closed.
@@ -357,6 +367,17 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
     );
   }
 
+  // A pinned place opens in this tab, whichever connection or key it belongs to.
+  function goHere(place: Place) {
+    if (place.clusterId === clusterId && session && place.uid === session.uid) return void load(place.bucket, place.prefix, null);
+    first.current = place;
+    if (place.clusterId !== clusterId) return setClusterId(place.clusterId);
+    setUidInput(place.uid);
+    open(place.uid);
+  }
+  /** A place of the session in this tab. */
+  const placeOf = (ofBucket: string, ofPrefix: string): Place => ({ clusterId, uid: session?.uid ?? "", bucket: ofBucket, prefix: ofPrefix });
+
   function onBucketCreated(name: string) {
     const byName = (a: BrowseBucket, b: BrowseBucket) => a.name.localeCompare(b.name);
     setSession((s) => s && { ...s, buckets: [...s.buckets, { name, created: "" }].sort(byName) });
@@ -496,6 +517,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               )}
             </Typography>
           )}
+          <PinnedPanel pins={pins} profiles={profiles} clusterId={clusterId} onOpen={goHere} onOpenTab={onOpenTab} ops={pinOps} />
           {session && (
             <BucketPanel
               title={session.uid ? t("browse.bucketsOfUser", { uid: session.uid }) : t("browse.bucketsMine")}
@@ -505,6 +527,10 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               active={active}
               onOpen={(toBucket, toPrefix) => load(toBucket, toPrefix, null)}
               onCreate={() => setCreating("bucket")}
+              onBucketMenu={(name, e) => {
+                e.preventDefault();
+                setBucketMenu({ bucket: name, x: e.clientX, y: e.clientY });
+              }}
               pathRef={pathField}
             />
           )}
@@ -515,9 +541,18 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               </Typography>
               <List dense aria-label={t("browse.recentList")}>
                 {recents.slice(0, RECENT_IN_SIDEBAR).map((place) => (
-                  <ListItemButton key={JSON.stringify(place)} onClick={() => onRecent(place)}>
-                    <ListItemText primary={placeLabel(place, profiles)} slotProps={{ primary: { sx: { fontSize: 14, wordBreak: "break-all" } } }} />
-                  </ListItemButton>
+                  <ListItem
+                    key={JSON.stringify(place)}
+                    disablePadding
+                    secondaryAction={
+                      <PinToggle pinned={isPinned(pins, place)} label={t(isPinned(pins, place) ? "browse.unpinThis" : "browse.pinThis", { path: placePath(place) })} onToggle={() => pinOps.toggle(place)} />
+                    }
+                    sx={{ "& .MuiListItemSecondaryAction-root": { right: 6 } }}
+                  >
+                    <ListItemButton onClick={() => onRecent(place)} sx={{ pr: "44px !important" }}>
+                      <ListItemText primary={placeLabel(place, profiles)} slotProps={{ primary: { sx: { fontSize: 14, wordBreak: "break-all" } } }} />
+                    </ListItemButton>
+                  </ListItem>
                 ))}
               </List>
             </Paper>
@@ -577,7 +612,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                   <Typography variant="overline" color="primary" component="p">
                     {t("browse.eyebrow", { label })}
                   </Typography>
-                  <Breadcrumbs aria-label={t("browse.path")} separator="/" sx={{ fontFamily: tokens.serif, fontSize: 29, fontWeight: 600, lineHeight: 1.25, "& .MuiBreadcrumbs-separator": { color: "divider" } }}>
+                  <Stack direction="row" sx={{ alignItems: "center", gap: 1 }}>
+                  <Breadcrumbs aria-label={t("browse.path")} separator="/" sx={{ minWidth: 0, fontFamily: tokens.serif, fontSize: 29, fontWeight: 600, lineHeight: 1.25, "& .MuiBreadcrumbs-separator": { color: "divider" } }}>
                     <Link component="button" underline="none" color={crumbs.length ? "text.secondary" : "text.primary"} onClick={() => load(bucket, "", null)} sx={{ font: "inherit" }}>
                       {bucket}
                     </Link>
@@ -594,6 +630,14 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                       </Link>
                     ))}
                   </Breadcrumbs>
+                    {/* At the end of the breadcrumb row: pins the place it spells out. */}
+                    <PinToggle
+                      size={40}
+                      pinned={isPinned(pins, placeOf(bucket, prefix))}
+                      label={t(isPinned(pins, placeOf(bucket, prefix)) ? "browse.unpinCurrent" : "browse.pinCurrent")}
+                      onToggle={() => pinOps.toggle(placeOf(bucket, prefix))}
+                    />
+                  </Stack>
                 </Box>
                 <Stack direction="row" spacing={1}>
                   <Button variant="contained" onClick={async () => upload(await invoke<string[]>("browse_pick_upload", { title: t("browse.pickUploadTitle") }))}>
@@ -742,10 +786,50 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
         {menuFolder && <MenuItem onClick={pick(() => load(bucket, menuFolder, null))}>{t("common.open")}</MenuItem>}
         {menuFolder && <MenuItem onClick={pick(() => setAclOf(menuFolder))}>{t("browse.acl")}</MenuItem>}
         {menuFolder && (
+          <MenuItem onClick={pick(() => pinOps.toggle(placeOf(bucket, menuFolder)))}>{t(isPinned(pins, placeOf(bucket, menuFolder)) ? "browse.unpinFolder" : "browse.pinFolder")}</MenuItem>
+        )}
+        {menuFolder && (
           <MenuItem onClick={pick(() => planDelete([], [menuFolder]))} sx={{ color: "error.main" }}>
             {t("common.delete")}
           </MenuItem>
         )}
+      </Menu>
+      <Menu
+        open={bucketMenu !== null}
+        onClose={() => setBucketMenu(null)}
+        anchorReference="anchorPosition"
+        anchorPosition={bucketMenu ? { top: bucketMenu.y, left: bucketMenu.x } : undefined}
+        slotProps={{ list: { "aria-label": t("browse.bucketMenu") } }}
+      >
+        {bucketMenu && [
+          <MenuItem
+            key="open"
+            onClick={() => {
+              setBucketMenu(null);
+              load(bucketMenu.bucket, "", null);
+            }}
+          >
+            {t("common.open")}
+          </MenuItem>,
+          <MenuItem
+            key="tab"
+            onClick={() => {
+              setBucketMenu(null);
+              onOpenTab(placeOf(bucketMenu.bucket, ""));
+            }}
+          >
+            {t("pins.openTab")}
+          </MenuItem>,
+          <MenuItem
+            key="pin"
+            onClick={() => {
+              setBucketMenu(null);
+              pinOps.toggle(placeOf(bucketMenu.bucket, ""));
+            }}
+          >
+            {t(isPinned(pins, placeOf(bucketMenu.bucket, "")) ? "browse.unpinBucket" : "browse.pinBucket")}
+          </MenuItem>,
+        ]}
       </Menu>
       <ConfirmDialog
         open={plan !== null}

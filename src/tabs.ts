@@ -42,11 +42,11 @@ export function cycleTab(tabs: BrowseTab[], active: string, step: 1 | -1): strin
   return tabs.length === 0 ? active : tabs[(at + step + tabs.length) % tabs.length].id;
 }
 
-/** What a key press asks of the tab bar: Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab; null for anything else. */
-export function tabShortcut(e: { key: string; code: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }): "new" | "close" | "next" | "previous" | null {
+/** What a key press asks of the tab bar: Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab, and Ctrl+D (pin the tab's place); null for anything else. */
+export function tabShortcut(e: { key: string; code: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }): "new" | "close" | "next" | "previous" | "pin" | null {
   if (!e.ctrlKey || e.altKey || e.metaKey) return null;
   // Tab by its physical key: with Shift held, GTK sends ISO_Left_Tab, which WebKit reports as key "Unidentified".
   if (e.code === "Tab" || e.key === "Tab") return e.shiftKey ? "previous" : "next";
   const key = e.key.toLowerCase();
-  return key === "t" ? "new" : key === "w" ? "close" : null;
+  return key === "t" ? "new" : key === "w" ? "close" : key === "d" && !e.shiftKey ? "pin" : null;
 }

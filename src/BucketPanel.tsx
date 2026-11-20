@@ -1,4 +1,4 @@
-import { type FormEvent, type KeyboardEvent, type Ref, useEffect, useRef, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type MouseEvent, type Ref, useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, InputAdornment, List, ListItemButton, ListItemText, Paper, Stack, TextField, Typography } from "@mui/material";
 import type { BrowseBucket } from "./api";
 import { t } from "./i18n";
@@ -40,13 +40,15 @@ type Props = {
   active: boolean;
   onOpen: (bucket: string, prefix: string) => void;
   onCreate: () => void;
+  /** A bucket row was right-clicked. */
+  onBucketMenu?: (bucket: string, e: MouseEvent) => void;
   /** The Open-path field, so other parts of the page can send the user there. */
   pathRef?: Ref<HTMLInputElement>;
 };
 
 /** The sidebar's bucket card: the key's buckets in a list of bounded height with a filter, and a
  *  field that opens any path the key may use. Only the list scrolls; the controls stay put. */
-export default function BucketPanel({ title, buckets, bucketsError, current, active, onOpen, onCreate, pathRef }: Props) {
+export default function BucketPanel({ title, buckets, bucketsError, current, active, onOpen, onCreate, onBucketMenu, pathRef }: Props) {
   const [path, setPath] = useState("");
   const split = splitPath(path);
   const field = useRef<HTMLInputElement | null>(null);
@@ -131,6 +133,7 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
             // The row the filter field's arrow keys are on looks like the focused one.
             className={filtering && i === highlight ? "Mui-focusVisible" : undefined}
             onClick={() => onOpen(b.name, "")}
+            onContextMenu={(e: MouseEvent) => onBucketMenu?.(b.name, e)}
           >
             <ListItemText primary={b.name} slotProps={{ primary: { sx: { fontFamily: tokens.mono, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: b.name } }} />
           </ListItemButton>

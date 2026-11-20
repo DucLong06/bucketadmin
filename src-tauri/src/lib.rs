@@ -23,7 +23,7 @@ use rgw_admin::{
     BucketInfo, Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin,
     Usage, UserInfo,
 };
-use settings::{EndpointKind, Place, Proxy, SettingsStore};
+use settings::{EndpointKind, Pin, Place, Proxy, SettingsStore};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -133,11 +133,50 @@ fn profile_set_start_path(
 #[tauri::command(async)]
 fn remove_profile(state: St<'_>, id: String) -> Cmd<'_, ()> {
     state.profiles.remove(&id)?;
-    // Its recent places lead nowhere now.
-    let forgotten = state
-        .settings
-        .change(|s| s.recent.retain(|place| place.cluster_id != id));
+    // Its recent and pinned places lead nowhere now.
+    let forgotten = state.settings.change(|s| {
+        s.recent.retain(|place| place.cluster_id != id);
+        s.pins.retain(|pin| pin.place.cluster_id != id);
+    });
     forgotten.map(|_| ())
+}
+
+/// The pinned places, in the user's order.
+#[tauri::command(async)]
+fn pin_list(state: St<'_>) -> Cmd<'_, Vec<Pin>> {
+    Ok(state.settings.get()?.pins)
+}
+
+/// Pins a place (a no-op when it is pinned already) and returns the list.
+#[tauri::command(async)]
+fn pin_add(state: St<'_>, place: Place, label: String) -> Cmd<'_, Vec<Pin>> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+    let now = now.map(|d| d.as_secs() as i64).unwrap_or(0);
+    let mut pinned = Ok(());
+    let saved = state
+        .settings
+        .change(|s| pinned = s.pin(place, &label, now))?;
+    pinned?;
+    Ok(saved.pins)
+}
+
+#[tauri::command(async)]
+fn pin_remove(state: St<'_>, place: Place) -> Cmd<'_, Vec<Pin>> {
+    Ok(state.settings.change(|s| s.unpin(&place))?.pins)
+}
+
+#[tauri::command(async)]
+fn pin_rename(state: St<'_>, place: Place, label: String) -> Cmd<'_, Vec<Pin>> {
+    Ok(state
+        .settings
+        .change(|s| s.rename_pin(&place, &label))?
+        .pins)
+}
+
+/// Manual order: the pin of `place` goes to position `to`.
+#[tauri::command(async)]
+fn pin_move(state: St<'_>, place: Place, to: usize) -> Cmd<'_, Vec<Pin>> {
+    Ok(state.settings.change(|s| s.move_pin(&place, to))?.pins)
 }
 
 /// The places browsed last, newest first.
@@ -636,6 +675,11 @@ pub fn run() {
             remove_profile,
             recent_list,
             recent_add,
+            pin_list,
+            pin_add,
+            pin_remove,
+            pin_rename,
+            pin_move,
             profile_set_proxy,
             profile_set_start_path,
             network_get,

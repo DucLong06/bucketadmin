@@ -17,18 +17,22 @@ import {
   Typography,
 } from "@mui/material";
 import { invoke, type Profile } from "./api";
+import { explain } from "./errors";
+import { isPinned, movePin, pinLabel, togglePin, type Pin, type PinOps } from "./pins";
 import Browse from "./Browse";
 import Connections from "./Connections";
 import { t, useLang } from "./i18n";
-import { closeTab, cycleTab, placeLabel, samePlace, tabShortcut, tabTitle, type BrowseTab, type Place } from "./tabs";
+import { closeTab, cycleTab, placeLabel, placePath, samePlace, tabShortcut, tabTitle, type BrowseTab, type Place } from "./tabs";
 import { theme, tokens } from "./theme";
 import { TaskPanel, useTransfers } from "./transfers";
-import { ErrorAlert } from "./ui";
+import { ErrorAlert, PinToggle } from "./ui";
 import { zoomShortcut } from "./zoom";
 
 /** A release whose tag is not this build's version (backend `update_check`). */
 type Update = { tag: string; url: string; current: string };
 
+/** Pins the app-bar menu lists (the sidebar has them all). */
+const PINS_IN_MENU = 15;
 const newTab = (start: Place): BrowseTab => ({ id: crypto.randomUUID(), start, at: start });
 const nowhere = (clusterId: string): Place => ({ clusterId, uid: "", bucket: "", prefix: "" });
 
@@ -44,6 +48,28 @@ export default function App() {
   const [active, setActive] = useState("");
   const [recents, setRecents] = useState<Place[]>([]);
   const [recentMenu, setRecentMenu] = useState<HTMLElement | null>(null);
+  // Pinned places, shared by every tab. A change shows at once; the saved list then replaces
+  // the guess, and a refusal (the list is full) puts back what is really saved.
+  const [pins, setPins] = useState<Pin[]>([]);
+  const [pinMenu, setPinMenu] = useState<HTMLElement | null>(null);
+  const [pinError, setPinError] = useState<string | null>(null);
+  function savePins(guess: Pin[], command: string, args: Record<string, unknown>) {
+    setPins(guess);
+    invoke<Pin[]>(command, args).then(setPins, (e) => {
+      setPinError(String(e));
+      invoke<Pin[]>("pin_list").then(setPins, () => {});
+    });
+  }
+  const pinOps: PinOps = {
+    toggle: (place) => {
+      if (!place.clusterId || !place.bucket) return;
+      const guess = togglePin(pins, place, Math.floor(Date.now() / 1000));
+      if (isPinned(pins, place)) savePins(guess, "pin_remove", { place });
+      else savePins(guess, "pin_add", { place, label: "" });
+    },
+    rename: (place, label) => savePins(pins.map((pin) => (samePlace(pin.place, place) ? { ...pin, label } : pin)), "pin_rename", { place, label }),
+    move: (place, to) => savePins(movePin(pins, place, to), "pin_move", { place, to }),
+  };
   // One task queue for every tab: a transfer keeps running when its tab is left or closed.
   const transfers = useTransfers();
   // A release newer than this build, found by the daily check; trouble checking is silent.
@@ -73,8 +99,9 @@ export default function App() {
   const openRelease = () => invoke("update_open").then(() => setUpdateToast(null), () => setUpdateToast("no-browser"));
 
   const reload = () =>
-    Promise.all([invoke<Profile[]>("list_profiles"), invoke<Place[]>("recent_list")])
-      .then(([list, recent]) => {
+    Promise.all([invoke<Profile[]>("list_profiles"), invoke<Place[]>("recent_list"), invoke<Pin[]>("pin_list")])
+      .then(([list, recent, pinned]) => {
+        setPins(pinned);
         // Nothing to browse yet: start where a connection can be added.
         if (profiles === null && list.length === 0) setPage("connections");
         setProfiles(list);
@@ -107,6 +134,7 @@ export default function App() {
   // A place already open in a tab is shown there instead of being opened twice.
   function goTo(place: Place) {
     setRecentMenu(null);
+    setPinMenu(null);
     const open = tabs.find((tab) => samePlace(tab.at, place));
     if (!open) return openTab(place);
     setActive(open.id);
@@ -114,10 +142,11 @@ export default function App() {
   }
   const remember = (place: Place) => invoke<Place[]>("recent_add", { place }).then(setRecents, () => {});
 
-  // Ctrl+T new tab, Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab next / previous; Ctrl+= / Ctrl+- /
-  // Ctrl+0 zoom. The handler is registered once and reads the current state through this ref.
-  const keys = useRef({ openEmptyTab, close, tabs, active, scale });
-  keys.current = { openEmptyTab, close, tabs, active, scale };
+  // Ctrl+T new tab, Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab next / previous, Ctrl+D pin the place
+  // of the tab on screen; Ctrl+= / Ctrl+- / Ctrl+0 zoom. The handler is registered once and reads
+  // the current state through this ref.
+  const keys = useRef({ openEmptyTab, close, tabs, active, scale, pinOps });
+  keys.current = { openEmptyTab, close, tabs, active, scale, pinOps };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const now = keys.current;
@@ -129,8 +158,16 @@ export default function App() {
         return;
       }
       const asked = tabShortcut(e);
+      if (!asked) return;
+      // Ctrl+D is the app's in every state (never the webview's own).
+      if (asked === "pin") e.preventDefault();
       // A dialog, drawer or menu belongs to the tab on screen: no switching underneath it.
-      if (!asked || document.querySelector(".MuiDialog-root, .MuiDrawer-root, .MuiPopover-root")) return;
+      if (document.querySelector(".MuiDialog-root, .MuiDrawer-root, .MuiPopover-root")) return;
+      if (asked === "pin") {
+        const here = now.tabs.find((tab) => tab.id === now.active)?.at;
+        if (here?.bucket) now.pinOps.toggle(here);
+        return;
+      }
       if (asked === "new") now.openEmptyTab();
       else if (asked === "close") now.close(now.active);
       else {
@@ -145,6 +182,7 @@ export default function App() {
 
   const browsing = page === "browse";
   const known = recents.filter((r) => profiles?.some((p) => p.id === r.clusterId));
+  const knownPins = pins.filter((pin) => profiles?.some((p) => p.id === pin.place.clusterId));
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -234,14 +272,30 @@ export default function App() {
                 +
               </IconButton>
               <Box sx={{ flexGrow: 1 }} />
+              <Button size="small" aria-haspopup="menu" onClick={(e) => setPinMenu(e.currentTarget)} sx={{ mb: 0.5 }}>
+                {t("app.pinned")}
+              </Button>
+              <Menu anchorEl={pinMenu} open={pinMenu !== null} onClose={() => setPinMenu(null)} slotProps={{ list: { "aria-label": t("app.pinned.list") } }}>
+                {knownPins.length === 0 && (
+                  <MenuItem disabled sx={{ whiteSpace: "normal", maxWidth: 340 }}>
+                    {t("app.pinned.none")}
+                  </MenuItem>
+                )}
+                {knownPins.slice(0, PINS_IN_MENU).map((pin) => (
+                  <MenuItem key={JSON.stringify(pin.place)} title={placeLabel(pin.place, profiles ?? [])} onClick={() => goTo(pin.place)}>
+                    {pin.label ? `${pin.label} · ${placeLabel(pin.place, profiles ?? [])}` : placeLabel(pin.place, profiles ?? [])}
+                  </MenuItem>
+                ))}
+              </Menu>
               <Button size="small" aria-haspopup="menu" onClick={(e) => setRecentMenu(e.currentTarget)} sx={{ mb: 0.5 }}>
                 {t("app.recent")}
               </Button>
               <Menu anchorEl={recentMenu} open={recentMenu !== null} onClose={() => setRecentMenu(null)} slotProps={{ list: { "aria-label": t("app.recent.list") } }}>
                 {known.length === 0 && <MenuItem disabled>{t("app.recent.none")}</MenuItem>}
                 {known.map((place) => (
-                  <MenuItem key={JSON.stringify(place)} onClick={() => goTo(place)}>
+                  <MenuItem key={JSON.stringify(place)} onClick={() => goTo(place)} sx={{ justifyContent: "space-between", gap: 2 }}>
                     {placeLabel(place, profiles ?? [])}
+                    <PinToggle pinned={isPinned(pins, place)} label={t(isPinned(pins, place) ? "browse.unpinThis" : "browse.pinThis", { path: placePath(place) })} onToggle={() => pinOps.toggle(place)} />
                   </MenuItem>
                 ))}
               </Menu>
@@ -263,6 +317,9 @@ export default function App() {
                           remember={remember}
                           recents={known}
                           onRecent={goTo}
+                          pins={knownPins}
+                          pinOps={pinOps}
+                          onOpenTab={openTab}
                         />
                       </Container>
                     </Box>
@@ -281,6 +338,11 @@ export default function App() {
         </Box>
         <TaskPanel tasks={transfers} />
       </Box>
+      <Snackbar open={pinError !== null} autoHideDuration={8000} onClose={() => setPinError(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
+        <Alert severity="error" variant="filled" onClose={() => setPinError(null)}>
+          {pinError ? explain(pinError).message : ""}
+        </Alert>
+      </Snackbar>
       <Snackbar
         open={updateToast !== null}
         autoHideDuration={updateToast === "new" ? 12000 : null}

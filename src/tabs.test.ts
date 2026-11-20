@@ -58,4 +58,10 @@ test("tab shortcuts, as the keys really arrive in the webview", () => {
   expect(press("t", "KeyT", { ctrlKey: false })).toBeNull();
   expect(press("t", "KeyT", { altKey: true })).toBeNull();
   expect(press("f", "KeyF")).toBeNull();
+  // Ctrl+D pins the place of the tab on screen (also with Caps Lock on); it takes no other modifier.
+  expect(press("d", "KeyD")).toBe("pin");
+  expect(press("D", "KeyD")).toBe("pin");
+  expect(press("D", "KeyD", { shiftKey: true })).toBeNull();
+  expect(press("d", "KeyD", { altKey: true })).toBeNull();
+  expect(press("d", "KeyD", { ctrlKey: false })).toBeNull();
 });

@@ -104,6 +104,26 @@ pub struct Place {
 /// Recent places kept.
 pub const MAX_RECENT: usize = 20;
 
+/// A place the user pinned: a bookmark to a bucket, or to a prefix deep inside one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Pin {
+    pub place: Place,
+    /// The user's own name for it; empty = show the path.
+    #[serde(default)]
+    pub label: String,
+    /// When it was pinned, seconds since 1970.
+    #[serde(default)]
+    pub added: i64,
+}
+
+/// Pinned places kept; one more is refused, never dropped silently.
+pub const MAX_PINS: usize = 100;
+const MAX_PIN_LABEL: usize = 80;
+
+fn pin_label(label: &str) -> String {
+    label.trim().chars().take(MAX_PIN_LABEL).collect()
+}
+
 /// Sizes the whole interface can be shown at, in percent.
 pub const UI_SCALES: [u16; 6] = [80, 90, 100, 110, 125, 150];
 
@@ -149,6 +169,9 @@ pub struct Settings {
     /// Places opened last, newest first, at most [`MAX_RECENT`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent: Vec<Place>,
+    /// Pinned places in the user's own order, at most [`MAX_PINS`], no place twice.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pins: Vec<Pin>,
 }
 
 impl Default for Settings {
@@ -159,6 +182,7 @@ impl Default for Settings {
             lang: String::new(),
             update: None,
             recent: Vec::new(),
+            pins: Vec::new(),
         }
     }
 }
@@ -179,6 +203,49 @@ impl Settings {
         self.recent.retain(|known| *known != place);
         self.recent.insert(0, place);
         self.recent.truncate(MAX_RECENT);
+    }
+
+    fn pin_at(&self, place: &Place) -> Option<usize> {
+        self.pins.iter().position(|pin| pin.place == *place)
+    }
+
+    /// Pins `place` at the end of the list. A place that is pinned already stays as it is.
+    pub fn pin(&mut self, place: Place, label: &str, now: i64) -> Result<(), String> {
+        if place.cluster_id.is_empty() || place.bucket.is_empty() {
+            return Err("a pinned place needs a connection and a bucket".into());
+        }
+        if self.pin_at(&place).is_some() {
+            return Ok(());
+        }
+        if self.pins.len() >= MAX_PINS {
+            return Err(format!("at most {MAX_PINS} places can be pinned"));
+        }
+        self.pins.push(Pin {
+            place,
+            label: pin_label(label),
+            added: now,
+        });
+        Ok(())
+    }
+
+    /// Unpins `place`; one that is not pinned is not an error.
+    pub fn unpin(&mut self, place: &Place) {
+        self.pins.retain(|pin| pin.place != *place);
+    }
+
+    /// Gives the pin of `place` another name (empty: back to its path).
+    pub fn rename_pin(&mut self, place: &Place, label: &str) {
+        if let Some(at) = self.pin_at(place) {
+            self.pins[at].label = pin_label(label);
+        }
+    }
+
+    /// Moves the pin of `place` to position `to` (past the end: last).
+    pub fn move_pin(&mut self, place: &Place, to: usize) {
+        if let Some(at) = self.pin_at(place) {
+            let pin = self.pins.remove(at);
+            self.pins.insert(to.min(self.pins.len()), pin);
+        }
     }
 }
 
@@ -369,6 +436,92 @@ mod tests {
         // A file from before a field existed still loads.
         std::fs::write(dir.join("settings.json"), "{}").unwrap();
         assert_eq!(store.get().unwrap(), Settings::default());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pins_round_trip_dedupe_keep_their_order_and_stop_at_the_cap() {
+        let dir = temp_dir("pins");
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = SettingsStore::new(&dir);
+        // A settings.json written before pins existed.
+        std::fs::write(dir.join("settings.json"), r#"{"lang":"vi"}"#).unwrap();
+        assert_eq!(store.get().unwrap().pins, []);
+
+        let place = |prefix: &str| Place {
+            cluster_id: "c1".into(),
+            uid: String::new(),
+            bucket: "team-bucket".into(),
+            prefix: prefix.into(),
+        };
+        let labels = |s: &Settings| -> Vec<String> {
+            let label = |pin: &Pin| format!("{}={}", pin.place.prefix, pin.label);
+            s.pins.iter().map(label).collect()
+        };
+        let mut pinned = Ok(());
+        for (prefix, label, now) in [("", "", 10), ("a/b/c/", "  daily  ", 20), ("x/", "", 30)] {
+            let saved = store.change(|s| pinned = s.pin(place(prefix), label, now));
+            saved.unwrap();
+            pinned.clone().unwrap();
+        }
+        // Round trip through the file: order, trimmed label, time, and the lang that was there.
+        let reloaded = SettingsStore::new(&dir).get().unwrap();
+        assert_eq!(labels(&reloaded), ["=", "a/b/c/=daily", "x/="]);
+        assert_eq!(reloaded.pins[1].added, 20);
+        assert_eq!(reloaded.lang, "vi");
+        let json = std::fs::read_to_string(dir.join("settings.json")).unwrap();
+        assert!(json.contains(r#""prefix": "a/b/c/""#), "{json}");
+
+        // Pinning a pinned place again changes nothing (not its label, not its position).
+        let again = store.change(|s| pinned = s.pin(place("a/b/c/"), "other name", 99));
+        assert_eq!(labels(&again.unwrap()), ["=", "a/b/c/=daily", "x/="]);
+        pinned.clone().unwrap();
+        // The same path with another user's key, or on another connection, is another place.
+        let mut as_alice = place("a/b/c/");
+        as_alice.uid = "alice".into();
+        let mut s = reloaded.clone();
+        s.pin(as_alice, "", 1).unwrap();
+        assert_eq!(s.pins.len(), 4);
+
+        // Manual order: to the front, past the end, and a place that is not pinned.
+        let moved = store.change(|s| s.move_pin(&place("x/"), 0)).unwrap();
+        assert_eq!(labels(&moved), ["x/=", "=", "a/b/c/=daily"]);
+        let moved = store.change(|s| s.move_pin(&place("x/"), 99)).unwrap();
+        assert_eq!(labels(&moved), ["=", "a/b/c/=daily", "x/="]);
+        let moved = store.change(|s| s.move_pin(&place(""), 1)).unwrap();
+        assert_eq!(labels(&moved), ["a/b/c/=daily", "=", "x/="]);
+        let same = store.change(|s| s.move_pin(&place("nope/"), 0)).unwrap();
+        assert_eq!(labels(&same), labels(&moved));
+
+        // Rename (empty: back to the path) and unpin.
+        let renamed = store.change(|s| s.rename_pin(&place("x/"), " reports "));
+        assert_eq!(labels(&renamed.unwrap())[2], "x/=reports");
+        let renamed = store.change(|s| s.rename_pin(&place("x/"), ""));
+        assert_eq!(labels(&renamed.unwrap())[2], "x/=");
+        let long = "n".repeat(300);
+        let renamed = store.change(|s| s.rename_pin(&place("x/"), &long));
+        assert_eq!(renamed.unwrap().pins[2].label.len(), MAX_PIN_LABEL);
+        let left = store.change(|s| s.unpin(&place("a/b/c/"))).unwrap();
+        assert_eq!(left.pins.len(), 2);
+        store.change(|s| s.unpin(&place("a/b/c/"))).unwrap();
+
+        // The cap: the 101st is refused and nothing is lost.
+        let mut full = Settings::default();
+        for n in 0..MAX_PINS {
+            full.pin(place(&format!("p{n}/")), "", n as i64).unwrap();
+        }
+        let refused = full.pin(place("one-too-many/"), "", 0);
+        assert_eq!(refused, Err("at most 100 places can be pinned".into()));
+        assert_eq!(full.pins.len(), MAX_PINS);
+        assert_eq!(
+            full.pin(place("p7/"), "", 0),
+            Ok(()),
+            "a pinned one is still a no-op"
+        );
+        // No connection or no bucket: nothing to come back to.
+        let mut nowhere = place("");
+        nowhere.bucket.clear();
+        assert!(full.pin(nowhere, "", 0).is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

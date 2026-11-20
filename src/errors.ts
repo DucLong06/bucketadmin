@@ -27,6 +27,8 @@ const known = (group: "rgw" | "s3", code: string) => ((group === "rgw" ? RGW_COD
 // Fixed phrases of the app's own backend, by how they begin; the first match wins.
 const PHRASES: [RegExp, Key, string][] = [
   [/^invalid proxy URL/, "error.proxyUrl", "proxy"],
+  [/^at most \d+ places can be pinned/, "error.pinsFull", "pins"],
+  [/^invalid start path/, "error.startPath", "path"],
   [/^keychain:/, "error.keychain", "keychain"],
   [/^cannot read this file as Parquet/, "error.parquet", "parquet"],
   [/^cannot read /, "error.fileRead", "file"],
