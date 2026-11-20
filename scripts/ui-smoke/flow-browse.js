@@ -72,6 +72,28 @@
     check(fits(), "Browse does not scroll sideways");
     await shot("03-bucket-root");
 
+    // ---- zoom: the webview's own zoom, so the window keeps its size and the page gets narrower in CSS px
+    const wide = window.innerWidth;
+    const zoomed = () => Math.round((wide / window.innerWidth) * 100);
+    const savedScale = () => window.__TAURI_INTERNALS__.invoke("get_ui_scale");
+    press("=");
+    await waitFor(() => zoomed() === 110, "Ctrl+=: 110 %");
+    press("+");
+    await waitFor(() => zoomed() === 125, "Ctrl++: 125 %");
+    check((await savedScale()) === 125, "the size is written to settings.json at once");
+    check(fits(), "Browse does not scroll sideways at 125 %");
+    rightClick(last(all('[aria-label="Mở thư mục notes/"]')).closest('[role="row"]'));
+    await waitFor(() => menuItems().length > 0, "context menu at 125 %");
+    check(inWindow(last(all(".MuiMenu-paper"))), "the context menu is not clipped at 125 %");
+    last(all(".MuiMenu-root .MuiBackdrop-root")).click();
+    await menusGone();
+    await shot("03b-zoom-125");
+    press("-");
+    await waitFor(() => zoomed() === 110, "Ctrl+-: 110 %");
+    press("0");
+    await waitFor(() => zoomed() === 100 && window.innerWidth === wide, "Ctrl+0: 100 %");
+    check((await savedScale()) === 100, "and saved again");
+
     // ---- text: line numbers, Ctrl-F, find
     await openFolder("notes/");
     await openObject("notes/readme.txt");

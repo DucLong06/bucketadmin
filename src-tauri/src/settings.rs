@@ -104,10 +104,32 @@ pub struct Place {
 /// Recent places kept.
 pub const MAX_RECENT: usize = 20;
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// Sizes the whole interface can be shown at, in percent.
+pub const UI_SCALES: [u16; 6] = [80, 90, 100, 110, 125, 150];
+
+fn default_scale() -> u16 {
+    100
+}
+
+/// The allowed step nearest to `percent`; a value outside the range of steps is refused.
+pub fn nearest_scale(percent: u16) -> Result<u16, String> {
+    let (min, max) = (UI_SCALES[0], UI_SCALES[UI_SCALES.len() - 1]);
+    if !(min..=max).contains(&percent) {
+        return Err(format!(
+            "invalid UI scale {percent}: expected {min} to {max} percent"
+        ));
+    }
+    let nearest = UI_SCALES.iter().min_by_key(|step| step.abs_diff(percent));
+    Ok(*nearest.unwrap_or(&100))
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
     pub proxy: Proxy,
+    /// Size of the interface in percent, one of [`UI_SCALES`].
+    #[serde(default = "default_scale")]
+    pub ui_scale: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update: Option<UpdateSeen>,
     /// Places opened last, newest first, at most [`MAX_RECENT`].
@@ -115,7 +137,23 @@ pub struct Settings {
     pub recent: Vec<Place>,
 }
 
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            proxy: Proxy::default(),
+            ui_scale: default_scale(),
+            update: None,
+            recent: Vec::new(),
+        }
+    }
+}
+
 impl Settings {
+    /// The saved scale as a step the UI can show; a hand-edited value that is no step gives 100.
+    pub fn scale(&self) -> u16 {
+        nearest_scale(self.ui_scale).unwrap_or(default_scale())
+    }
+
     /// Puts `place` at the front of the recent places; a place already listed moves up.
     pub fn remember(&mut self, place: Place) {
         self.recent.retain(|known| *known != place);
@@ -311,6 +349,47 @@ mod tests {
         // A file from before a field existed still loads.
         std::fs::write(dir.join("settings.json"), "{}").unwrap();
         assert_eq!(store.get().unwrap(), Settings::default());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ui_scale_defaults_to_100_snaps_to_a_step_and_survives_a_reload() {
+        let dir = temp_dir("ui-scale");
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = SettingsStore::new(&dir);
+        // A settings.json written before the field existed.
+        std::fs::write(dir.join("settings.json"), r#"{"proxy":{"mode":"none"}}"#).unwrap();
+        let old = store.get().unwrap();
+        assert_eq!(
+            (old.ui_scale, old.scale(), old.proxy),
+            (100, 100, Proxy::None)
+        );
+        // Round trip.
+        store.change(|s| s.ui_scale = 125).unwrap();
+        assert_eq!(SettingsStore::new(&dir).get().unwrap().scale(), 125);
+        let json = std::fs::read_to_string(dir.join("settings.json")).unwrap();
+        assert!(json.contains(r#""ui_scale": 125"#), "{json}");
+        // Clamping: a value between two steps goes to the nearer one, anything outside is refused.
+        for (asked, step) in [
+            (80, 80),
+            (84, 80),
+            (86, 90),
+            (104, 100),
+            (117, 110),
+            (118, 125),
+            (140, 150),
+            (150, 150),
+        ] {
+            assert_eq!(nearest_scale(asked), Ok(step), "{asked}");
+        }
+        for refused in [0, 79, 151, 400] {
+            assert!(nearest_scale(refused).is_err(), "{refused}");
+        }
+        // A hand-edited file: a value between steps is shown as a step, nonsense as 100.
+        std::fs::write(dir.join("settings.json"), r#"{"ui_scale":120}"#).unwrap();
+        assert_eq!(store.get().unwrap().scale(), 125);
+        std::fs::write(dir.join("settings.json"), r#"{"ui_scale":9}"#).unwrap();
+        assert_eq!(store.get().unwrap().scale(), 100);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

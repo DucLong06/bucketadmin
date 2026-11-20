@@ -1,9 +1,10 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Alert, Box, Button, Paper, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { invoke, isInternal, maskKey, type EndpointKind, type Profile, type Proxy } from "./api";
 import { endpointError } from "./endpoint";
 import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
 import { ErrorAlert } from "./ui";
+import { stepScale, UI_SCALES } from "./zoom";
 
 type Outcome = { severity: "success" | "warning" | "error"; text: string };
 
@@ -82,7 +83,15 @@ const connected = (buckets: number): Outcome => ({
 
 /** The connections screen: the S3 endpoints the app browses, each with the user's own key
  *  (secret in the OS keychain), an optional admin key, and its proxy choice. */
-export default function Connections({ profiles, onChanged }: { profiles: Profile[]; onChanged: () => void }) {
+type Props = {
+  profiles: Profile[];
+  onChanged: () => void;
+  /** Size of the interface in percent, and how to ask for another one. */
+  scale: number;
+  onScale: (percent: number) => void;
+};
+
+export default function Connections({ profiles, onChanged, scale, onScale }: Props) {
   const [form, setForm] = useState(emptyForm);
   // The new connection's own proxy choice; null = follow the app-wide setting.
   const [formProxy, setFormProxy] = useState<Proxy | null>(null);
@@ -309,6 +318,30 @@ export default function Connections({ profiles, onChanged }: { profiles: Profile
             </Button>
           </Stack>
           {networkOutcome && outcomeAlert(networkOutcome)}
+        </Stack>
+      </Paper>
+
+      <Paper variant="outlined" sx={{ p: 3, mt: 4 }}>
+        <Typography variant="h6" component="h2" gutterBottom>
+          Cài đặt chung — Giao diện
+        </Typography>
+        <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
+          <Typography variant="body2" color="text.secondary">
+            Cỡ chữ và giao diện
+          </Typography>
+          <Tooltip title="Ctrl+= phóng to · Ctrl+- thu nhỏ · Ctrl+0 về 100%">
+            <Stack direction="row" spacing={0.5} role="group" aria-label="Cỡ giao diện" sx={{ alignItems: "center" }}>
+              <Button variant="outlined" aria-label="Thu nhỏ giao diện" disabled={scale <= UI_SCALES[0]} onClick={() => onScale(stepScale(scale, -1))}>
+                A-
+              </Button>
+              <Typography aria-live="polite" sx={{ minWidth: 56, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>
+                {scale}%
+              </Typography>
+              <Button variant="outlined" aria-label="Phóng to giao diện" disabled={scale >= UI_SCALES[UI_SCALES.length - 1]} onClick={() => onScale(stepScale(scale, 1))}>
+                A+
+              </Button>
+            </Stack>
+          </Tooltip>
         </Stack>
       </Paper>
     </>

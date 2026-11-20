@@ -23,6 +23,7 @@ import { closeTab, cycleTab, placeLabel, samePlace, tabShortcut, tabTitle, type 
 import { theme, tokens } from "./theme";
 import { TaskPanel, useTransfers } from "./transfers";
 import { ErrorAlert } from "./ui";
+import { zoomShortcut } from "./zoom";
 
 /** A release whose tag is not this build's version (backend `update_check`). */
 type Update = { tag: string; url: string; current: string };
@@ -54,6 +55,18 @@ export default function App() {
       () => {},
     );
   }, []);
+  // Size of the whole interface in percent. The backend zooms the webview and saves the choice.
+  const [scale, setScale] = useState(100);
+  useEffect(() => {
+    invoke<number>("get_ui_scale").then(setScale, () => {});
+  }, []);
+  function zoomTo(percent: number) {
+    // Shown and stepped from at once: a second key press must not start from the size before this one.
+    keys.current.scale = percent;
+    setScale(percent);
+    // The backend answers with the size it saved; if it refused, show the size that is really in effect.
+    invoke<number>("set_ui_scale", { percent }).then(setScale, () => invoke<number>("get_ui_scale").then(setScale, () => {}));
+  }
   const openRelease = () => invoke("update_open").then(() => setUpdateToast(null), () => setUpdateToast("no-browser"));
 
   const reload = () =>
@@ -98,16 +111,23 @@ export default function App() {
   }
   const remember = (place: Place) => invoke<Place[]>("recent_add", { place }).then(setRecents, () => {});
 
-  // Ctrl+T new tab, Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab next / previous. The handler is
-  // registered once and reads the current state through this ref.
-  const keys = useRef({ openEmptyTab, close, tabs, active });
-  keys.current = { openEmptyTab, close, tabs, active };
+  // Ctrl+T new tab, Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab next / previous; Ctrl+= / Ctrl+- /
+  // Ctrl+0 zoom. The handler is registered once and reads the current state through this ref.
+  const keys = useRef({ openEmptyTab, close, tabs, active, scale });
+  keys.current = { openEmptyTab, close, tabs, active, scale };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const now = keys.current;
+      // Zoom works everywhere, also over a dialog.
+      const size = zoomShortcut(e, now.scale);
+      if (size !== null) {
+        e.preventDefault();
+        if (size !== now.scale) zoomTo(size);
+        return;
+      }
       const asked = tabShortcut(e);
       // A dialog, drawer or menu belongs to the tab on screen: no switching underneath it.
       if (!asked || document.querySelector(".MuiDialog-root, .MuiDrawer-root, .MuiPopover-root")) return;
-      const now = keys.current;
       if (asked === "new") now.openEmptyTab();
       else if (asked === "close") now.close(now.active);
       else {
@@ -251,7 +271,7 @@ export default function App() {
             <Box sx={{ position: "absolute", inset: 0, overflow: "auto" }}>
               <Container maxWidth="lg" sx={{ py: 4, px: "40px !important" }}>
                 <ErrorAlert error={error} />
-                <Connections profiles={profiles ?? []} onChanged={reload} />
+                <Connections profiles={profiles ?? []} onChanged={reload} scale={scale} onScale={zoomTo} />
               </Container>
             </Box>
           )}
