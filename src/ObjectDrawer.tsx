@@ -96,15 +96,15 @@ function DetailsTab({ at, object, startTransfer, versioning, onDeleted, onClose 
     <Stack spacing={3}>
       <Stack spacing={1}>
         {row("Key", object.key)}
-        {row("Size", `${formatBytes(object.size)} (${object.size} byte)`)}
+        {row("Kích thước", `${formatBytes(object.size)} (${object.size} byte)`)}
         {row(`Sửa lần cuối (${TZ})`, vnTime(object.last_modified, true))}
         {row("ETag", object.etag)}
         {row("Content-Type", contentType)}
         {object.storage_class && row("Storage class", object.storage_class)}
-        {object.owner && row("Owner", object.owner)}
+        {object.owner && row("Chủ sở hữu", object.owner)}
         <Box>
           <Button variant="contained" onClick={() => download(at, startTransfer)}>
-            Tải về
+            Tải xuống
           </Button>
         </Box>
       </Stack>
@@ -187,9 +187,9 @@ function DetailsTab({ at, object, startTransfer, versioning, onDeleted, onClose 
 
 const allTabs: { label: string; Panel: ComponentType<ObjectTabProps> }[] = [
   { label: "Xem trước", Panel: PreviewTab },
-  { label: "Properties", Panel: DetailsTab },
-  { label: "Headers", Panel: HeadersTab },
-  { label: "Tags", Panel: TagsTab },
+  { label: "Thuộc tính", Panel: DetailsTab },
+  { label: "Header", Panel: HeadersTab },
+  { label: "Tag", Panel: TagsTab },
   { label: "Phiên bản", Panel: VersionsTab },
   { label: "ACL", Panel: AclTab },
 ];
@@ -199,31 +199,57 @@ type Props = Omit<ObjectTabProps, "at" | "object"> & {
   uid: string;
   bucket: string;
   object: ObjectEntry | null;
+  /** Label of the tab to open on (the context menu's "ACL" and "Phiên bản"); the first tab otherwise. */
+  startTab?: string;
 };
 
-export default function ObjectDrawer({ clusterId, uid, bucket, object, ...rest }: Props) {
+/** The detail sheet of one object: it slides in from the right, with its sections as vertical tabs. */
+export default function ObjectDrawer({ clusterId, uid, bucket, object, startTab, ...rest }: Props) {
   const [tab, setTab] = useState(0);
-  useEffect(() => setTab(0), [object?.key]);
   // A deleted key has nothing but its versions; without versioning there is no such tab.
   const tabs = allTabs.filter((t) => (object?.deleted ? t.Panel === VersionsTab : rest.versioning.supported || t.Panel !== VersionsTab));
+  useEffect(() => setTab(Math.max(0, tabs.findIndex((t) => t.label === startTab))), [object?.key, startTab]);
   const Panel = (tabs[tab] ?? tabs[0]).Panel;
   return (
-    <Drawer anchor="right" open={object !== null} onClose={rest.onClose}>
+    <Drawer
+      anchor="right"
+      open={object !== null}
+      onClose={rest.onClose}
+      slotProps={{
+        paper: {
+          sx: { width: 920, maxWidth: "100vw", my: 2, height: "calc(100% - 32px)", border: 1, borderRight: 0, borderColor: "divider", borderRadius: "16px 0 0 16px" },
+        },
+      }}
+    >
       {object && (
-        <Box sx={{ width: 820, maxWidth: "100vw", p: 3 }}>
-          <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 1 }}>
-            <Typography variant="h6" component="h2" sx={{ flexGrow: 1, fontFamily: "monospace", wordBreak: "break-all" }}>
+        <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
+          <Box sx={{ position: "relative", px: 3.5, pt: 2.5, pb: 2, borderBottom: 1, borderColor: "divider" }}>
+            <Typography variant="overline" color="primary" component="p">
+              Object · {bucket}
+            </Typography>
+            <Typography variant="h4" component="h2" sx={{ pr: 10, fontSize: 28, wordBreak: "break-all" }}>
               {fileName(object.key)}
             </Typography>
-            <Button onClick={rest.onClose}>Đóng</Button>
-          </Stack>
-          <Tabs value={tab} onChange={(_, value) => setTab(value)} aria-label="Chi tiết object" variant="scrollable" scrollButtons="auto">
-            {tabs.map((t, i) => (
-              <Tab key={t.label} value={i} label={t.label} />
-            ))}
-          </Tabs>
-          <Box sx={{ pt: 2 }}>
-            <Panel key={object.key + tab} at={{ clusterId, uid, bucket, key: object.key }} object={object} {...rest} />
+            <Button onClick={rest.onClose} sx={{ position: "absolute", top: 18, right: 18 }}>
+              Đóng
+            </Button>
+          </Box>
+          <Box sx={{ display: "flex", flexGrow: 1, minHeight: 0 }}>
+            <Tabs
+              orientation="vertical"
+              value={tab}
+              onChange={(_, value) => setTab(value)}
+              aria-label="Chi tiết object"
+              textColor="inherit"
+              sx={{ flexShrink: 0, width: 148, pt: 1, borderRight: 1, borderColor: "divider", "& .MuiTab-root": { alignItems: "flex-start", pl: 3.5 } }}
+            >
+              {tabs.map((t, i) => (
+                <Tab key={t.label} value={i} label={t.label} />
+              ))}
+            </Tabs>
+            <Box sx={{ flexGrow: 1, minWidth: 0, overflow: "auto", p: 3 }}>
+              <Panel key={object.key + tab} at={{ clusterId, uid, bucket, key: object.key }} object={object} {...rest} />
+            </Box>
           </Box>
         </Box>
       )}

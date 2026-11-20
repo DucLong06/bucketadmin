@@ -1,17 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <!-- BucketAdmin: a bucket (object storage) with a key (access keys). Flat, no text. -->
-  <rect x="32" y="32" width="448" height="448" rx="96" fill="#1565c0"/>
-  <!-- bucket body -->
-  <path d="M120 176 L392 176 L356 388 Q352 408 332 408 L180 408 Q160 408 156 388 Z" fill="#ffffff"/>
-  <!-- bucket rim -->
-  <ellipse cx="256" cy="176" rx="140" ry="36" fill="#bbdefb"/>
-  <ellipse cx="256" cy="176" rx="112" ry="22" fill="#0d47a1"/>
-  <!-- key: ring, shaft, two teeth -->
-  <g fill="#ffb300">
-    <circle cx="220" cy="300" r="44"/>
-    <rect x="252" y="286" width="164" height="28" rx="6"/>
-    <rect x="352" y="306" width="24" height="42" rx="5"/>
-    <rect x="392" y="306" width="24" height="30" rx="5"/>
+  <!-- BucketAdmin: a bucket and the key that opens it, in the colours of the app
+       (charcoal paper, cream ink, one amber accent). Master of every icon size:
+       scripts/gen-icons.py renders the PNGs, icon.ico and the favicon from this file. -->
+  <rect x="8" y="8" width="496" height="496" rx="108" fill="#201c18" stroke="#3e362e" stroke-width="16"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#f1e9dd" stroke-width="30">
+      <ellipse cx="232" cy="170" rx="126" ry="38"/>
+      <path d="M106 170 138 366c22 22 166 22 188 0l32-196"/>
+    </g>
+    <!-- the key, first as a wider dark shape so it stands clear of the bucket's lines -->
+    <g stroke="#201c18" stroke-width="66">
+      <circle cx="306" cy="298" r="42"/>
+      <path d="M336 328 426 418M392 384l-34 34M426 418l-24 24"/>
+    </g>
+    <g stroke="#f0a93b" stroke-width="30">
+      <circle cx="306" cy="298" r="42"/>
+      <path d="M336 328 426 418M392 384l-34 34M426 418l-24 24"/>
+    </g>
   </g>
-  <circle cx="220" cy="300" r="18" fill="#ffffff"/>
 </svg>

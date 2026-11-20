@@ -1322,13 +1322,30 @@ fn pdf(text: &str) -> Vec<u8> {
 
 /// A user owning a bucket with one object per viewer, a versioned key, and a second user who
 /// is granted everything on the bucket but is read-only by op-mask.
+/// A fixture user whose key is fixed (`BAM7UISMOKEKEY00000<n>`), so the UI driver can type it
+/// into the connection form the way a person would paste their own key.
+async fn smoke_user(admin: &RgwAdmin, uid: &str, n: u8) -> S3 {
+    remove_user(admin, uid).await; // leftover from an aborted run
+    let access = format!("BAM7UISMOKEKEY00000{n}");
+    let secret = format!("bam7uismokesecret00000000000000000000000{n}");
+    let created = admin
+        .create_user(uid, "M4 browse test", None, Some(&access), Some(&secret))
+        .await
+        .expect("create fixture user");
+    assert!(
+        created.caps.is_empty(),
+        "the fixture user has no admin caps"
+    );
+    S3::new(&endpoint(), &access, &secret)
+}
+
 #[tokio::test]
 #[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
 async fn ui_smoke_browse_fixture_create() {
     use aws_sdk_s3::types::{BucketVersioningStatus, VersioningConfiguration};
     let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
-    let (_, owner) = user(&admin, SMOKE_OWNER).await;
-    user(&admin, SMOKE_READ_ONLY).await;
+    let owner = smoke_user(&admin, SMOKE_OWNER, 1).await;
+    smoke_user(&admin, SMOKE_READ_ONLY, 2).await;
     let bucket = SMOKE_BUCKET;
     owner
         .client()
@@ -1829,11 +1846,9 @@ async fn m6_browse_with_own_key_never_calls_the_admin_api() {
         .add("lab", &endpoint(), &key.access_key, &key.secret_key)
         .unwrap();
     let no_admin = NoAdminApi::default();
+    // M7b: without a separate key the profile's own key browses (still no Admin API).
     let before = connect(&store, &no_admin, &profile.id, "", &auto).await;
-    assert_eq!(
-        before.err().unwrap(),
-        "no personal key saved for this cluster"
-    );
+    assert_eq!(before.unwrap().access_key(), key.access_key);
     let pasted = format!("{}\n", key.secret_key);
     let saved = store
         .set_browse_key(&profile.id, &key.access_key, &pasted)
@@ -1947,12 +1962,13 @@ async fn m6_browse_with_own_key_never_calls_the_admin_api() {
     let listing = s3.list(bucket, "", None, LIST_PAGE).await.unwrap();
     assert!(listing.prefixes.is_empty() && listing.objects.is_empty());
 
-    // The key is deleted again: no session, and still no Admin API request anywhere above.
+    // The separate key is deleted again: back on the profile's own key, and still no Admin
+    // API request anywhere above.
     let cleared = store.clear_browse_key(&profile.id).unwrap();
     assert_eq!(cleared.browse_access_key, None);
     assert!(connect(&store, &no_admin, &profile.id, "", &auto)
         .await
-        .is_err());
+        .is_ok());
     println!(
         "own-key browse as {uid}: buckets, folders, upload (single + multipart), list, preview, \
          search, download, versions, ACL, tags, presign, delete -> Admin API requests: {}",

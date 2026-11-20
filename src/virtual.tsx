@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { Box } from "@mui/material";
 
 /** Rows to render for a scroll position: first index and one past the last. */
@@ -34,10 +34,12 @@ type Props<T> = {
   empty?: ReactNode;
   /** Row to scroll into view and highlight (e.g. the current search hit). */
   focusRow?: number;
+  /** Right click (or the menu key) on a row. */
+  onRowMenu?: (row: T, event: MouseEvent<HTMLElement>) => void;
 };
 
 /** A table that only mounts the rows in view, so 100 000 rows cost the same as 30. */
-export function VirtualTable<T>({ columns, rows, height, rowHeight = 36, minWidth, label, empty, focusRow }: Props<T>) {
+export function VirtualTable<T>({ columns, rows, height, rowHeight = 36, minWidth, label, empty, focusRow, onRowMenu }: Props<T>) {
   const [scrollTop, setScrollTop] = useState(0);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -64,7 +66,7 @@ export function VirtualTable<T>({ columns, rows, height, rowHeight = 36, minWidt
       aria-rowcount={rows.length + 1}
       tabIndex={0}
       onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-      sx={{ height: height + rowHeight, overflow: "auto", border: 1, borderColor: "divider", borderRadius: 1 }}
+      sx={{ height: height + rowHeight, overflow: "auto", border: 1, borderColor: "divider", borderRadius: "16px", bgcolor: "background.paper" }}
     >
       <Box sx={{ minWidth }}>
         <Box role="row" sx={{ ...grid, position: "sticky", top: 0, zIndex: 1, bgcolor: "background.paper", fontWeight: 600 }}>
@@ -80,6 +82,7 @@ export function VirtualTable<T>({ columns, rows, height, rowHeight = 36, minWidt
               key={first + i}
               role="row"
               aria-rowindex={first + i + 2}
+              onContextMenu={onRowMenu ? (e: MouseEvent<HTMLElement>) => onRowMenu(row, e) : undefined}
               sx={{
                 ...grid,
                 position: "absolute",

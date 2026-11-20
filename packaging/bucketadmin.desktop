@@ -1,11 +1,13 @@
 [Desktop Entry]
 Type=Application
 Name=BucketAdmin
-GenericName=Ceph RGW Admin
-Comment=Manage Ceph RGW users, keys, caps and quotas
-Comment[vi]=Quản trị user, key, caps và quota của Ceph RGW
+GenericName=S3 Browser
+GenericName[vi]=Trình duyệt S3
+Comment=Browse S3 buckets on Ceph RGW: tabs, previews, ACL, versions
+Comment[vi]=Duyệt bucket S3 trên Ceph RGW: nhiều tab, xem trước, ACL, phiên bản
 Exec=bucketadmin
 Icon=bucketadmin
 Terminal=false
-Categories=Utility;
+Categories=Utility;FileTools;
+Keywords=s3;ceph;rgw;bucket;object;storage;
 StartupWMClass=bucketadmin

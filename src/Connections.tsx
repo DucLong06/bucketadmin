@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Alert, Button, Checkbox, FormControlLabel, Paper, Stack, TextField, Typography } from "@mui/material";
-import { invoke, isInternal, maskKey, type ClusterInfo, type EndpointKind, type Profile, type Proxy } from "./api";
+import { Alert, Box, Button, Paper, Stack, TextField, Typography } from "@mui/material";
+import { invoke, isInternal, maskKey, type EndpointKind, type Profile, type Proxy } from "./api";
 import { endpointError } from "./endpoint";
 import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
 import { ErrorAlert } from "./ui";
@@ -10,7 +10,13 @@ type Outcome = { severity: "success" | "warning" | "error"; text: string };
 const outcomeAlert = (o: Outcome, sx?: object) =>
   o.severity === "error" ? <ErrorAlert error={o.text} sx={sx} /> : <Alert severity={o.severity} sx={sx}>{o.text}</Alert>;
 
-const emptyForm = { label: "", endpoint: "", accessKey: "", secretKey: "" };
+const emptyForm = { label: "", endpoint: "", accessKey: "", secretKey: "", adminAccessKey: "", adminSecretKey: "" };
+/** Keys and paths are the one place the UI uses a monospace face. */
+const Mono = ({ children }: { children: string }) => (
+  <Box component="span" sx={{ fontFamily: "monospace" }}>
+    {children}
+  </Box>
+);
 const NO_PROXY: Proxy = { mode: "none" };
 const INTERNAL_HINT =
   'Endpoint này nằm trong mạng nội bộ (địa chỉ private hoặc tên chỉ DNS nội bộ biết): proxy thường không tới được. Nên chọn "Không dùng proxy".';
@@ -37,12 +43,12 @@ function useEndpointKind(endpoint: string, wanted: boolean): EndpointKind | null
   return kind;
 }
 
-/** One saved cluster's own proxy choice: saved with a button, with the "no proxy" hint for internal endpoints. */
+/** One saved connection's own proxy choice: saved with a button, with the "no proxy" hint for internal endpoints. */
 function ProfileProxy({ profile, onChanged, fail }: { profile: Profile; onChanged: () => void; fail: (e: unknown) => void }) {
   const saved = profile.proxy ?? null;
   const [draft, setDraft] = useState<Proxy | null>(saved);
   useEffect(() => setDraft(saved), [JSON.stringify(saved)]);
-  // Only a cluster that may still go through a proxy needs the hint.
+  // Only a connection that may still go through a proxy needs the hint.
   const kind = useEndpointKind(profile.endpoint, saved === null || saved.mode === "auto");
   const save = (proxy: Proxy | null) => invoke("profile_set_proxy", { id: profile.id, proxy }).then(onChanged).catch(fail);
   return (
@@ -68,32 +74,17 @@ function ProfileProxy({ profile, onChanged, fail }: { profile: Profile; onChange
     </Stack>
   );
 }
-const PLAIN_LABEL = "Tôi là user thường (key không có caps admin): ẩn các tab admin, chỉ dùng Browse";
+type Opened = { access_key: string; buckets: unknown[] };
+const connected = (buckets: number): Outcome => ({
+  severity: "success",
+  text: `Kết nối thành công: key hợp lệ, user của key sở hữu ${buckets} bucket.`,
+});
 
-async function testOutcome(call: Promise<ClusterInfo>): Promise<Outcome> {
-  try {
-    const info = await call;
-    return {
-      severity: "success",
-      text: `Kết nối thành công. cluster_id: ${info.cluster_id} · version: ${info.version ?? "không rõ"}`,
-    };
-  } catch (e) {
-    const text = String(e);
-    // RGW checks the signature before the caps: a refusal for caps means the key itself is good.
-    if (text.startsWith("AccessDenied (403)")) {
-      return {
-        severity: "warning",
-        text: "Endpoint trả lời và key hợp lệ, nhưng key này không có caps admin (info=read). Tab Browse vẫn dùng được bằng chính key này; nếu bạn là user thường, hãy tick \"Tôi là user thường\".",
-      };
-    }
-    return { severity: "error", text };
-  }
-}
-
-export default function Clusters({ profiles, onChanged }: { profiles: Profile[]; onChanged: () => void }) {
+/** The connections screen: the S3 endpoints the app browses, each with the user's own key
+ *  (secret in the OS keychain), an optional admin key, and its proxy choice. */
+export default function Connections({ profiles, onChanged }: { profiles: Profile[]; onChanged: () => void }) {
   const [form, setForm] = useState(emptyForm);
-  const [plain, setPlain] = useState(false);
-  // The new cluster's own proxy choice; null = follow the app-wide setting.
+  // The new connection's own proxy choice; null = follow the app-wide setting.
   const [formProxy, setFormProxy] = useState<Proxy | null>(null);
   // The app-wide choice: as saved, and as being edited.
   const [network, setNetwork] = useState<Proxy>({ mode: "auto" });
@@ -113,7 +104,7 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
       const saved = await invoke<Proxy>("network_set", { proxy: networkDraft });
       setNetwork(saved);
       setNetworkDraft(saved);
-      setNetworkOutcome({ severity: "success", text: "Đã lưu. Áp dụng cho mọi cluster không có lựa chọn proxy riêng, và cho việc kiểm tra bản mới." });
+      setNetworkOutcome({ severity: "success", text: "Đã lưu. Áp dụng cho mọi kết nối không có lựa chọn proxy riêng, và cho việc kiểm tra bản mới." });
     } catch (e) {
       setNetworkOutcome({ severity: "error", text: String(e) });
     }
@@ -124,6 +115,9 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
 
   const fail = (e: unknown) => setFormOutcome({ severity: "error", text: String(e) });
   const urlError = form.endpoint ? endpointError(form.endpoint) : null;
+  // The admin key is optional, but half of one is a mistake.
+  const adminGiven = !!form.adminAccessKey.trim() || !!form.adminSecretKey;
+  const adminReady = !adminGiven || (!!form.adminAccessKey.trim() && !!form.adminSecretKey);
   const canTest = !busy && !!form.endpoint && !urlError && !!form.accessKey && !!form.secretKey && proxyReady(formProxy);
   const formKind = useEndpointKind(form.endpoint, formProxy === null || formProxy.mode === "auto");
 
@@ -134,7 +128,6 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
       onChange={(e) => setForm({ ...form, [key]: e.target.value })}
       size="small"
       fullWidth
-      required
       {...extra}
     />
   );
@@ -142,23 +135,30 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
   async function testForm() {
     setBusy(true);
     const { endpoint, accessKey, secretKey } = form;
-    setFormOutcome(await testOutcome(invoke("test_connection", { endpoint, accessKey, secretKey, proxy: formProxy })));
+    try {
+      setFormOutcome(connected(await invoke<number>("test_s3", { endpoint, accessKey, secretKey, proxy: formProxy })));
+    } catch (e) {
+      fail(e);
+    }
     setBusy(false);
   }
 
   async function save(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
+    const { label, endpoint, accessKey, secretKey } = form;
     try {
-      const saved = await invoke<Profile>("add_profile", form);
+      // The profile's own key is the one given first. With an admin key, that one is the
+      // profile's key and "my key" is saved next to it as the key browse sessions sign with.
+      const first = adminGiven ? { accessKey: form.adminAccessKey, secretKey: form.adminSecretKey } : { accessKey, secretKey };
+      const saved = await invoke<Profile>("add_profile", { label, endpoint, ...first });
       setForm(emptyForm);
-      setPlain(false);
       setFormProxy(null);
-      // The profile exists from here on. If one of these fails, it is still listed (without
-      // the option) and the error says why; its row offers the same options again.
+      // The connection exists from here on. If one of these fails, it is still listed and
+      // the error says why: remove it and add it again.
       try {
+        if (adminGiven) await invoke("browse_key_set", { clusterId: saved.id, accessKey, secretKey });
         if (formProxy) await invoke("profile_set_proxy", { id: saved.id, proxy: formProxy });
-        if (plain) await invoke("profile_set_plain", { id: saved.id, plain: true });
       } finally {
         onChanged();
       }
@@ -173,31 +173,65 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
   }
 
   async function testSaved(id: string) {
-    const outcome = await testOutcome(invoke("test_profile", { id }));
+    let outcome: Outcome;
+    try {
+      outcome = connected((await invoke<Opened>("browse_open", { clusterId: id, uid: "" })).buckets.length);
+    } catch (e) {
+      outcome = { severity: "error", text: String(e) };
+    }
     setRowOutcome((prev) => ({ ...prev, [id]: outcome }));
   }
 
+  const keySx = { htmlInput: { style: { fontFamily: "monospace" } } };
   return (
     <>
-      <Typography variant="h5" component="h1" gutterBottom>
-        Clusters
+      <Typography variant="overline" color="primary" component="p">
+        Kết nối
+      </Typography>
+      <Typography variant="h4" component="h1" gutterBottom>
+        Kết nối
+      </Typography>
+      <Typography color="text.secondary" sx={{ mb: 3, maxWidth: 720 }}>
+        Mỗi kết nối là một endpoint S3 (Ceph RGW) cùng key của bạn. App duyệt bucket bằng đúng key đó: bạn thấy và làm được
+        những gì key được phép.
       </Typography>
 
-      <Paper component="form" onSubmit={save} variant="outlined" sx={{ p: 2, mb: 3 }}>
+      <Paper component="form" onSubmit={save} variant="outlined" sx={{ p: 3, mb: 4 }}>
         <Typography variant="h6" component="h2" gutterBottom>
-          Thêm cluster
+          Thêm kết nối
         </Typography>
         <Stack spacing={2}>
-          {field("label", "Tên hiển thị")}
+          {field("label", "Tên hiển thị", { required: true })}
           {field("endpoint", "Endpoint", {
+            required: true,
             placeholder: "http://host:7480",
             error: !!urlError,
-            helperText: urlError ?? "Địa chỉ RGW, ví dụ http://host:7480",
+            helperText: urlError ?? "Địa chỉ S3 của RGW, ví dụ http://host:7480",
           })}
-          {field("accessKey", "Access key", { autoComplete: "off" })}
-          {field("secretKey", "Secret key", { type: "password", autoComplete: "off" })}
-          <FormControlLabel control={<Checkbox checked={plain} onChange={(e) => setPlain(e.target.checked)} />} label={PLAIN_LABEL} />
-          <ProxyPicker value={formProxy} onChange={setFormProxy} inherit name="của cluster mới" />
+          {field("accessKey", "Access key của tôi", { required: true, autoComplete: "off", slotProps: keySx })}
+          {field("secretKey", "Secret key của tôi", {
+            required: true,
+            type: "password",
+            autoComplete: "off",
+            helperText: "Giống key bạn dùng với rclone, s3cmd… Secret nằm trong keychain của hệ thống, không ghi ra file.",
+          })}
+          <details>
+            <summary>Key admin (không bắt buộc)</summary>
+            <Stack spacing={2} sx={{ mt: 2 }}>
+              <Typography variant="body2" color="text.secondary">
+                Chỉ cần khi key của bạn không có caps mà bạn muốn xem "Thông tin của tôi" (quota, usage), hoặc duyệt thay một
+                user khác. Key admin không bao giờ được dùng để ký request S3.
+              </Typography>
+              {field("adminAccessKey", "Access key admin", { autoComplete: "off", slotProps: keySx })}
+              {field("adminSecretKey", "Secret key admin", {
+                type: "password",
+                autoComplete: "off",
+                error: !adminReady,
+                helperText: adminReady ? undefined : "Nhập đủ cả access key và secret key admin, hoặc để trống cả hai.",
+              })}
+            </Stack>
+          </details>
+          <ProxyPicker value={formProxy} onChange={setFormProxy} inherit name="của kết nối mới" />
           {isInternal(formKind) && (
             <Alert
               severity="info"
@@ -214,7 +248,7 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
             <Button variant="outlined" onClick={testForm} disabled={!canTest}>
               Kiểm tra kết nối
             </Button>
-            <Button type="submit" variant="contained" disabled={!canTest || !form.label.trim()}>
+            <Button type="submit" variant="contained" disabled={!canTest || !adminReady || !form.label.trim()}>
               Lưu
             </Button>
           </Stack>
@@ -223,17 +257,23 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
       </Paper>
 
       <Typography variant="h6" component="h2" gutterBottom>
-        Cluster đã lưu
+        Kết nối đã lưu
       </Typography>
-      {profiles.length === 0 && <Typography color="text.secondary">Chưa có cluster nào.</Typography>}
-      <Stack spacing={1} component="ul" sx={{ listStyle: "none", p: 0, m: 0 }}>
+      {profiles.length === 0 && <Typography color="text.secondary">Chưa có kết nối nào.</Typography>}
+      <Stack spacing={1.5} component="ul" sx={{ listStyle: "none", p: 0, m: 0 }}>
         {profiles.map((p) => (
-          <Paper key={p.id} component="li" variant="outlined" sx={{ p: 2 }}>
+          <Paper key={p.id} component="li" variant="outlined" sx={{ p: 2.5 }}>
             <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
               <Stack sx={{ flexGrow: 1, minWidth: 0 }}>
                 <Typography sx={{ fontWeight: 600 }}>{p.label}</Typography>
                 <Typography variant="body2" color="text.secondary" noWrap>
-                  {p.endpoint} · access key {maskKey(p.access_key)}
+                  <Mono>{p.endpoint}</Mono> · key của tôi <Mono>{maskKey(p.browse_access_key ?? p.access_key)}</Mono>
+                  {p.browse_access_key && p.browse_access_key !== p.access_key && (
+                    <>
+                      {" "}
+                      · key admin <Mono>{maskKey(p.access_key)}</Mono>
+                    </>
+                  )}
                 </Typography>
               </Stack>
               <Button onClick={() => testSaved(p.id)} aria-label={`Kiểm tra kết nối tới ${p.label}`}>
@@ -242,35 +282,25 @@ export default function Clusters({ profiles, onChanged }: { profiles: Profile[];
               <Button
                 color="error"
                 onClick={() => invoke("remove_profile", { id: p.id }).then(onChanged).catch(fail)}
-                aria-label={`Xoá cluster ${p.label}`}
+                aria-label={`Xoá kết nối ${p.label}`}
               >
                 Xoá
               </Button>
             </Stack>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  size="small"
-                  checked={!!p.plain_user}
-                  onChange={(e) => invoke("profile_set_plain", { id: p.id, plain: e.target.checked }).then(onChanged).catch(fail)}
-                />
-              }
-              label={<Typography variant="body2">{PLAIN_LABEL}</Typography>}
-            />
             <ProfileProxy profile={p} onChanged={onChanged} fail={fail} />
             {rowOutcome[p.id] && outcomeAlert(rowOutcome[p.id], { mt: 1 })}
           </Paper>
         ))}
       </Stack>
 
-      <Paper variant="outlined" sx={{ p: 2, mt: 3 }}>
+      <Paper variant="outlined" sx={{ p: 3, mt: 4 }}>
         <Typography variant="h6" component="h2" gutterBottom>
           Cài đặt chung — Mạng
         </Typography>
         <Stack spacing={2}>
           <Typography variant="body2" color="text.secondary">
-            Cách app đi ra mạng khi một cluster không có lựa chọn riêng. "Tự động" dùng HTTP_PROXY / HTTPS_PROXY / NO_PROXY của môi
-            trường; "Không dùng proxy" luôn kết nối thẳng dù môi trường có đặt proxy; "Tùy chỉnh" luôn đi qua proxy bạn nhập.
+            Cách app đi ra mạng khi một kết nối không có lựa chọn riêng. "Tự động" dùng HTTP_PROXY / HTTPS_PROXY / NO_PROXY của
+            môi trường; "Không dùng proxy" luôn kết nối thẳng dù môi trường có đặt proxy; "Tùy chỉnh" luôn đi qua proxy bạn nhập.
           </Typography>
           <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
             <ProxyPicker value={networkDraft} onChange={(next) => next && setNetworkDraft(next)} name="chung" />

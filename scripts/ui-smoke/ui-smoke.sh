@@ -1,69 +1,42 @@
 #!/bin/bash
-# UI smoke test of the real app against a real RGW. Needs RGW_ACCESS_KEY / RGW_SECRET_KEY
-# (lab at http://127.0.0.1:7480), xdotool, xclip, python3 with Pillow, cargo, and a Secret Service.
-# It creates throw-away data on the cluster (users ba-m3-ui-*, two buckets) and removes it again.
+# UI smoke test of the real app against a real RGW: the whole app, end to end, as a user who
+# only has an S3 key. Needs RGW_ACCESS_KEY / RGW_SECRET_KEY (lab at http://127.0.0.1:7480),
+# xdotool, xclip, ffmpeg, python3 with Pillow, cargo, and a Secret Service.
+# It creates throw-away data on the cluster (users ba-m4-ui*, two buckets) and removes it again.
 #   npx tauri build --debug --no-bundle
 #   xvfb-run -a -s "-screen 0 1280x900x24" scripts/ui-smoke/ui-smoke.sh "$PWD/src-tauri/target/debug/bucketadmin"
 # $1 = app binary (debug build: only those honour BUCKETADMIN_DEV_SCRIPT). Screenshots: /tmp/ba-smoke/*.png.
-# FLOW=admin (default) runs the admin screens, FLOW=browse the S3 browse page (needs ffmpeg for the video viewer),
-# FLOW=selfservice the app as seen by users without (full) admin caps.
 HERE="$(dirname "$(readlink -f "$0")")"
-export TPL="$HERE/driver.tpl.js"
-FLOW="${FLOW:-admin}"
-export FLOW_JS="$HERE/flow-$FLOW.js"
+export TPL="$HERE/driver.tpl.js" FLOW_JS="$HERE/flow-browse.js"
 mkdir -p /tmp/ba-smoke
 # Run a private copy: the fixture below is a `cargo test`, and that rebuilds target/debug/bucketadmin
 # WITHOUT the embedded frontend (a dev-server build that only shows "Could not connect to localhost").
 BIN=/tmp/ba-smoke/bucketadmin-under-test
 cp "${1:?usage: ui-smoke.sh <debug app binary built by tauri build --debug>}" "$BIN"
-# The UI cannot create buckets, so the data it should show comes from two ignored tests.
-case "$FLOW" in
-  admin)
-    FIXTURE_TEST=rgw_lab FIXTURE=ui_smoke_fixture STEP=10000 ENTER_AT=06-secret-once
-    # Debug builds take GitHub's "latest release" answer from here: this flow sees a newer release.
-    export BUCKETADMIN_DEV_UPDATE='{"tag_name":"v9.9.9","html_url":"https://github.com/DucLong06/bucketadmin/releases/tag/v9.9.9"}'
-
-    # Debug builds write exports (the onboarding report) here instead of ~/Downloads.
-    mkdir -p /tmp/ba-smoke/dl
-    rm -f /tmp/ba-smoke/dl/onboard-*.csv
-    export BUCKETADMIN_DEV_SAVE_DIR=/tmp/ba-smoke/dl
-    NAMES="01-users-no-cluster 02-clusters 03-users-page-1 04-users-all 04b-bulk-dry-run 04c-bulk-done 05-create-user 06-secret-once - 07-users-filter 08-drawer-info 09-suspend-confirm 10-keys 11-rotate-secret 12-add-key-validation 13-subuser-secret 14-subusers 15-caps-error 16-quota 17-usage 18-audit 19-audit-filter 20-buckets 21-bucket-drawer 22-bucket-quota-policy 23-bucket-delete-confirm 24-buckets-after-delete 25-user-buckets 26-purge-confirm 27-buckets-after-purge 28-clusters-removed"
-    ;;
-  browse)
-    FIXTURE_TEST=s3_lab FIXTURE=ui_smoke_browse_fixture STEP=10000 ENTER_AT="05-csv 17b-copy-url"
-    export BUCKETADMIN_DEV_UPDATE='{}' # no release to read: no badge, and no request to GitHub
-
-    NAMES="01-browse-session 02-bucket-root 03-text-find 04-json 05-csv - 06-parquet 07-image 08-audio 09-video 10-pdf 11-hex 12-presign 12b-headers 12c-tags 13a-task-cancelled 13-upload-done 14-versions 15-acl 16-bucket-acl 16b-folder-acl 17-search 17a-deleted-shown 17b-copy-url - 17c-create-bucket 17d-new-folder 17e-delete-confirm 17f-undone 17g-final-delete 18-readonly-denied 19-audit 20-done"
-    # Files the flow uploads, and where its downloads go. Native file dialogs cannot be driven
-    # under Xvfb, so debug builds take their answers from these two variables instead.
-    rm -rf /tmp/ba-smoke/files /tmp/ba-smoke/dl
-    mkdir -p /tmp/ba-smoke/files /tmp/ba-smoke/dl
-    head -c 20971520 /dev/urandom > /tmp/ba-smoke/files/upload-20m.bin
-    echo "dropped onto the window" > /tmp/ba-smoke/files/dropped.txt
-    ffmpeg -loglevel error -y -f lavfi -i testsrc=duration=2:size=320x240:rate=15 -pix_fmt yuv420p -movflags +faststart /tmp/ba-smoke/files/clip.mp4 \
-      && export BA_SMOKE_MP4=/tmp/ba-smoke/files/clip.mp4
-    export BUCKETADMIN_DEV_PICK_UPLOAD=/tmp/ba-smoke/files/upload-20m.bin BUCKETADMIN_DEV_SAVE_DIR=/tmp/ba-smoke/dl
-    ;;
-  selfservice)
-    FIXTURE_TEST=rgw_lab FIXTURE=ui_smoke_m6_fixture STEP=9000 ENTER_AT=10-caps-command
-    NAMES="01-plain-test 02-plain-badge 03-own-key-session 04-own-key-preview 05-own-key-acl - 06-key-deleted 07-key-dialog 08-audit 09-self-info 10-caps-command - 11-done"
-    rm -rf /tmp/ba-smoke/files
-    mkdir -p /tmp/ba-smoke/files
-    echo "xin chào từ key của tôi" > /tmp/ba-smoke/files/hello.txt
-    export BUCKETADMIN_DEV_PICK_UPLOAD=/tmp/ba-smoke/files/hello.txt
-    ;;
-  *) echo "unknown FLOW=$FLOW (admin, browse or selfservice)"; exit 2 ;;
-esac
-export NAMES
-fixture() { (cd "$HERE/../../src-tauri" && cargo test --quiet --test "$FIXTURE_TEST" "${FIXTURE}_$1" -- --ignored --exact 2>&1 | grep -E "test result|panicked|error" | head -3); }
+# One slot per `shot(...)` of the flow, in its order; the shell and the driver walk them together.
+export NAMES="$(grep -oE 'await shot\("[^"]+"\)' "$FLOW_JS" | sed -E 's/.*"(.*)".*/\1/' | tr '\n' ' ')"
+# Slots at which the shell presses a real Enter (the clipboard ignores synthetic clicks).
+ENTER_AT="06-csv 28-copy-url"
+# Debug builds take GitHub's "latest release" answer from here: the flow sees a newer release.
+export BUCKETADMIN_DEV_UPDATE='{"tag_name":"v9.9.9","html_url":"https://github.com/DucLong06/bucketadmin/releases/tag/v9.9.9"}'
+# Files the flow uploads, and where its downloads go. Native file dialogs cannot be driven
+# under Xvfb, so debug builds take their answers from these two variables instead.
+rm -rf /tmp/ba-smoke/files /tmp/ba-smoke/dl
+mkdir -p /tmp/ba-smoke/files /tmp/ba-smoke/dl
+head -c 20971520 /dev/urandom > /tmp/ba-smoke/files/upload-20m.bin
+echo "dropped onto the window" > /tmp/ba-smoke/files/dropped.txt
+ffmpeg -loglevel error -y -f lavfi -i testsrc=duration=2:size=320x240:rate=15 -pix_fmt yuv420p -movflags +faststart /tmp/ba-smoke/files/clip.mp4 \
+  && export BA_SMOKE_MP4=/tmp/ba-smoke/files/clip.mp4
+export BUCKETADMIN_DEV_PICK_UPLOAD=/tmp/ba-smoke/files/upload-20m.bin BUCKETADMIN_DEV_SAVE_DIR=/tmp/ba-smoke/dl
+# The UI needs data to show; it comes from two ignored tests.
+fixture() { (cd "$HERE/../../src-tauri" && cargo test --quiet --test s3_lab "ui_smoke_browse_fixture_$1" -- --ignored --exact 2>&1 | grep -E "test result|panicked|error" | head -3); }
 echo "== fixture: create"; fixture create
-mkdir -p /tmp/ba-smoke
-# Profiles and audit.db go to a throw-away XDG_DATA_HOME; the keychain entry is removed by the last step.
+# Profiles, settings and audit.db go to a throw-away XDG_DATA_HOME; the keychain entries are removed by the last step.
 export XDG_DATA_HOME=/tmp/ba-smoke/data
 rm -rf /tmp/ba-smoke/data
 rm -f /tmp/ba-smoke/*.png
-# One slot per screenshot; long enough for the slowest step even when the lab is slow.
-export STEP="${STEP:-8000}" UID_T=ba-m1-ui
+# Long enough for the slowest step even when the lab is slow.
+export STEP="${STEP:-10000}"
 export START=$(( $(date +%s%3N) + 15000 ))
 shot() {
   python3 -c "from PIL import ImageGrab; ImageGrab.grab().crop((0, 0, 1200, 800)).save('/tmp/ba-smoke/$1.png')"
@@ -72,14 +45,14 @@ shot() {
 # Lab creds reach the driver through this 0600 file only; it is deleted at the end.
 ( umask 077; python3 - > /tmp/ba-smoke/driver.js <<'PY'
 import json, os
-cfg = dict(START=int(os.environ["START"]), STEP=int(os.environ["STEP"]), NAMES=os.environ["NAMES"].split(), UID=os.environ["UID_T"],
+cfg = dict(START=int(os.environ["START"]), STEP=int(os.environ["STEP"]), NAMES=os.environ["NAMES"].split(),
            ENDPOINT="http://127.0.0.1:7480", AK=os.environ["RGW_ACCESS_KEY"], SK=os.environ["RGW_SECRET_KEY"],
            FILES="/tmp/ba-smoke/files", MP4=bool(os.environ.get("BA_SMOKE_MP4")))
 flow = open(os.environ["FLOW_JS"]).read()
 print(open(os.environ["TPL"]).read().replace("    // __FLOW__", flow).replace("__CFG__", json.dumps(cfg)))
 PY
 )
-# TZ=UTC: the app must show Vietnam time (UTC+7) whatever zone the machine is in; the browse flow checks it.
+# TZ=UTC: the app must show Vietnam time (UTC+7) whatever zone the machine is in; the flow checks it.
 TZ=UTC BUCKETADMIN_DEV_SCRIPT=/tmp/ba-smoke/driver.js "$BIN" > /tmp/ba-smoke/app.log 2>&1 &
 APP=$!
 for i in $(seq 1 30); do
@@ -98,54 +71,56 @@ for name in $NAMES; do
   [ "$name" = "-" ] && continue
   shot "$name"
   if [[ " $ENTER_AT " == *" $name "* ]]; then
-    # A real key press on the Copy button the flow focused: the clipboard API ignores synthetic clicks.
+    # A real key press on the Copy button the flow focused.
     xdotool key Return; sleep 0.5
     clip=$(timeout 3 xclip -o -selection clipboard 2>&1)
-    if [ "$FLOW" = admin ]; then
-      echo "clipboard after a real Enter on 'Copy access key': ${#clip} chars; looks like an access key: $(printf '%s' "$clip" | grep -cE '^[A-Z0-9]{20}$')"
-    elif [ "$FLOW" = selfservice ]; then
-      echo "clipboard after a real Enter on 'Copy lệnh cấp caps': $clip"
-    else
-      # A presigned URL is a credential: only its path is printed, never the signature.
-      echo "clipboard after a real Enter at $name: ${clip%%\?*}$([[ "$clip" == *X-Amz-Signature=* ]] && echo "?… (presigned, X-Amz-Expires=$(printf '%s' "$clip" | grep -o 'X-Amz-Expires=[0-9]*' | cut -d= -f2))")"
-    fi
-    shot "${name%%-*}b-copied"
+    # A presigned URL is a credential: only its path is printed, never the signature.
+    echo "clipboard after a real Enter at $name: ${clip%%\?*}$([[ "$clip" == *X-Amz-Signature=* ]] && echo "?… (presigned, X-Amz-Expires=$(printf '%s' "$clip" | grep -o 'X-Amz-Expires=[0-9]*' | cut -d= -f2))")"
+    shot "${name}-copied"
   fi
 done
 sleep 1.5; shot 99-final
 kill $APP; rm -f /tmp/ba-smoke/driver.js
 echo "== fixture: remove"; fixture remove
-if [ "$FLOW" = admin ]; then
-  echo "== onboarding report written by the app (keys masked here; file mode $(stat -c %a /tmp/ba-smoke/dl/onboard-report-*.csv 2>/dev/null | head -1))"
-  sed -E 's/,[A-Z0-9]{20},[A-Za-z0-9/+=]{40}\r?$/,<access key>,<secret key>/' /tmp/ba-smoke/dl/onboard-report-*.csv 2>/dev/null
-fi
-if [ "$FLOW" = browse ]; then
-  echo "== files downloaded through the UI (bytes, name)"
-  ls -l /tmp/ba-smoke/dl | awk 'NR > 1 { print $5, $9 }'
-  cmp /tmp/ba-smoke/files/upload-20m.bin /tmp/ba-smoke/dl/upload-20m.bin \
-    && echo "20 MiB file: uploaded (multipart) and downloaded again through the UI, byte-identical"
-fi
-echo "== profiles.json after the run"; cat /tmp/ba-smoke/data/bucketadmin/profiles.json; echo
-# A flow that fails before its last step leaves its cluster profile behind; the profile file is
-# throw-away, but its secrets sit in the real keychain (the cluster key under the profile id, a
-# personal browse key under "<id>.browse"): remove exactly those entries.
-for id in $(grep -o '"id": "[0-9a-f]*"' /tmp/ba-smoke/data/bucketadmin/profiles.json | sed 's/.*"\([0-9a-f]*\)"$/\1 \1.browse/'); do
-  for item in $(gdbus call --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets \
-      --method org.freedesktop.Secret.Service.SearchItems "{'service':'bucketadmin','username':'$id'}" \
-      | grep -o "/org/freedesktop/secrets/collection/[A-Za-z0-9_/]*"); do
-    gdbus call --session --dest org.freedesktop.secrets --object-path "$item" --method org.freedesktop.Secret.Item.Delete > /dev/null \
-      && echo "removed the keychain entry of leftover profile $id"
+echo "== files downloaded through the UI (bytes, name)"
+ls -l /tmp/ba-smoke/dl | awk 'NR > 1 { print $5, $9 }'
+cmp /tmp/ba-smoke/files/upload-20m.bin /tmp/ba-smoke/dl/upload-20m.bin \
+  && echo "20 MiB file: uploaded (multipart) and downloaded again through the UI, byte-identical"
+echo "== profiles.json and settings.json after the run"; cat /tmp/ba-smoke/data/bucketadmin/profiles.json; echo
+python3 - <<'PY'
+import json
+s = json.load(open("/tmp/ba-smoke/data/bucketadmin/settings.json"))
+print("settings.json: proxy", s.get("proxy"), "| update tag", (s.get("update") or {}).get("tag"), "| recent places left", len(s.get("recent", [])))
+PY
+# A flow that fails before its last step leaves its connections behind; the profile file is
+# throw-away, but the secrets sit in the real keychain: remove exactly those entries.
+for id in $(grep -o '"id": "[0-9a-f]*"' /tmp/ba-smoke/data/bucketadmin/profiles.json | cut -d'"' -f4); do
+  for user in "$id" "$id.browse"; do
+    for item in $(gdbus call --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets \
+        --method org.freedesktop.Secret.Service.SearchItems "{'service':'bucketadmin','username':'$user'}" \
+        | grep -o "/org/freedesktop/secrets/collection/[A-Za-z0-9_/]*"); do
+      gdbus call --session --dest org.freedesktop.secrets --object-path "$item" --method org.freedesktop.Secret.Item.Delete > /dev/null \
+        && echo "removed the keychain entry of leftover connection $user"
+    done
   done
 done
+# The audit log has no screen any more; it is still written for every change made while browsing.
 echo "== audit.db written by the app (oldest first)"
 python3 - <<'PY'
-import os, sqlite3
+import os, sqlite3, sys
 db = "/tmp/ba-smoke/data/bucketadmin/audit.db"
+seen = []
 for action, target, detail, ok, msg in sqlite3.connect(db).execute("select action, target, detail, ok, message from audit order by id"):
-    print(f"{action:15} {target:34} {'ok ' if ok else 'ERR'} {detail}{' | ' + msg if msg else ''}")
+    seen.append(action)
+    print(f"{action:21} {target:36} {'ok ' if ok else 'ERR'} {detail}{' | ' + msg if msg else ''}")
 raw = open(db, "rb").read()
 print("admin secret key in audit.db:", raw.count(os.environ["RGW_SECRET_KEY"].encode()), "occurrences")
-print("keys typed in by the selfservice flow in audit.db:", raw.count(b"bam6uismokesecret") + raw.count(b"BAM6UISMOKEKEY"), "occurrences")
+print("keys typed in by the flow in audit.db:", raw.count(b"bam7uismokesecret") + raw.count(b"BAM7UISMOKEKEY"), "occurrences")
+expected = ["object.presign", "object.tags.set", "object.upload", "version.restore", "version.delete", "acl.set", "acl.set_many",
+            "object.delete", "object.delete_many", "object.undelete", "bucket.create", "folder.create", "bucket.versioning.set"]
+missing = [a for a in expected if a not in seen]
+print("audit actions expected from this flow but not recorded:", missing or "none")
+open("/tmp/ba-smoke/audit-missing.txt", "w").write(" ".join(missing))
 PY
 echo "== app stdout/stderr (libEGL noise filtered)"; grep -v 'libEGL\|DRI3' /tmp/ba-smoke/app.log
 # The driver ends with a banner in the bottom-left corner: green = every step passed in time,
@@ -154,6 +129,7 @@ python3 - <<'PY'
 import sys
 from PIL import Image
 r, g, b = Image.open("/tmp/ba-smoke/99-final.png").convert("RGB").getpixel((4, 794))
+missing = open("/tmp/ba-smoke/audit-missing.txt").read().strip()
 if g > 240 and r < 200:
     verdict, code = "DONE", 0
 elif r > 240 and 180 <= g <= 230:
@@ -162,6 +138,8 @@ elif r > 240:
     verdict, code = "ERROR (see the banner in 99-final.png)", 1
 else:
     verdict, code = "NO BANNER (driver did not finish)", 1
+if code == 0 and missing:
+    verdict, code = f"DONE, BUT the audit log lacks: {missing}", 1
 print("== driver verdict:", verdict)
 sys.exit(code)
 PY

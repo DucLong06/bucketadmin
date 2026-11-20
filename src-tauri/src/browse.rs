@@ -57,7 +57,7 @@ impl Transfers {
 }
 
 /// The S3 client a browse session signs with. An empty `uid` means "my own key": the personal
-/// key saved for the cluster, without any Admin API request. Any other `uid` is looked up
+/// key saved for the cluster (or the profile's own key), without any Admin API request. Any other `uid` is looked up
 /// with the admin credentials to get that user's key.
 pub async fn connect<S: SecretStore, H: HttpClient>(
     profiles: &ProfileStore<S>,
@@ -189,6 +189,7 @@ pub fn browse_key_set(
 }
 
 /// Deletes the personal key from the keychain and the profile.
+#[allow(dead_code)] // admin UI removed M7b: keys are managed by adding / removing a connection
 #[tauri::command(async)]
 pub fn browse_key_clear(state: St<'_>, cluster_id: String) -> Cmd<ClusterProfile> {
     forget_own_session(&state, &cluster_id);
@@ -713,11 +714,9 @@ mod tests {
 
         let none = Mock::default();
         let auto = Proxy::Auto;
-        let err = connect(&store, &none, &p.id, "", &auto)
-            .await
-            .err()
-            .unwrap();
-        assert_eq!(err, "no personal key saved for this cluster");
+        // No separate key entered: the profile's own key signs, still without the Admin API.
+        let s3 = connect(&store, &none, &p.id, "", &auto).await.unwrap();
+        assert_eq!(s3.access_key(), "AK");
         store.set_browse_key(&p.id, "AKMINE", "my-secret").unwrap();
         let s3 = connect(&store, &none, &p.id, "", &auto).await.unwrap();
         assert_eq!(s3.access_key(), "AKMINE");

@@ -21,7 +21,7 @@ use rgw_admin::{
     BucketInfo, Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin,
     Usage, UserInfo,
 };
-use settings::{EndpointKind, Proxy, SettingsStore};
+use settings::{EndpointKind, Place, Proxy, SettingsStore};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -111,10 +111,31 @@ fn add_profile(
 
 #[tauri::command(async)]
 fn remove_profile(state: St<'_>, id: String) -> Cmd<'_, ()> {
-    state.profiles.remove(&id)
+    state.profiles.remove(&id)?;
+    // Its recent places lead nowhere now.
+    let forgotten = state
+        .settings
+        .change(|s| s.recent.retain(|place| place.cluster_id != id));
+    forgotten.map(|_| ())
+}
+
+/// The places browsed last, newest first.
+#[tauri::command(async)]
+fn recent_list(state: St<'_>) -> Cmd<'_, Vec<Place>> {
+    Ok(state.settings.get()?.recent)
+}
+
+/// Remembers a place that was just opened and returns the updated list.
+#[tauri::command(async)]
+fn recent_add(state: St<'_>, place: Place) -> Cmd<'_, Vec<Place>> {
+    if place.cluster_id.is_empty() || place.bucket.is_empty() {
+        return Err("a recent place needs a connection and a bucket".into());
+    }
+    Ok(state.settings.change(|s| s.remember(place))?.recent)
 }
 
 /// Ticks or clears "I am a normal user" on a saved profile.
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command(async)]
 fn profile_set_plain(state: St<'_>, id: String, plain: bool) -> Cmd<'_, ClusterProfile> {
     state.profiles.set_plain_user(&id, plain)
@@ -172,8 +193,29 @@ fn endpoint_kind(endpoint: String) -> Cmd<'static, EndpointKind> {
     settings::endpoint_kind(&endpoint)
 }
 
+/// Tests a key typed into the connection form by listing its buckets over S3: no Admin API
+/// request, so no cap is needed. Returns how many buckets the key's user owns. `proxy` is the
+/// choice made in the form; without one the app-wide setting applies.
+#[tauri::command]
+async fn test_s3(
+    state: St<'_>,
+    endpoint: String,
+    access_key: String,
+    secret_key: String,
+    proxy: Option<Proxy>,
+) -> Cmd<'_, usize> {
+    rgw_admin::parse_endpoint(&endpoint).map_err(|e| e.to_string())?;
+    let proxy = match proxy {
+        Some(own) => own.validated()?,
+        None => state.settings.get()?.proxy,
+    };
+    let s3 = s3::S3::with_proxy(&endpoint, access_key.trim(), secret_key.trim(), &proxy)?;
+    Ok(s3.list_buckets().await?.len())
+}
+
 /// Test credentials typed into the form, before anything is saved. `proxy` is the choice
 /// made in the form; without one the app-wide setting applies.
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn test_connection(
     state: St<'_>,
@@ -194,6 +236,7 @@ async fn test_connection(
 }
 
 /// Test a saved profile; the secret never leaves the Rust side.
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn test_profile(state: St<'_>, id: String) -> Cmd<'_, ClusterInfo> {
     let (endpoint, creds) = state.profiles.credentials(&id)?;
@@ -205,7 +248,8 @@ async fn test_profile(state: St<'_>, id: String) -> Cmd<'_, ClusterInfo> {
 /// the Admin API. Decides which admin screens the UI offers.
 #[tauri::command]
 async fn caller_access(state: St<'_>, cluster_id: String) -> Cmd<'_, CallerAccess> {
-    let (endpoint, creds) = state.profiles.credentials(&cluster_id)?;
+    // "Me" is whoever the browse key belongs to; the profile's key then asks about that uid.
+    let (endpoint, creds) = state.profiles.browse_credentials(&cluster_id)?;
     let proxy = state.proxy_of(&cluster_id)?;
     let own = s3::S3::with_proxy(&endpoint, &creds.access_key, &creds.secret_key, &proxy)?;
     let uid = own.whoami().await?;
@@ -214,6 +258,7 @@ async fn caller_access(state: St<'_>, cluster_id: String) -> Cmd<'_, CallerAcces
 
 // ---- users ----------------------------------------------------------------
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn users_list(
     state: St<'_>,
@@ -230,6 +275,7 @@ async fn user_get(state: St<'_>, cluster_id: String, uid: String) -> Cmd<'_, Use
     state.ops(&cluster_id)?.get_user(&uid).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn user_create(
     state: St<'_>,
@@ -245,6 +291,7 @@ async fn user_create(
         .await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn user_modify(
     state: St<'_>,
@@ -257,6 +304,7 @@ async fn user_modify(
     ops.modify_user(&uid, &display_name, &email).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn user_set_suspended(
     state: St<'_>,
@@ -267,6 +315,7 @@ async fn user_set_suspended(
     state.ops(&cluster_id)?.set_suspended(&uid, suspended).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn user_delete(
     state: St<'_>,
@@ -279,11 +328,13 @@ async fn user_delete(
 
 // ---- keys -----------------------------------------------------------------
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn key_create(state: St<'_>, cluster_id: String, uid: String) -> Cmd<'_, KeyPair> {
     state.ops(&cluster_id)?.create_key(&uid).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn key_remove(
     state: St<'_>,
@@ -294,6 +345,7 @@ async fn key_remove(
     state.ops(&cluster_id)?.remove_key(&uid, &access_key).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn key_add(
     state: St<'_>,
@@ -306,6 +358,7 @@ async fn key_add(
     ops.add_key(&uid, &access_key, &secret_key).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn key_rotate(
     state: St<'_>,
@@ -316,6 +369,7 @@ async fn key_rotate(
     state.ops(&cluster_id)?.rotate_key(&uid, &access_key).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn subuser_create(
     state: St<'_>,
@@ -328,6 +382,7 @@ async fn subuser_create(
     ops.create_subuser(&uid, &subuser, &access).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn subuser_remove(
     state: St<'_>,
@@ -340,6 +395,7 @@ async fn subuser_remove(
 
 // ---- caps, quota, usage -----------------------------------------------------
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn caps_add(
     state: St<'_>,
@@ -350,6 +406,7 @@ async fn caps_add(
     state.ops(&cluster_id)?.add_cap(&uid, &cap).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn caps_remove(
     state: St<'_>,
@@ -365,6 +422,7 @@ async fn quota_get(state: St<'_>, cluster_id: String, uid: String) -> Cmd<'_, Qu
     state.ops(&cluster_id)?.get_quotas(&uid).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn quota_set(
     state: St<'_>,
@@ -392,6 +450,7 @@ async fn usage_get(
     ops.get_usage(&uid, start.as_deref(), end.as_deref()).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn usage_trim(
     state: St<'_>,
@@ -403,12 +462,14 @@ async fn usage_trim(
     state.ops(&cluster_id)?.trim_usage(&uid, &start, &end).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn usage_support(state: St<'_>, cluster_id: String) -> Cmd<'_, UsageSupport> {
     state.ops(&cluster_id)?.usage_support().await
 }
 
 /// Writes an export next to the user's downloads and returns where it went.
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command(async)]
 fn export_save(file_name: String, content: String) -> Cmd<'static, String> {
     let path = export::save(&export::export_dir()?, &file_name, &content)?;
@@ -417,6 +478,7 @@ fn export_save(file_name: String, content: String) -> Cmd<'static, String> {
 
 // ---- buckets --------------------------------------------------------------
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn buckets_list(
     state: St<'_>,
@@ -426,16 +488,19 @@ async fn buckets_list(
     state.ops(&cluster_id)?.list_buckets(uid.as_deref()).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn bucket_get(state: St<'_>, cluster_id: String, bucket: String) -> Cmd<'_, BucketDetail> {
     state.ops(&cluster_id)?.get_bucket(&bucket).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn bucket_delete(state: St<'_>, cluster_id: String, bucket: String) -> Cmd<'_, ()> {
     state.ops(&cluster_id)?.delete_bucket(&bucket).await
 }
 
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn bucket_quota_set(
     state: St<'_>,
@@ -451,6 +516,7 @@ async fn bucket_quota_set(
 }
 
 /// Creates the users of an onboarding file (or, with `dry_run`, says what would happen).
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command]
 async fn bulk_onboard(
     state: St<'_>,
@@ -464,6 +530,7 @@ async fn bulk_onboard(
 // ---- audit ----------------------------------------------------------------
 
 /// Latest 100 rows; empty / missing filters match everything.
+#[allow(dead_code)] // admin UI removed M7b
 #[tauri::command(async)]
 fn audit_recent(
     state: St<'_>,
@@ -506,44 +573,20 @@ pub fn run() {
             list_profiles,
             add_profile,
             remove_profile,
-            profile_set_plain,
+            recent_list,
+            recent_add,
             profile_set_proxy,
             network_get,
             network_set,
             endpoint_kind,
+            test_s3,
             update_check,
             update_open,
-            test_connection,
-            test_profile,
             caller_access,
-            users_list,
             user_get,
-            user_create,
-            user_modify,
-            user_set_suspended,
-            user_delete,
-            key_create,
-            key_remove,
-            key_add,
-            key_rotate,
-            subuser_create,
-            subuser_remove,
-            caps_add,
-            caps_remove,
             quota_get,
-            quota_set,
             usage_get,
-            usage_trim,
-            usage_support,
-            export_save,
-            buckets_list,
-            bucket_get,
-            bucket_delete,
-            bucket_quota_set,
-            audit_recent,
-            bulk_onboard,
             browse::browse_key_set,
-            browse::browse_key_clear,
             browse::browse_open,
             browse::browse_list,
             browse::browse_pick_upload,

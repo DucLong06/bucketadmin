@@ -1,46 +1,49 @@
 # BucketAdmin
 
-Ứng dụng desktop cho Linux để **quản trị Ceph RGW** (S3): user, key, caps, quota, usage, bucket — và **duyệt bucket** với
-xem trước file ngay trong app. Viết bằng Tauri 2 + Rust, giao diện tiếng Việt.
+Trình duyệt S3 dạng desktop cho Linux, làm cho **Ceph RGW**: duyệt bucket bằng key của chính bạn, nhiều tab như trình duyệt,
+xem trước file ngay trong app mà không tải cả file, ACL, phiên bản, presigned URL. Viết bằng Tauri 2 + Rust, giao diện tiếng Việt.
 
-BucketAdmin nói chuyện với RGW qua hai đường chuẩn: **Admin Ops API** (cho phần quản trị) và **S3** (cho phần duyệt bucket).
-Không cần cài gì lên cụm Ceph, không có server trung gian.
+App nói chuyện thẳng với endpoint S3 của RGW. Không cần cài gì lên cụm Ceph, không có server trung gian, không cần quyền admin.
 
-![Chi tiết một user](docs/images/users.png)
+![Duyệt bucket với nhiều tab](docs/images/browse.png)
+
+Ảnh trong tài liệu này chụp từ bài smoke test chạy với một cụm thử nghiệm; huy hiệu "Có bản mới v9.9.9" là câu trả lời giả lập
+của bài test cho phần kiểm tra bản mới.
 
 ## Tính năng
 
-**Quản trị (Admin Ops API)**
-
-- Nhiều cluster cùng lúc; secret của admin nằm trong keychain của hệ điều hành, không ghi ra file.
-- Proxy chọn được trong app (tab **Clusters**): tự động theo biến môi trường, không dùng proxy, hoặc một proxy tự nhập;
-  đặt chung cho cả app và đổi riêng cho từng cluster. Endpoint nội bộ được gợi ý "Không dùng proxy".
-- User: danh sách có phân trang, tạo, sửa, suspend / enable, xoá (tuỳ chọn xoá cả dữ liệu).
-- Key: tạo, xoá, rotate, thêm key có sẵn. Secret chỉ hiện đúng một lần lúc tạo.
-- Subuser (Swift), caps, quota theo user và theo bucket, usage theo khoảng ngày (export CSV, xoá usage cũ).
-- Bucket: danh sách kèm owner / dung lượng / số object, xem bucket policy, quota riêng, xoá bucket rỗng.
-- **Onboard hàng loạt từ CSV**: dry-run trước, chạy sau, có report từng dòng.
-- **Audit log** cục bộ (SQLite) cho mọi thao tác thay đổi; không bao giờ chứa secret hay presigned URL.
-
-**Duyệt bucket (S3)**
-
-- Duyệt với key của **chính user được chọn**, nên bạn thấy đúng những gì user đó thấy. Admin secret không dùng cho S3.
+- **Kết nối**: mỗi kết nối là một endpoint cùng S3 key của bạn (giống key đang dùng với rclone, s3cmd). Secret nằm trong
+  keychain của hệ điều hành, không ghi ra file. Proxy chọn được cho cả app và riêng từng kết nối: tự động theo biến môi trường,
+  không dùng proxy, hoặc một proxy tự nhập; endpoint nội bộ được gợi ý "Không dùng proxy".
+- **Nhiều tab**: mỗi tab ở một vị trí (kết nối + bucket + thư mục) và giữ nguyên danh sách, vị trí cuộn, các dòng đang chọn khi
+  bạn sang tab khác. `Ctrl+T` tab mới, `Ctrl+W` đóng, `Ctrl+Tab` / `Ctrl+Shift+Tab` chuyển tab.
+- **Gần đây**: 20 vị trí mở gần nhất, nhớ qua các lần mở app; chọn một vị trí là mở thành tab (vị trí đang mở sẵn thì chuyển
+  sang tab đó).
 - Tạo bucket, tạo thư mục, upload (chọn file hoặc kéo-thả, multipart), download có resume, xoá một hoặc nhiều object.
-- Hàng đợi task: chạy song song, tiến độ theo từng phần, huỷ được.
-- Xem trước mà không tải cả file: văn bản / JSON / YAML (có tìm kiếm), CSV / TSV, **Parquet** (chỉ tải footer và các page cần xem),
-  ảnh, audio / video, PDF, hex. Văn bản và bảng dừng ở 20 MiB; ảnh và PDF lớn thì app hỏi trước khi tải.
-- Xem chi tiết object theo tab: Properties, Headers (HEAD thật), Tags (đọc và sửa), Phiên bản, ACL.
-- ACL kiểu chia sẻ nhanh: bảng Chủ sở hữu / User đã xác thực / Mọi người × 5 quyền, ba preset (riêng tư, public-read,
-  authenticated-read), áp dụng một ACL cho mọi object trong một thư mục hoặc cả bucket.
-- Versioning: bật / tắt ngay trên trang Browse. Bucket đang bật versioning thì xoá nhầm hoàn tác được (nút Hoàn tác, hoặc
-  "Hiện object đã xoá" rồi khôi phục trong tab Phiên bản); bucket không bật thì app cảnh báo đỏ trước khi xoá.
+  Hàng đợi tác vụ dùng chung cho mọi tab: chạy song song, tiến độ theo từng phần, huỷ được.
+- **Xem trước mà không tải cả file**: văn bản / JSON / YAML (có tìm kiếm), CSV / TSV, **Parquet** (chỉ tải footer và các page
+  cần xem), ảnh, audio / video, PDF, hex. Văn bản và bảng dừng ở 20 MiB; ảnh và PDF lớn thì app hỏi trước khi tải.
+- **Menu chuột phải** trên từng dòng: Tải xuống, Copy URL, ACL, Phiên bản, Xoá.
+- Tấm chi tiết object mở từ bên phải, các mục xếp dọc: Xem trước, Thuộc tính, Header (HEAD thật), Tag, Phiên bản, ACL.
+- **ACL kiểu chia sẻ nhanh**: bảng Chủ sở hữu / User đã xác thực / Mọi người × 5 quyền, ba preset (riêng tư, public-read,
+  authenticated-read), áp dụng một ACL cho mọi object trong một thư mục hoặc cả bucket; cảnh báo đỏ khi mở cho Mọi người.
+- **Versioning**: bật / tắt ngay trên trang. Bucket đang bật versioning thì xoá nhầm hoàn tác được (nút Hoàn tác, hoặc
+  "Hiện object đã xoá" rồi khôi phục trong mục Phiên bản); bucket không bật thì app cảnh báo đỏ trước khi xoá.
+- **Copy URL**: presigned URL 15 phút của object, vào thẳng clipboard; thời hạn khác thì đặt trong mục Thuộc tính.
+- Tìm kiếm đệ quy có giới hạn (`*.parquet`, `logs/2026-*`…).
 - Mọi thời gian hiển thị theo giờ Việt Nam (UTC+7).
-- **Copy URL**: presigned URL 15 phút của object đang chọn, vào thẳng clipboard.
-- Presigned URL với thời hạn tuỳ chọn, versions (khôi phục, xoá từng version), ACL của object và bucket, tìm kiếm đệ quy có giới hạn.
+- Mọi thay đổi bạn làm (upload, xoá, đổi ACL…) được ghi vào một audit log cục bộ (SQLite, `audit.db` trong thư mục dữ liệu của
+  app); log không bao giờ chứa secret hay presigned URL.
 
-![Duyệt bucket](docs/images/browse.png)
+![Thêm kết nối](docs/images/connection.png)
 
 ![Xem trước Parquet](docs/images/parquet.png)
+
+![Một ACL cho cả thư mục](docs/images/acl.png)
+
+![Menu chuột phải](docs/images/menu.png)
+
+![Vị trí mở gần đây](docs/images/recent.png)
 
 ## Cài đặt
 
@@ -55,73 +58,41 @@ Yêu cầu: Ubuntu 22.04 trở lên (amd64), có dịch vụ keyring (GNOME Keyr
 
 3. Mở **BucketAdmin** từ menu ứng dụng, hoặc gõ `bucketadmin`.
 
-Gỡ: `sudo apt remove bucketadmin`. Dữ liệu của app nằm ở `~/.local/share/bucketadmin/` (danh sách cluster, audit log).
+Gỡ: `sudo apt remove bucketadmin`. Dữ liệu của app nằm ở `~/.local/share/bucketadmin/` (danh sách kết nối, cài đặt, audit log).
 
 Để phát được video / audio nén trong phần xem trước, máy cần codec của GStreamer:
 `sudo apt install gstreamer1.0-libav gstreamer1.0-plugins-good`.
 
-## Quickstart cho đội sys
+## Bắt đầu nhanh
 
-**1. Tạo một admin user cho app trên RGW** (chạy trên node quản trị Ceph, một lần):
+**1. Thêm kết nối.** Mục **Kết nối** → điền tên, endpoint (ví dụ `https://rgw.example.com` hoặc `http://rgw.example.com:7480`),
+access key và secret key của bạn → **Kiểm tra kết nối** → **Lưu**. Bước kiểm tra chỉ liệt kê bucket qua S3, nên key thường
+không có caps nào cũng dùng được.
 
-```bash
-radosgw-admin user create --uid=bucketadmin --display-name="BucketAdmin App" \
-  --caps="users=*;buckets=*;usage=*;metadata=read;info=read"
-```
+**2. Duyệt.** Mục **Browse** → chọn một bucket. Bucket được chia sẻ cho bạn (S3 không liệt kê) thì mở theo tên ở cột bên trái.
 
-Ghi lại `access_key` và `secret_key` trong kết quả. Nếu chỉ cần một phần tính năng, xem bảng caps bên dưới.
+**3. Làm việc với object.** Bấm vào tên để xem trước; chuột phải vào dòng để mở menu; tick nhiều dòng để xoá một lượt; kéo thả
+file vào cửa sổ để upload vào thư mục đang mở.
 
-**2. Thêm cluster trong app.** Tab **Clusters** → điền tên, endpoint (ví dụ `https://rgw.example.com` hoặc `http://rgw.example.com:7480`),
-access key, secret key → **Kiểm tra kết nối** → **Lưu**.
+**4. Chia sẻ.** "ACL của bucket" / "ACL thư mục" trên thanh công cụ, hoặc ACL của từng object trong menu chuột phải.
 
-**3. Quản lý user.** Tab **Users**: tạo user, mở một user để xem / sửa key, subuser, caps, quota, bucket, usage.
+### Key admin (không bắt buộc)
 
-**4. Onboard nhiều user một lúc.** Tab **Users** → **Onboard từ CSV**. File có dòng đầu cố định:
+Khi thêm kết nối có thể nhập thêm một key admin. App chỉ dùng nó cho hai việc, và không bao giờ dùng nó để ký request S3:
 
-```csv
-uid,display,email,caps,quota
-an.nguyen,Nguyen Van An,an@example.com,buckets=read;usage=read,10G
-binh.tran,Tran Thi Binh,,,
-```
-
-- `caps`: các cap dạng `type=perm`, cách nhau bằng dấu `;`. Để trống nếu user không cần cap quản trị.
-- `quota`: dung lượng tối đa của user, số kèm đơn vị `K`, `M`, `G` hoặc `T` (ví dụ `10G`). Để trống là không đặt quota.
-- Bấm **Kiểm tra (dry-run)** để xem dòng nào sẽ được tạo, dòng nào đã tồn tại, dòng nào sai; rồi **Tạo N user**.
-- User đã tồn tại được giữ nguyên. **Lưu report CSV** để có access key / secret key của các user mới (secret không xem lại được).
-
-![Onboard từ CSV](docs/images/onboard.png)
-
-**5. Duyệt bucket của một user.** Mở user → **Browse**, hoặc tab **Browse** rồi nhập uid. App duyệt bằng key của user đó.
-
-**6. Xem lại ai đã làm gì.** Tab **Audit**.
-
-![Audit log](docs/images/audit.png)
-
-## Caps cần cho từng tính năng
-
-Caps là của **admin user mà app dùng** (bước 1 ở trên). Bảng lập theo tài liệu Admin Ops của Ceph; app đã được chạy thật với bộ caps đầy đủ
-trong lệnh ở bước 1, từng cap riêng lẻ chưa được thử tách bạch.
-
-| Tính năng | Caps cần |
+| Việc | Caps cần ở key admin |
 |---|---|
-| Kiểm tra kết nối | `info=read` |
-| Danh sách user | `metadata=read`, `users=read` |
-| Xem chi tiết user, quota | `users=read` |
-| Tạo / sửa / xoá user, key, subuser, caps, đặt quota user | `users=write` |
-| Onboard từ CSV | `users=read`, `users=write` |
-| Danh sách bucket, chi tiết bucket | `buckets=read` |
-| Xem bucket policy | `metadata=read` |
-| Quota của từng bucket, xoá bucket | `buckets=write` |
-| Xem usage | `usage=read` |
-| Xoá usage cũ | `usage=write` |
-| Duyệt bucket với key của một user | `users=read` (để lấy key của user đó); phần S3 theo quyền của chính user |
+| Khung "Thông tin của tôi" trong Browse: thông tin, quota của user sở hữu key của bạn | `users=read` |
+| Usage 30 ngày trong khung đó | `usage=read` |
+| "Duyệt thay user (uid)": duyệt bằng key của một user khác | `users=read` |
 
-Thiếu cap thì thao tác tương ứng báo "Không đủ quyền", các phần khác vẫn dùng được.
+Nếu chính key của bạn có các caps trên thì không cần key admin: khung "Thông tin của tôi" tự hiện.
+Các màn hình quản trị cụm (user, key, caps, quota, onboarding từ CSV) đã được gỡ khỏi app từ bản 0.1.0.
 
 ## Bảo mật
 
-- Secret của admin: chỉ trong keychain của hệ điều hành.
-- Duyệt bucket: ký bằng key của user được chọn; secret đó chỉ nằm trong bộ nhớ của app.
+- Secret key: chỉ trong keychain của hệ điều hành; giao diện không bao giờ nhận được secret.
+- Duyệt bucket: ký bằng key của bạn. Khi "duyệt thay user", app lấy key của user đó bằng key admin và chỉ giữ nó trong bộ nhớ.
 - Cửa sổ chính không tải bất kỳ tài nguyên nào từ ngoài app; xem trước ảnh / media / PDF nằm trong một khung riêng chỉ được phép
   tải từ đúng endpoint của cluster.
 - Presigned URL: mặc định 15 phút; audit log ghi việc tạo URL nhưng không ghi URL.
@@ -134,16 +105,14 @@ Chi tiết từng directive của CSP và cách xử lý presigned URL: [docs/SE
 
 | Hiện tượng | Nguyên nhân và cách xử lý |
 |---|---|
-| "Secret key của cluster không đúng" (SignatureDoesNotMatch) | Sai secret key, hoặc đồng hồ máy lệch nhiều so với cụm. Kiểm tra lại key và `timedatectl`. |
+| "Secret key … không khớp" / "không đúng" (SignatureDoesNotMatch) | Sai secret key, hoặc đồng hồ máy lệch nhiều so với cụm. Kiểm tra lại key và `timedatectl`. |
 | "Access key không tồn tại trên cluster này" | Access key gõ sai, hoặc endpoint trỏ sang cụm khác. |
-| "Không đủ quyền: admin user của cluster thiếu caps" | Admin user thiếu cap cho thao tác đó. Xem bảng caps ở trên, thêm bằng `radosgw-admin caps add`. |
-| "Không kết nối được tới RGW", hoặc lỗi HTTP 502 / 504 / 407 | Sai endpoint / port, hoặc request đang đi qua proxy mà proxy không tới được cụm. Với endpoint nội bộ: tab **Clusters** → Proxy của cluster đó → **Không dùng proxy**. |
-| "Không tìm thấy (HTTP 404)" khi kiểm tra kết nối | Endpoint không phải RGW, hoặc Admin API bị tắt / đổi đường dẫn trên cụm. |
-| Usage luôn trống | RGW chưa bật ghi usage: đặt `rgw_enable_usage_log = true` rồi restart RGW. |
-| Xoá user báo "Bucket đã tồn tại… user vẫn còn bucket" | User còn bucket. Xoá bucket trước, hoặc chọn "Xoá cả dữ liệu của user". |
-| Xoá user kèm dữ liệu báo hết thời gian chờ | User có rất nhiều object; RGW xoá lâu hơn 30 giây. Xoá bớt object trong Browse trước, rồi xoá user. |
-| Browse báo "Key của user này không có quyền" | Đúng như tên gọi: key của user đó bị policy, ACL hoặc op-mask chặn. Đây là quyền thật của user. |
-| Không lưu được cluster, báo lỗi keychain | Máy không có dịch vụ keyring đang mở khoá. Cài / mở GNOME Keyring (`gnome-keyring`) rồi thử lại. |
+| "Không đủ quyền: key của cluster này thiếu caps …" | Chỉ gặp ở khung "Thông tin của tôi" hoặc khi duyệt thay user: key admin (hoặc key của bạn) thiếu cap đó. Thông báo kèm sẵn lệnh `radosgw-admin caps add` để gửi cho quản trị cụm. |
+| "Không kết nối được tới RGW", hoặc lỗi HTTP 502 / 504 / 407 | Sai endpoint / port, hoặc request đang đi qua proxy mà proxy không tới được cụm. Với endpoint nội bộ: mục **Kết nối** → Proxy của kết nối đó → **Không dùng proxy**. |
+| "Bucket không tồn tại" / lỗi HTTP 404 khi kiểm tra kết nối | Endpoint không phải là địa chỉ S3 của RGW (sai host, sai port, hoặc trỏ vào dashboard). |
+| Usage trong "Thông tin của tôi" luôn trống | RGW chưa bật ghi usage: quản trị cụm đặt `rgw_enable_usage_log = true` rồi restart RGW. |
+| "Key của user này không có quyền" | Đúng như tên gọi: key đang dùng bị policy, ACL hoặc op-mask chặn. Đây là quyền thật của key. |
+| Không lưu được kết nối, báo lỗi keychain | Máy không có dịch vụ keyring đang mở khoá. Cài / mở GNOME Keyring (`gnome-keyring`) rồi thử lại. |
 | App mở chậm khoảng 25 giây | Gặp khi phiên làm việc không có dịch vụ keyring (máy tối giản, phiên SSH + X): desktop portal chờ keyring rồi mới trả lời. Trong phiên desktop đầy đủ có GNOME Keyring đang chạy thì app mở ngay. |
 | Video / audio không phát trong phần xem trước | Thiếu codec GStreamer, xem mục Cài đặt. |
 | `apt install` từ chối vì `libc6` | Gói được build cho bản Ubuntu mới hơn máy bạn. Dùng gói build cho Ubuntu 22.04 trên trang Releases. |
@@ -157,6 +126,14 @@ npm test && npm run build              # test và build frontend
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 scripts/build-deb.sh 0.1.0~dev1        # đóng gói deb
 scripts/render-gate.sh bucketadmin_0.1.0~dev1_amd64.deb   # kiểm tra gói vừa build có hiện giao diện thật
+python3 scripts/gen-icons.py           # render lại bộ icon từ src-tauri/icons/icon.svg (cần google-chrome, Pillow)
+```
+
+Smoke test toàn bộ giao diện trên app thật với một RGW thử nghiệm (Xvfb; xem đầu file để biết các công cụ cần có):
+
+```bash
+npx tauri build --debug --no-bundle
+xvfb-run -a -s "-screen 0 1280x900x24" scripts/ui-smoke/ui-smoke.sh "$PWD/src-tauri/target/debug/bucketadmin"
 ```
 
 Test tích hợp với một RGW thật chạy khi có biến môi trường `RGW_ACCESS_KEY`, `RGW_SECRET_KEY` (và `RGW_ENDPOINT`, mặc định
