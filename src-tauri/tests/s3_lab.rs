@@ -2236,3 +2236,88 @@ async fn m7_versioning_delete_undo_restore() {
     remove_user(&admin, "ba-m7-ver-x").await;
     remove_user(&admin, uid).await;
 }
+
+/// M9.1: a user who was granted one folder of somebody else's bucket by a bucket policy
+/// (`s3:ListBucket` only under a prefix, `s3:GetObject` only below it). Opening the session
+/// must not depend on listing buckets, the folder lists, and the bucket root is refused.
+#[tokio::test]
+async fn m9_prefix_scoped_access() {
+    use bucketadmin_lib::browse_open_session as open_session;
+    use bucketadmin_lib::s3::LIST_PAGE;
+
+    let Some(admin) = lab() else { return };
+    let (bucket, scoped_uid, mute_uid) = ("ba-m9-scoped", "ba-m9-scoped-user", "ba-m9-nolist");
+    let (_, owner) = user(&admin, "ba-m9-owner").await;
+    let (_, scoped) = user(&admin, scoped_uid).await;
+    let (_, mute) = user(&admin, mute_uid).await;
+    let created = owner.client().create_bucket().bucket(bucket).send().await;
+    created.expect("create bucket");
+    for key in ["scoped/a.txt", "scoped/sub/b.txt", "other/c.txt", "top.txt"] {
+        put(&owner, bucket, key, key.as_bytes()).await.expect("put");
+    }
+    let grant = format!(
+        r#"{{"Version":"2012-10-17","Statement":[
+            {{"Effect":"Allow","Principal":{{"AWS":["arn:aws:iam:::user/{scoped_uid}"]}},"Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::{bucket}"],"Condition":{{"StringLike":{{"s3:prefix":["scoped/*"]}}}}}},
+            {{"Effect":"Allow","Principal":{{"AWS":["arn:aws:iam:::user/{scoped_uid}"]}},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::{bucket}/scoped/*"]}}
+        ]}}"#
+    );
+    let put_policy = owner.client().put_bucket_policy().bucket(bucket);
+    put_policy.policy(grant).send().await.expect("put policy");
+
+    // The session opens whatever ListBuckets says; this user owns nothing.
+    let opened = open_session(&scoped).await.expect("a scoped key opens");
+    println!(
+        "scoped user: buckets={} buckets_error={:?}",
+        opened.buckets.len(),
+        opened.buckets_error
+    );
+    assert!(opened.buckets.is_empty());
+    assert_eq!(opened.access_key, scoped.access_key());
+
+    // The granted folder lists (also one level down); the bucket root and a sibling do not.
+    let folder = scoped.list(bucket, "scoped/", None, LIST_PAGE).await;
+    let folder = folder.expect("the granted prefix lists");
+    assert_eq!(folder.prefixes, ["scoped/sub/"]);
+    let keys: Vec<&str> = folder.objects.iter().map(|o| o.key.as_str()).collect();
+    assert_eq!(keys, ["scoped/a.txt"]);
+    let deeper = scoped.list(bucket, "scoped/sub/", None, LIST_PAGE).await;
+    assert_eq!(deeper.expect("below the prefix").objects.len(), 1);
+    for refused in ["", "other/"] {
+        let denied = scoped.list(bucket, refused, None, LIST_PAGE).await;
+        let error = denied.expect_err("outside the granted prefix");
+        println!("scoped user: list {refused:?} -> {error}");
+        assert!(error.starts_with("S3 AccessDenied (403)"), "{error}");
+    }
+    let body = scoped.read_range(bucket, "scoped/a.txt", None, 0, 64).await;
+    assert_eq!(body.expect("read below the prefix"), b"scoped/a.txt");
+    let outside = scoped.read_range(bucket, "other/c.txt", None, 0, 64).await;
+    assert!(outside.is_err(), "objects outside the prefix stay closed");
+
+    // A key RGW refuses ListBuckets itself (here: an op-mask without read): still a session,
+    // with the refusal reported as a state instead of failing the command.
+    let write_only = UserModify {
+        op_mask: Some("write".into()),
+        ..Default::default()
+    };
+    let masked = admin.modify_user(mute_uid, &write_only).await;
+    masked.expect("op-mask=write");
+    let direct = mute.list_buckets().await;
+    println!("no-list user: ListBuckets -> {direct:?}");
+    let opened = open_session(&mute)
+        .await
+        .expect("a refusal is not a failure");
+    println!("no-list user: buckets_error={:?}", opened.buckets_error);
+    assert!(opened.buckets.is_empty());
+    assert_eq!(opened.buckets_error.as_deref(), Some("AccessDenied"));
+
+    // A key RGW does not know is still an error of the command.
+    let unknown = S3::new(&endpoint(), "BAM9NOSUCHKEY0000000", "nope");
+    let refused = open_session(&unknown)
+        .await
+        .expect_err("an unknown key fails");
+    assert!(refused.starts_with("S3 InvalidAccessKeyId"), "{refused}");
+
+    remove_user(&admin, mute_uid).await;
+    remove_user(&admin, scoped_uid).await;
+    remove_user(&admin, "ba-m9-owner").await;
+}

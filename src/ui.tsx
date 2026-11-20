@@ -60,8 +60,9 @@ export function ClusterSelect(props: { profiles: Profile[]; value: string; onCha
 }
 
 /** Backend error in the current language, with the error code and the original text one click away.
- *  A refusal for missing admin caps also shows the command that grants them. */
-export function ErrorAlert({ error, sx }: { error: string | null | undefined; sx?: object }) {
+ *  A refusal for missing admin caps also shows the command that grants them. `children`: what the
+ *  screen has to add to the sentence (a way out), shown right under it. */
+export function ErrorAlert({ error, sx, children }: { error: string | null | undefined; sx?: object; children?: ReactNode }) {
   const callerUid = useContext(CallerContext);
   if (!error) return null;
   const { message, code, detail, caps } = explain(error);
@@ -69,6 +70,7 @@ export function ErrorAlert({ error, sx }: { error: string | null | undefined; sx
   return (
     <Alert severity="error" sx={sx}>
       {message}
+      {children}
       {command && (
         <>
           <div style={{ marginTop: 4 }}>{t(callerUid ? "ui.capsAsk" : "ui.capsAskUid")}</div>

@@ -11,6 +11,8 @@ pub mod update;
 use audit::{Audit, AuditEntry};
 /// How a browse session gets its S3 client; public so the lab tests build one the app's way.
 pub use browse::connect as browse_connect;
+/// What `browse_open` answers for a session; public for the same reason.
+pub use browse::{open_session as browse_open_session, Opened};
 use clusters::{ClusterProfile, ProfileStore};
 use ops::{
     BucketDetail, CallerAccess, NewSubuser, Ops, Quotas, RotatedKey, TrimmedUsage, UsageSupport,
@@ -105,10 +107,27 @@ fn add_profile(
     endpoint: String,
     access_key: String,
     secret_key: String,
+    start_path: Option<String>,
 ) -> Cmd<'_, ClusterProfile> {
-    state
+    // Checked first: a path that is refused must not leave a connection behind.
+    let start_path = clusters::normalize_start_path(&start_path.unwrap_or_default())?;
+    let added = state
         .profiles
-        .add(&label, &endpoint, &access_key, &secret_key)
+        .add(&label, &endpoint, &access_key, &secret_key)?;
+    if start_path.is_empty() {
+        return Ok(added);
+    }
+    state.profiles.set_start_path(&added.id, &start_path)
+}
+
+/// Where the connection lands when it is opened: `bucket` or `bucket/prefix/`; empty for none.
+#[tauri::command(async)]
+fn profile_set_start_path(
+    state: St<'_>,
+    id: String,
+    start_path: String,
+) -> Cmd<'_, ClusterProfile> {
+    state.profiles.set_start_path(&id, &start_path)
 }
 
 #[tauri::command(async)]
@@ -230,8 +249,9 @@ fn endpoint_kind(endpoint: String) -> Cmd<'static, EndpointKind> {
 }
 
 /// Tests a key typed into the connection form by listing its buckets over S3: no Admin API
-/// request, so no cap is needed. Returns how many buckets the key's user owns. `proxy` is the
-/// choice made in the form; without one the app-wide setting applies.
+/// request, so no cap is needed. Answers like `browse_open`: a key that is valid but may not
+/// list buckets passes, with `buckets_error` set. `proxy` is the choice made in the form;
+/// without one the app-wide setting applies.
 #[tauri::command]
 async fn test_s3(
     state: St<'_>,
@@ -239,14 +259,14 @@ async fn test_s3(
     access_key: String,
     secret_key: String,
     proxy: Option<Proxy>,
-) -> Cmd<'_, usize> {
+) -> Cmd<'_, Opened> {
     rgw_admin::parse_endpoint(&endpoint).map_err(|e| e.to_string())?;
     let proxy = match proxy {
         Some(own) => own.validated()?,
         None => state.settings.get()?.proxy,
     };
     let s3 = s3::S3::with_proxy(&endpoint, access_key.trim(), secret_key.trim(), &proxy)?;
-    Ok(s3.list_buckets().await?.len())
+    browse::open_session(&s3).await
 }
 
 /// Test credentials typed into the form, before anything is saved. `proxy` is the choice
@@ -617,6 +637,7 @@ pub fn run() {
             recent_list,
             recent_add,
             profile_set_proxy,
+            profile_set_start_path,
             network_get,
             network_set,
             get_ui_scale,

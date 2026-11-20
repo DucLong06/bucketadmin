@@ -499,8 +499,8 @@
     await waitFor(() => hasText(T("browse.usingKeyOfUser", { uid: OWNER })) && all(bucketButtons).length === 2, "browsing with the owner's key", 20000);
     await click(T("browse.backToMyKey"));
     await waitFor(() => hasText(T("browse.usingKeyMine")) && hasText(T("browse.noBuckets")), "back on my own key", 20000);
-    await type(T("browse.openByName"), BUCKET);
-    await click(T("browse.openBucket"));
+    await type(T("browse.openPath"), BUCKET);
+    (await field(T("browse.openPath"))).form.requestSubmit();
     await waitFor(() => hasText(loaded(4, 0)), "the read-only user can list");
     await click(T("common.upload"));
     await waitFor(() => hasText(T("error.s3.AccessDenied")), "upload refused for the read-only user", 30000);

@@ -23,6 +23,8 @@ export type Profile = {
   plain_user?: boolean;
   /** This cluster's own proxy choice; absent = follow the app-wide setting. */
   proxy?: Proxy | null;
+  /** Where a session on this connection lands: "bucket" or "bucket/prefix/"; empty or absent = nowhere in particular. */
+  start_path?: string;
 };
 /** How requests leave the machine: by the environment's proxy variables, always direct, or through one given proxy. */
 export type Proxy = { mode: "auto" } | { mode: "none" } | { mode: "custom"; url: string };
@@ -101,6 +103,8 @@ export const bucketSize = (b: Bucket) => b.usage["rgw.main"]?.size ?? 0;
 export const bucketObjects = (b: Bucket) => Object.values(b.usage).reduce((n, u) => n + u.num_objects, 0);
 
 export type BrowseBucket = { name: string; created: string };
+/** Answer of `browse_open` and `test_s3`. `buckets_error`: S3's error code when the key may not list buckets. */
+export type Opened = { access_key: string; buckets: BrowseBucket[]; buckets_error: string | null };
 export type ObjectEntry = {
   key: string;
   size: number;

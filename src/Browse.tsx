@@ -28,10 +28,12 @@ import { invoke, maskKey, type BrowseBucket, type Listing, type Marker, type Obj
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { formatBytes, TZ, vnTime } from "./format";
 import AclEditor from "./AclEditor";
+import BucketPanel from "./BucketPanel";
 import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import { accessLevel, type Access } from "./caps";
 import MyInfo from "./MyInfo";
 import ObjectDrawer, { canUndelete, download, finalDeleteWarning, undeleteHint, type Versioning } from "./ObjectDrawer";
+import { splitPath } from "./paths";
 import { placeLabel, type Place } from "./tabs";
 import { eyebrow, tokens } from "./theme";
 import type { StartTransfer } from "./transfers";
@@ -57,7 +59,7 @@ type Props = {
 };
 const RECENT_IN_SIDEBAR = 6;
 /** `uid` is empty while browsing with the caller's own saved key. */
-type Session = { uid: string; access_key: string; buckets: BrowseBucket[] };
+type Session = { uid: string; access_key: string; buckets: BrowseBucket[]; buckets_error: string | null };
 type Row = { folder: string } | { object: ObjectEntry };
 type DeleteReport = { objects: number; deleted: number; failed: { key: string; error: string }[]; markers: Marker[] };
 /** `undo`: delete markers the toast's undo button removes again. */
@@ -123,8 +125,11 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const [uidInput, setUidInput] = useState("");
   const [session, setSession] = useState<Session | null>(null);
   const [bucket, setBucket] = useState("");
-  const [bucketInput, setBucketInput] = useState("");
   const [prefix, setPrefix] = useState("");
+  // The Open-path field of the sidebar: where a key that was refused a listing is sent.
+  const pathField = useRef<HTMLInputElement | null>(null);
+  // The last listing was refused by S3 (AccessDenied): the error gains the way out.
+  const [denied, setDenied] = useState(false);
   const [listing, setListing] = useState<Listing | null>(null);
   const { busy, error, run, setError } = useAction();
   const request = useRef(0);
@@ -297,7 +302,10 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
     setSession({ uid: target, ...opened });
     const goTo = first.current;
     first.current = null;
+    // With nowhere to go yet, the connection's own key lands at its start path.
+    const home = target === "" ? splitPath(profiles.find((p) => p.id === clusterId)?.start_path ?? "") : null;
     if (goTo?.bucket && goTo.clusterId === clusterId) load(goTo.bucket, goTo.prefix, null, target);
+    else if (home && !home.error) load(home.bucket, home.prefix, null, target);
     else onPlace({ clusterId, uid: target, bucket: "", prefix: "" });
   }
   useEffect(() => {
@@ -328,8 +336,12 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
       setGone(null);
       if (showDeleted && toBucket === bucket) loadGone(toBucket, toPrefix, mine);
     }
+    setDenied(false);
     const page = await run(() =>
-      invoke<Listing>("browse_list", { clusterId, uid, bucket: toBucket, prefix: toPrefix, token }),
+      invoke<Listing>("browse_list", { clusterId, uid, bucket: toBucket, prefix: toPrefix, token }).catch((e) => {
+        if (mine === request.current) setDenied(String(e).startsWith("S3 AccessDenied"));
+        throw e;
+      }),
     );
     // A slower answer for a folder the user already left must not overwrite the table.
     if (!page || mine !== request.current) return;
@@ -428,11 +440,6 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const parts = prefix.split("/").filter(Boolean);
   const crumbs = parts.map((name, i) => ({ name, prefix: `${parts.slice(0, i + 1).join("/")}/` }));
 
-  function openByName(e: FormEvent) {
-    e.preventDefault();
-    if (bucketInput.trim()) load(bucketInput.trim(), "", null);
-  }
-
   if (profiles.length === 0) {
     return <Alert severity="info">{t("browse.noConnection")}</Alert>;
   }
@@ -490,40 +497,16 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
             </Typography>
           )}
           {session && (
-            <Paper variant="outlined" sx={card}>
-              <Typography component="h2" sx={{ ...eyebrow, color: "text.secondary", px: 2, pt: 2 }}>
-                {session.uid ? t("browse.bucketsOfUser", { uid: session.uid }) : t("browse.bucketsMine")}
-              </Typography>
-              <List dense aria-label={t("browse.bucketList")}>
-                {session.buckets.map((b) => (
-                  <ListItemButton key={b.name} selected={b.name === bucket} onClick={() => load(b.name, "", null)}>
-                    <ListItemText primary={b.name} slotProps={{ primary: { sx: { fontFamily: tokens.mono, fontSize: 15 } } }} />
-                  </ListItemButton>
-                ))}
-              </List>
-              {session.buckets.length === 0 && (
-                <Typography variant="body2" color="text.secondary" sx={{ px: 2, pb: 1 }}>
-                  {t("browse.noBuckets")}
-                </Typography>
-              )}
-              <Box sx={{ px: 2, pb: 2 }}>
-                <Button size="small" variant="outlined" fullWidth onClick={() => setCreating("bucket")}>
-                  {t("browse.createBucket")}
-                </Button>
-              </Box>
-              <Stack component="form" onSubmit={openByName} spacing={1} sx={{ p: 2, borderTop: 1, borderColor: "divider" }}>
-                <TextField
-                  label={t("browse.openByName")}
-                  value={bucketInput}
-                  onChange={(e) => setBucketInput(e.target.value)}
-                  size="small"
-                  helperText={t("browse.openByNameHelp")}
-                />
-                <Button type="submit" size="small" variant="outlined" disabled={!bucketInput.trim()}>
-                  {t("browse.openBucket")}
-                </Button>
-              </Stack>
-            </Paper>
+            <BucketPanel
+              title={session.uid ? t("browse.bucketsOfUser", { uid: session.uid }) : t("browse.bucketsMine")}
+              buckets={session.buckets}
+              bucketsError={session.buckets_error}
+              current={bucket}
+              active={active}
+              onOpen={(toBucket, toPrefix) => load(toBucket, toPrefix, null)}
+              onCreate={() => setCreating("bucket")}
+              pathRef={pathField}
+            />
           )}
           {recents.length > 0 && (
             <Paper variant="outlined" sx={card}>
@@ -543,7 +526,18 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
 
         <Stack spacing={2} sx={{ minWidth: 0 }}>
           {busy && <LinearProgress aria-label={t("browse.loading")} />}
-          {plan === null && switching === null && <ErrorAlert error={error} />}
+          {plan === null && switching === null && (
+            <ErrorAlert error={error}>
+              {denied && (
+                <Box sx={{ mt: 0.5 }}>
+                  {t("browse.deniedHint")}{" "}
+                  <Link component="button" color="inherit" onClick={() => pathField.current?.focus()} sx={{ fontWeight: 600, verticalAlign: "baseline" }}>
+                    {t("browse.openPath")}
+                  </Link>
+                </Box>
+              )}
+            </ErrorAlert>
+          )}
           {session && !bucket && (
             <Box>
               <Typography variant="overline" color="primary" component="p">
@@ -553,7 +547,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                 {t("browse.chooseBucket")}
               </Typography>
               <Typography color="text.secondary" sx={{ mt: 0.5, mb: 2.5 }}>
-                {t(session.buckets.length > 0 ? "browse.chooseBucketHint" : "browse.chooseBucketNone")}
+                {t(session.buckets_error ? "browse.chooseBucketDenied" : session.buckets.length > 0 ? "browse.chooseBucketHint" : "browse.chooseBucketNone")}
               </Typography>
               <Box component="ul" aria-label={t("browse.bucketCards")} sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 1.75, listStyle: "none", p: 0, m: 0 }}>
                 {session.buckets.map((b) => (

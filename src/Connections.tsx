@@ -1,8 +1,9 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { Alert, Box, Button, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
-import { invoke, isInternal, maskKey, type EndpointKind, type Profile, type Proxy } from "./api";
+import { invoke, isInternal, maskKey, type EndpointKind, type Opened, type Profile, type Proxy } from "./api";
 import { endpointError } from "./endpoint";
 import { t, type Key } from "./i18n";
+import { startPath } from "./paths";
 import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
 import { ErrorAlert, LangToggle } from "./ui";
 import { stepScale, UI_SCALES } from "./zoom";
@@ -13,7 +14,7 @@ type Outcome = { severity: "error"; text: string } | { severity: "success"; key:
 const outcomeAlert = (o: Outcome, sx?: object) =>
   o.severity === "error" ? <ErrorAlert error={o.text} sx={sx} /> : <Alert severity={o.severity} sx={sx}>{t(o.key, o.vars)}</Alert>;
 
-const emptyForm = { label: "", endpoint: "", accessKey: "", secretKey: "", adminAccessKey: "", adminSecretKey: "" };
+const emptyForm = { label: "", endpoint: "", accessKey: "", secretKey: "", startPath: "", adminAccessKey: "", adminSecretKey: "" };
 /** Keys and paths are the one place the UI uses a monospace face. */
 const Mono = ({ children }: { children: string }) => (
   <Box component="span" sx={{ fontFamily: "monospace" }}>
@@ -75,8 +76,37 @@ function ProfileProxy({ profile, onChanged, fail }: { profile: Profile; onChange
     </Stack>
   );
 }
-type Opened = { access_key: string; buckets: unknown[] };
-const connected = (buckets: number): Outcome => ({ severity: "success", key: "conn.ok", vars: { n: buckets } });
+/** One saved connection's start path: where its sessions land (for a key that may only list one folder). */
+function ProfileStartPath({ profile, onChanged, fail }: { profile: Profile; onChanged: () => void; fail: (e: unknown) => void }) {
+  const saved = profile.start_path ?? "";
+  const [draft, setDraft] = useState(saved);
+  useEffect(() => setDraft(saved), [saved]);
+  const next = startPath(draft);
+  return (
+    <Stack direction="row" spacing={1} sx={{ mt: 1.5, alignItems: "flex-start" }}>
+      <TextField
+        label={t("conn.startPath")}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        size="small"
+        fullWidth
+        error={!!next.error}
+        helperText={next.error ? t(next.error) : t("conn.startPathHelp")}
+        slotProps={{ htmlInput: { style: { fontFamily: "monospace" }, spellCheck: false, "aria-label": t("conn.startPathOf", { label: profile.label }) } }}
+      />
+      <Button
+        onClick={() => next.error || invoke("profile_set_start_path", { id: profile.id, startPath: next.path }).then(onChanged).catch(fail)}
+        disabled={!!next.error || next.path === saved}
+        aria-label={t("conn.saveStartPathFor", { label: profile.label })}
+      >
+        {t("conn.saveStartPath")}
+      </Button>
+    </Stack>
+  );
+}
+// A key that is valid but may not list buckets is a working connection too: it opens the path it was given.
+const connected = (opened: Pick<Opened, "buckets" | "buckets_error">): Outcome =>
+  opened.buckets_error ? { severity: "success", key: "conn.okNoList" } : { severity: "success", key: "conn.ok", vars: { n: opened.buckets.length } };
 
 /** The connections screen: the S3 endpoints the app browses, each with the user's own key
  *  (secret in the OS keychain), an optional admin key, and its proxy choice. */
@@ -125,6 +155,7 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
   const adminGiven = !!form.adminAccessKey.trim() || !!form.adminSecretKey;
   const adminReady = !adminGiven || (!!form.adminAccessKey.trim() && !!form.adminSecretKey);
   const canTest = !busy && !!form.endpoint && !urlError && !!form.accessKey && !!form.secretKey && proxyReady(formProxy);
+  const start = startPath(form.startPath);
   const formKind = useEndpointKind(form.endpoint, formProxy === null || formProxy.mode === "auto");
 
   const field = (key: keyof typeof emptyForm, label: string, extra: object = {}) => (
@@ -142,7 +173,7 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
     setBusy(true);
     const { endpoint, accessKey, secretKey } = form;
     try {
-      setFormOutcome(connected(await invoke<number>("test_s3", { endpoint, accessKey, secretKey, proxy: formProxy })));
+      setFormOutcome(connected(await invoke<Opened>("test_s3", { endpoint, accessKey, secretKey, proxy: formProxy })));
     } catch (e) {
       fail(e);
     }
@@ -157,7 +188,7 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
       // The profile's own key is the one given first. With an admin key, that one is the
       // profile's key and "my key" is saved next to it as the key browse sessions sign with.
       const first = adminGiven ? { accessKey: form.adminAccessKey, secretKey: form.adminSecretKey } : { accessKey, secretKey };
-      const saved = await invoke<Profile>("add_profile", { label, endpoint, ...first });
+      const saved = await invoke<Profile>("add_profile", { label, endpoint, ...first, startPath: start.error ? "" : start.path });
       setForm(emptyForm);
       setFormProxy(null);
       // The connection exists from here on. If one of these fails, it is still listed and
@@ -178,7 +209,7 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
   async function testSaved(id: string) {
     let outcome: Outcome;
     try {
-      outcome = connected((await invoke<Opened>("browse_open", { clusterId: id, uid: "" })).buckets.length);
+      outcome = connected(await invoke<Opened>("browse_open", { clusterId: id, uid: "" }));
     } catch (e) {
       outcome = { severity: "error", text: String(e) };
     }
@@ -223,6 +254,12 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
             autoComplete: "off",
             helperText: t("conn.secretHelp"),
           })}
+          {field("startPath", t("conn.startPath"), {
+            placeholder: t("browse.openPathSample"),
+            error: !!start.error,
+            helperText: start.error ? t(start.error) : t("conn.startPathHelp"),
+            slotProps: { htmlInput: { style: { fontFamily: "monospace" }, spellCheck: false } },
+          })}
           <details>
             <summary>{t("conn.adminKey")}</summary>
             <Stack spacing={2} sx={{ mt: 2 }}>
@@ -255,7 +292,7 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
             <Button variant="outlined" onClick={testForm} disabled={!canTest}>
               {t("conn.test")}
             </Button>
-            <Button type="submit" variant="contained" disabled={!canTest || !adminReady || !form.label.trim()}>
+            <Button type="submit" variant="contained" disabled={!canTest || !adminReady || !!start.error || !form.label.trim()}>
               {t("common.save")}
             </Button>
           </Stack>
@@ -294,6 +331,7 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
                 {t("common.delete")}
               </Button>
             </Stack>
+            <ProfileStartPath profile={p} onChanged={onChanged} fail={fail} />
             <ProfileProxy profile={p} onChanged={onChanged} fail={fail} />
             {rowOutcome[p.id] && outcomeAlert(rowOutcome[p.id], { mt: 1 })}
           </Paper>
