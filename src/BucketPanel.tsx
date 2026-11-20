@@ -59,7 +59,13 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
 
   // The filter belongs to this tab and is not saved.
   const [filter, setFilter] = useState("");
-  const [highlight, setHighlight] = useState(0);
+  const [highlight, showHighlight] = useState(0);
+  // The same position for key presses that arrive before the next render: two quick presses are two steps.
+  const cursor = useRef(0);
+  const setHighlight = (next: number) => {
+    cursor.current = next;
+    showHighlight(next);
+  };
   // The highlight is the filter field's cursor in the list: shown while that field has the keyboard.
   const [filtering, setFiltering] = useState(false);
   const filterable = buckets.length > FILTER_ABOVE;
@@ -71,21 +77,17 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
     if (active) reveal(list.current, list.current?.querySelector<HTMLElement>(".Mui-selected"));
   }, [active, current, shown.length]);
 
-  // The highlighted row stays in view while the arrow keys walk the list.
-  useEffect(() => {
-    if (filtering) reveal(list.current, rowAt(highlight));
-  }, [highlight]);
-
   function onFilterKey(e: KeyboardEvent) {
     if (e.key === "Escape") {
       setFilter("");
       setHighlight(0);
     } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      // From the latest position, not this render's: two quick presses are two steps.
-      const key = e.key;
-      setHighlight((at) => moveHighlight(at, key, shown.length));
+      const next = moveHighlight(cursor.current, e.key, shown.length);
+      setHighlight(next);
+      // The highlighted row stays in view while the arrow keys walk the list.
+      reveal(list.current, rowAt(next));
     } else if (e.key === "Enter") {
-      const picked = shown[moveHighlight(highlight, "", shown.length)];
+      const picked = shown[moveHighlight(cursor.current, "", shown.length)];
       if (picked) onOpen(picked.name, "");
     } else return;
     e.preventDefault();
@@ -130,7 +132,7 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
         </Box>
       )}
       {/* The height limit is on the element itself (not in a class): it is what keeps the rest of the sidebar in reach. */}
-      <List dense aria-label={t("browse.bucketList")} ref={list} style={{ maxHeight: LIST_MAX_HEIGHT }} sx={thinScroll}>
+      <List dense aria-label={t("browse.bucketList")} ref={list} style={{ maxHeight: LIST_MAX_HEIGHT }} sx={{ ...thinScroll, mb: filterable ? 1 : 0 }}>
         {shown.map((b, i) => (
           <ListItemButton
             key={b.name}

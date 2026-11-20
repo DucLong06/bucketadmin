@@ -1259,6 +1259,16 @@ async fn m4_search_bounded() {
 const SMOKE_OWNER: &str = "ba-m4-ui";
 const SMOKE_READ_ONLY: &str = "ba-m4-ui-ro";
 const SMOKE_BUCKET: &str = "ba-m4-ui-bucket";
+/// M9: a user owning many (empty) buckets, a user granted one folder of the fixture bucket
+/// by a bucket policy, and a user RGW refuses ListBuckets (an op-mask without read).
+const SMOKE_MANY: &str = "ba-m4-ui-many";
+const SMOKE_SCOPED: &str = "ba-m4-ui-scoped";
+const SMOKE_NO_LIST: &str = "ba-m4-ui-nolist";
+const SMOKE_MANY_BUCKETS: usize = 32;
+
+fn many_bucket(n: usize) -> String {
+    format!("ba-m9-ui-many-{n:02}")
+}
 
 /// One second of a 440 Hz tone as a 16-bit mono WAV file.
 fn wav() -> Vec<u8> {
@@ -1421,7 +1431,18 @@ async fn ui_smoke_browse_fixture_create() {
             .expect("version");
     }
 
-    let grant = policy(bucket, SMOKE_READ_ONLY, r#""s3:*""#);
+    // The read-only user gets the whole bucket; the scoped user may list `notes/` and what
+    // is below it, and read the objects there. Nothing else, not even the bucket root.
+    smoke_user(&admin, SMOKE_SCOPED, 4).await;
+    let user_arn = |uid: &str| format!(r#"{{"AWS":["arn:aws:iam:::user/{uid}"]}}"#);
+    let (everyone, scoped) = (user_arn(SMOKE_READ_ONLY), user_arn(SMOKE_SCOPED));
+    let grant = format!(
+        r#"{{"Version":"2012-10-17","Statement":[
+            {{"Effect":"Allow","Principal":{everyone},"Action":["s3:*"],"Resource":["arn:aws:s3:::{bucket}","arn:aws:s3:::{bucket}/*"]}},
+            {{"Effect":"Allow","Principal":{scoped},"Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::{bucket}"],"Condition":{{"StringLike":{{"s3:prefix":["notes/*"]}}}}}},
+            {{"Effect":"Allow","Principal":{scoped},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::{bucket}/notes/*"]}}
+        ]}}"#
+    );
     owner
         .client()
         .put_bucket_policy()
@@ -1438,12 +1459,56 @@ async fn ui_smoke_browse_fixture_create() {
         .modify_user(SMOKE_READ_ONLY, &read_only)
         .await
         .expect("op-mask=read");
+
+    // Many buckets for the bucket list of the sidebar, made a few at a time.
+    use futures_util::StreamExt;
+    let many = smoke_user(&admin, SMOKE_MANY, 3).await;
+    let creates = (1..=SMOKE_MANY_BUCKETS).map(|n| {
+        let many = many.clone();
+        async move { many.create_bucket(&many_bucket(n), false).await }
+    });
+    let made: Vec<_> = futures_util::stream::iter(creates)
+        .buffer_unordered(8)
+        .collect()
+        .await;
+    for result in made {
+        result.expect("create one of the many buckets");
+    }
+    let listed = many.list_buckets().await.expect("list the many buckets");
+    assert_eq!(listed.len(), SMOKE_MANY_BUCKETS);
+
+    smoke_user(&admin, SMOKE_NO_LIST, 5).await;
+    let write_only = UserModify {
+        op_mask: Some("write".into()),
+        ..Default::default()
+    };
+    admin
+        .modify_user(SMOKE_NO_LIST, &write_only)
+        .await
+        .expect("op-mask=write");
 }
 
 #[tokio::test]
 #[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
 async fn ui_smoke_browse_fixture_remove() {
+    use futures_util::StreamExt;
     let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
+    remove_user(&admin, SMOKE_NO_LIST).await;
+    remove_user(&admin, SMOKE_SCOPED).await;
+    // The many buckets go a few at a time: RGW's own purge takes them one after another.
+    let found = admin.get_user(SMOKE_MANY).await.ok();
+    if let Some(key) = found.and_then(|u| u.keys.into_iter().next()) {
+        let many = S3::new(&endpoint(), &key.access_key, &key.secret_key);
+        let buckets = many.list_buckets().await.unwrap_or_default();
+        let deletes = buckets
+            .iter()
+            .map(|b| many.client().delete_bucket().bucket(&b.name).send());
+        let _: Vec<_> = futures_util::stream::iter(deletes)
+            .buffer_unordered(8)
+            .collect()
+            .await;
+    }
+    remove_user(&admin, SMOKE_MANY).await;
     remove_user(&admin, SMOKE_READ_ONLY).await;
     remove_user(&admin, SMOKE_OWNER).await;
 }

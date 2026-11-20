@@ -26,15 +26,17 @@ const heading = { fontFamily: t.serif, fontWeight: 600, letterSpacing: "-0.01em"
 /** Small caps label above a heading or a group ("eyebrow" in the concept), also the table header style. */
 export const eyebrow = { fontSize: 12.5, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" as const };
 
-/** A list that scrolls inside its card: a thin bar in the theme's line colour (standard and WebKit properties). */
+/** A list that scrolls inside its card: a thin bar in the theme's line colour. The WebKit rules
+ *  are what the app's webview draws (a bar that stays visible); the standard properties are for an
+ *  engine without them, and are kept apart because, where both exist, they switch the WebKit rules off
+ *  and the bar becomes the desktop's own, which hides until the list is scrolled. */
 export const thinScroll = {
   overflowY: "auto" as const,
-  scrollbarWidth: "thin" as const,
-  scrollbarColor: `${t.line} transparent`,
   "&::-webkit-scrollbar": { width: 8 },
   "&::-webkit-scrollbar-track": { background: "transparent" },
-  "&::-webkit-scrollbar-thumb": { background: t.line, borderRadius: 8 },
+  "&::-webkit-scrollbar-thumb": { background: t.line, borderRadius: "8px" },
   "&::-webkit-scrollbar-thumb:hover": { background: t.muted },
+  "@supports not selector(::-webkit-scrollbar)": { scrollbarWidth: "thin" as const, scrollbarColor: `${t.line} transparent` },
 };
 
 export const theme = createTheme({

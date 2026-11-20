@@ -19,7 +19,13 @@ của bài test cho phần kiểm tra bản mới.
   keychain của hệ điều hành, không ghi ra file. Proxy chọn được cho cả app và riêng từng kết nối: tự động theo biến môi trường,
   không dùng proxy, hoặc một proxy tự nhập; endpoint nội bộ được gợi ý "Không dùng proxy".
 - **Nhiều tab**: mỗi tab ở một vị trí (kết nối + bucket + thư mục) và giữ nguyên danh sách, vị trí cuộn, các dòng đang chọn khi
-  bạn sang tab khác (phím tắt: xem mục Phím tắt).
+  bạn sang tab khác (phím tắt: xem mục Phím tắt). Các tab đang mở sẽ hiện lại khi mở app lần sau.
+- **Mở đường dẫn**: gõ `bucket` hoặc `bucket/thư-mục/` để tới thẳng nơi đó, kể cả khi key của bạn chỉ được liệt kê đúng một
+  thư mục; mỗi kết nối có thể có một đường dẫn bắt đầu tự mở (xem Quyền theo thư mục).
+- **Đã ghim**: đánh dấu bucket và thư mục sâu bên trong, bấm một lần là tới, nằm ở cột bên trái và trên thanh ứng dụng, nhớ
+  qua các lần mở app (xem Vị trí đã ghim).
+- **Danh sách bucket**: key sở hữu bao nhiêu bucket thì danh sách vẫn cao cố định và cuộn bên trong khung; trên 8 bucket có ô
+  lọc (`↑` `↓` di chuyển, `Enter` mở, `Esc` bỏ lọc), tiêu đề hiện số bucket.
 - **Gần đây**: 20 vị trí mở gần nhất, nhớ qua các lần mở app; chọn một vị trí là mở thành tab (vị trí đang mở sẵn thì chuyển
   sang tab đó).
 - Tạo bucket, tạo thư mục, tải lên (chọn file hoặc kéo-thả, multipart), tải xuống có resume, xoá một hoặc nhiều object.
@@ -51,6 +57,12 @@ của bài test cho phần kiểm tra bản mới.
 
 ![Vị trí mở gần đây](docs/images/recent.vi.png)
 
+![Vị trí đã ghim ở cột bên trái](docs/images/pinned.vi.png)
+
+![Key chỉ được cấp một thư mục, mở bằng đường dẫn](docs/images/scoped-path.vi.png)
+
+![Danh sách bucket dài vẫn nằm gọn trong khung](docs/images/buckets-many.vi.png)
+
 ![Giao diện ở cỡ 125%](docs/images/zoom.vi.png)
 
 ## Cài đặt
@@ -58,8 +70,8 @@ của bài test cho phần kiểm tra bản mới.
 Yêu cầu: Ubuntu 22.04 trở lên (amd64), có dịch vụ keyring (GNOME Keyring hoặc tương đương — mặc định có sẵn trên Ubuntu desktop).
 
 ```bash
-wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.1/bucketadmin_0.1.1_amd64.deb
-sudo apt install ./bucketadmin_0.1.1_amd64.deb
+wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.2/bucketadmin_0.1.2_amd64.deb
+sudo apt install ./bucketadmin_0.1.2_amd64.deb
 ```
 
 Các định dạng khác và các bản cũ: trang [Releases](https://github.com/DucLong06/bucketadmin/releases).
@@ -77,12 +89,40 @@ Gỡ: `sudo apt remove bucketadmin`. Dữ liệu của app nằm ở `~/.local/s
 access key và secret key của bạn → **Kiểm tra kết nối** → **Lưu**. Bước kiểm tra chỉ liệt kê bucket qua S3, nên key thường
 không có caps nào cũng dùng được.
 
-**2. Duyệt.** Mục **Duyệt** → chọn một bucket. Bucket được chia sẻ cho bạn (S3 không liệt kê) thì mở theo tên ở cột bên trái.
+**2. Duyệt.** Mục **Duyệt** → chọn một bucket. Bucket được chia sẻ cho bạn (S3 không liệt kê) thì mở theo đường dẫn ở ô
+**Mở đường dẫn** của cột bên trái.
 
 **3. Làm việc với object.** Bấm vào tên để xem trước; chuột phải vào dòng để mở menu; tick nhiều dòng để xoá một lượt; kéo thả
 file vào cửa sổ để tải lên thư mục đang mở.
 
 **4. Chia sẻ.** "ACL của bucket" / "ACL thư mục" trên thanh công cụ, hoặc ACL của từng object trong menu chuột phải.
+
+### Quyền theo thư mục (chỉ một thư mục)
+
+Ở nhiều cụm, user chỉ được cấp một thư mục trong bucket của người khác: bucket policy chỉ cho liệt kê dưới một prefix, và
+thường key không được liệt kê bucket. Với key như vậy:
+
+- **Mở đường dẫn** (cột bên trái của mục Duyệt) nhận `bucket` hoặc `bucket/thư-mục/…` và tới đúng nơi đó. `s3://bucket/thư-mục/`
+  hay có dấu `/` ở đầu cũng như nhau; đường dẫn của một file (`bucket/thư-mục/report.csv`) thì mở thư mục chứa file. Thư mục
+  có tên giống tên file (`v1.2`) thì cần dấu `/` ở cuối.
+- **Đường dẫn bắt đầu** (ô không bắt buộc của kết nối, sửa được cả với kết nối đã lưu): `team-bucket/project-a/` tự mở mỗi khi
+  mở kết nối đó, ở mọi tab mới.
+- Khi key không được liệt kê bucket, khung bucket nói rõ điều đó thay vì báo lỗi, và con trỏ đã nằm sẵn trong ô Mở đường dẫn.
+  "Kiểm tra kết nối" vẫn đạt với key như vậy và nhắc bạn đặt đường dẫn bắt đầu.
+- Thanh đường dẫn vẫn đi ngược lên được. Phía trên thư mục của bạn, S3 trả lời "không có quyền"; thông báo khi đó chỉ lại về
+  ô Mở đường dẫn.
+
+### Vị trí đã ghim
+
+Ghim những nơi bạn dùng hằng ngày: một bucket, hoặc một thư mục sâu bao nhiêu cấp cũng được.
+
+- Ghim vị trí đang mở bằng nút ghim ở cuối thanh đường dẫn, hoặc `Ctrl+D`; làm lại lần nữa là bỏ ghim.
+- Chuột phải vào một bucket ở cột bên trái, hoặc một thư mục trong danh sách, để chọn "Ghim bucket" / "Ghim thư mục này"; mỗi
+  dòng của Gần đây cũng có nút ghim.
+- Khung **Đã ghim** ở cột bên trái liệt kê trước các vị trí của kết nối đang duyệt, các kết nối khác nằm dưới một vạch ngăn.
+  Bấm là mở trong tab hiện tại; `Ctrl`+bấm hoặc nút chuột giữa thì mở tab mới.
+- Chuột phải vào một vị trí đã ghim để mở trong tab mới, đổi tên, bỏ ghim, chuyển lên hoặc chuyển xuống. Tối đa 100 vị trí.
+- Nút **Đã ghim** cạnh Gần đây trên thanh ứng dụng liệt kê 15 vị trí đầu, dùng được ở mọi nơi trong app.
 
 ### Key admin (không bắt buộc)
 
@@ -104,6 +144,7 @@ Các màn hình quản trị cụm (user, key, caps, quota, onboarding từ CSV)
 | `Ctrl+T` | Tab mới |
 | `Ctrl+W` | Đóng tab đang mở |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Sang tab sau / tab trước |
+| `Ctrl+D` | Ghim hoặc bỏ ghim vị trí đang mở |
 | `Ctrl+=` (hoặc `Ctrl++`) | Phóng to giao diện một nấc |
 | `Ctrl+-` | Thu nhỏ giao diện một nấc |
 | `Ctrl+0` | Về cỡ 100% |
@@ -116,8 +157,9 @@ Các màn hình quản trị cụm (user, key, caps, quota, onboarding từ CSV)
 - Cửa sổ chính không tải bất kỳ tài nguyên nào từ ngoài app; xem trước ảnh / media / PDF nằm trong một khung riêng chỉ được phép
   tải từ đúng endpoint của cluster.
 - Presigned URL: mặc định 15 phút; audit log ghi việc tạo URL nhưng không ghi URL.
-- Kiểm tra bản mới: mỗi ngày tối đa một request tới `api.github.com` (qua cài đặt proxy của app) để đọc tag release mới nhất.
-  Request không mang dữ liệu nào của bạn; không tới được GitHub thì app im lặng bỏ qua.
+- Kiểm tra bản mới: mỗi ngày tối đa một request tới `api.github.com` (qua cài đặt proxy của app) để đọc tag release mới nhất;
+  chỉ báo khi release đó mới hơn bản bạn đang chạy. Request không mang dữ liệu nào của bạn; không tới được GitHub thì app im
+  lặng bỏ qua.
 
 Chi tiết từng directive của CSP và cách xử lý presigned URL: [docs/SECURITY.md](docs/SECURITY.md).
 
@@ -132,6 +174,7 @@ Chi tiết từng directive của CSP và cách xử lý presigned URL: [docs/SE
 | "Bucket không tồn tại" / lỗi HTTP 404 khi kiểm tra kết nối | Endpoint không phải là địa chỉ S3 của RGW (sai host, sai port, hoặc trỏ vào dashboard). |
 | Usage trong "Thông tin của tôi" luôn trống | RGW chưa bật ghi usage: quản trị cụm đặt `rgw_enable_usage_log = true` rồi restart RGW. |
 | "Key của user này không có quyền" | Đúng như tên gọi: key đang dùng bị policy, ACL hoặc op-mask chặn. Đây là quyền thật của key. |
+| "Key của user này không có quyền…" ngay khi mở một bucket, hoặc "Key này không được liệt kê bucket" | Key được cấp một thư mục chứ không phải cả bucket: gõ đường dẫn của thư mục đó vào ô **Mở đường dẫn**, và lưu nó làm đường dẫn bắt đầu của kết nối (xem Quyền theo thư mục). |
 | Không lưu được kết nối, báo lỗi keychain | Máy không có dịch vụ keyring đang mở khoá. Cài / mở GNOME Keyring (`gnome-keyring`) rồi thử lại. |
 | App mở chậm khoảng 25 giây | Gặp khi phiên làm việc không có dịch vụ keyring (máy tối giản, phiên SSH + X): desktop portal chờ keyring rồi mới trả lời. Trong phiên desktop đầy đủ có GNOME Keyring đang chạy thì app mở ngay. |
 | Video / audio không phát trong phần xem trước | Thiếu codec GStreamer, xem mục Cài đặt. |
@@ -144,8 +187,8 @@ npm ci
 npm run tauri dev                      # chạy app ở chế độ phát triển
 npm test && npm run build              # test và build frontend
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-scripts/build-deb.sh 0.1.1~dev1        # đóng gói deb
-scripts/render-gate.sh bucketadmin_0.1.1~dev1_amd64.deb   # kiểm tra gói vừa build có hiện giao diện thật
+scripts/build-deb.sh 0.1.2~dev1        # đóng gói deb
+scripts/render-gate.sh bucketadmin_0.1.2~dev1_amd64.deb   # kiểm tra gói vừa build có hiện giao diện thật
 python3 scripts/gen-icons.py           # render lại bộ icon từ src-tauri/icons/icon.svg (cần google-chrome, Pillow)
 ```
 
