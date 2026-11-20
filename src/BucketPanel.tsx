@@ -71,14 +71,19 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
     if (active) reveal(list.current, list.current?.querySelector<HTMLElement>(".Mui-selected"));
   }, [active, current, shown.length]);
 
+  // The highlighted row stays in view while the arrow keys walk the list.
+  useEffect(() => {
+    if (filtering) reveal(list.current, rowAt(highlight));
+  }, [highlight]);
+
   function onFilterKey(e: KeyboardEvent) {
     if (e.key === "Escape") {
       setFilter("");
       setHighlight(0);
     } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      const next = moveHighlight(highlight, e.key, shown.length);
-      setHighlight(next);
-      reveal(list.current, rowAt(next));
+      // From the latest position, not this render's: two quick presses are two steps.
+      const key = e.key;
+      setHighlight((at) => moveHighlight(at, key, shown.length));
     } else if (e.key === "Enter") {
       const picked = shown[moveHighlight(highlight, "", shown.length)];
       if (picked) onOpen(picked.name, "");
