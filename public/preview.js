@@ -20,11 +20,16 @@
   } catch (e) {
     origin = null;
   }
+  // The app's theme colours come along (src/theme.ts); anything that is not a plain colour is ignored.
+  var colour = function (name) {
+    var value = params.get(name) || "";
+    return /^#[0-9a-f]{6}$/i.test(value) ? value : "";
+  };
   document.body.style.margin = "0";
-  document.body.style.background = "#121212";
+  document.body.style.background = colour("bg");
   if (!origin || !tags[kind]) {
     document.body.textContent = params.get("fail") || "—";
-    document.body.style.color = "#fff";
+    document.body.style.color = colour("fg");
     return;
   }
 
@@ -39,7 +44,7 @@
     el.style.cssText = "display:block;max-width:100%";
   } else if (kind === "pdf") {
     el.title = name;
-    el.style.cssText = "display:block;width:100%;height:100vh;border:0;background:#fff";
+    el.style.cssText = "display:block;width:100%;height:100vh;border:0;background:white";
   } else {
     el.controls = true;
     el.setAttribute("aria-label", name);

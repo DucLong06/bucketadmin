@@ -613,6 +613,13 @@ export const en = {
   "pins.addTitle": "Pin a path",
   "pins.addSubmit": "Pin",
   "pins.addHere": "Pin a path on this connection",
+
+  // Theme (M10.2): dark or light, an explicit choice
+  "app.menu": "Menu",
+  "app.theme": "Theme",
+  "theme.dark": "Dark",
+  "theme.light": "Light",
+  "settings.lightTheme": "Light theme",
 };
 
 export const vi: Record<keyof typeof en, string> = {
@@ -1209,4 +1216,11 @@ export const vi: Record<keyof typeof en, string> = {
   "pins.addTitle": "Ghim một đường dẫn",
   "pins.addSubmit": "Ghim",
   "pins.addHere": "Ghim một đường dẫn trên kết nối này",
+
+  // Theme (M10.2): dark or light, an explicit choice
+  "app.menu": "Trình đơn",
+  "app.theme": "Giao diện màu",
+  "theme.dark": "Tối",
+  "theme.light": "Sáng",
+  "settings.lightTheme": "Giao diện sáng",
 };

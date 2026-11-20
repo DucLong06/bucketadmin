@@ -6,8 +6,10 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   IconButton,
   Stack,
+  Switch,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
@@ -17,6 +19,7 @@ import type { KeyPair, Profile } from "./api";
 import { capsCommand } from "./caps";
 import { explain } from "./errors";
 import { setLang, t, useLang } from "./i18n";
+import { setMode, useMode } from "./theme";
 
 /** uid the connected cluster key belongs to ("" while unknown); App provides it. */
 export const CallerContext = createContext("");
@@ -103,6 +106,12 @@ export function LangToggle() {
       </ToggleButton>
     </ToggleButtonGroup>
   );
+}
+
+/** Light theme on or off (off = dark): switches the whole app at once and saves the choice. */
+export function ThemeSwitch() {
+  const mode = useMode();
+  return <FormControlLabel sx={{ minHeight: 40, mr: 0 }} control={<Switch checked={mode === "light"} onChange={(_, on) => setMode(on ? "light" : "dark")} />} label={t("settings.lightTheme")} />;
 }
 
 /** A pushpin: filled for a place that is pinned, an outline for one that could be. */

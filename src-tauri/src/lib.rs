@@ -263,6 +263,29 @@ fn set_lang(state: St<'_>, lang: String) -> Cmd<'_, String> {
     Ok(state.settings.change(|s| s.lang = lang)?.lang)
 }
 
+/// Colour theme of the UI: "dark" or "light".
+#[tauri::command(async)]
+fn get_theme(state: St<'_>) -> Cmd<'_, String> {
+    Ok(state.settings.get()?.theme())
+}
+
+#[tauri::command(async)]
+fn set_theme(window: tauri::WebviewWindow, state: St<'_>, theme: String) -> Cmd<'_, String> {
+    let theme = settings::valid_theme(&theme)?;
+    apply_theme(&window, &theme);
+    Ok(state.settings.change(|s| s.theme = theme)?.theme)
+}
+
+/// What the window shows where the page has drawn nothing yet: the theme's page colour
+/// (`bg` of the palettes in src/theme.ts), so a start in either theme never flashes the other.
+fn apply_theme(window: &tauri::WebviewWindow, theme: &str) {
+    let (r, g, b) = match theme {
+        "light" => (0xfa, 0xf7, 0xf2),
+        _ => (0x18, 0x15, 0x12),
+    };
+    let _ = window.set_background_color(Some(tauri::window::Color(r, g, b, 0xff)));
+}
+
 /// The one zoom mechanism: the webview's own zoom level, the same thing a browser's Ctrl+= changes.
 /// Page, dialogs, menus and tooltips scale together, and the viewport shrinks in CSS pixels.
 fn apply_ui_scale(window: &tauri::WebviewWindow, percent: u16) -> Result<(), String> {
@@ -679,8 +702,9 @@ pub fn run() {
             });
             // Before the first paint: the window never shows at another size than the saved one.
             if let Some(window) = app.get_webview_window("main") {
-                let saved = app.state::<AppState>().settings.get();
-                let _ = apply_ui_scale(&window, saved.map(|s| s.scale()).unwrap_or(100));
+                let saved = app.state::<AppState>().settings.get().unwrap_or_default();
+                let _ = apply_ui_scale(&window, saved.scale());
+                apply_theme(&window, &saved.theme());
             }
             Ok(())
         })
@@ -705,6 +729,8 @@ pub fn run() {
             set_ui_scale,
             get_lang,
             set_lang,
+            get_theme,
+            set_theme,
             endpoint_kind,
             test_s3,
             update_check,

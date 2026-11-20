@@ -380,6 +380,26 @@
     await waitFor(() => objectLink("media/icon.png") && tabs()[1].textContent.startsWith("media"), "the second tab is in media/ and its title says so");
     check(!objectLink("notes/readme.txt"), "the first tab's rows are not on screen");
     await shot("24-two-tabs");
+    // ---- M10.2 the light theme, chosen in the app-bar menu: shown at once, saved, and back again
+    const pageColour = () => getComputedStyle(document.body).backgroundColor;
+    const chooseTheme = async (name) => {
+      await click(T("app.menu"));
+      await clickSel(`[role=menuitemradio][aria-checked="false"]`);
+      await waitFor(() => last(all('[role=menuitemradio][aria-checked="true"]'))?.textContent.trim() === T(`theme.${name}`), `${name} is the checked choice`);
+      document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      await menusGone();
+    };
+    check(document.documentElement.dataset.theme === "dark" && pageColour() === "rgb(24, 21, 18)", `the app starts dark: ${pageColour()}`);
+    await chooseTheme("light");
+    await waitFor(() => document.documentElement.dataset.theme === "light" && pageColour() === "rgb(250, 247, 242)", "the whole page is on warm paper");
+    check((await invoke("get_theme")) === "light", "the choice is in settings.json");
+    const row = last(all(bucketButtons)).getBoundingClientRect().height;
+    check(row >= 40 && parseFloat(getComputedStyle(document.body).fontSize) === 15, `sizes are the same in the light theme: row ${row}px`);
+    check(fits(), "nothing scrolls sideways in the light theme");
+    await shot("24b-light");
+    await chooseTheme("dark");
+    await waitFor(() => pageColour() === "rgb(24, 21, 18)" , "and dark again");
+    check((await invoke("get_theme")) === "dark", "saved again");
     press("Tab");
     await waitFor(() => objectLink("notes/readme.txt") && !objectLink("media/icon.png"), "Ctrl+Tab: the first tab again");
     check(last(all(tick("readme.txt"))).checked && !!button(T("browse.deleteCount", { n: 1 })), "the first tab kept its place and its selection");

@@ -24,7 +24,7 @@ import Browse from "./Browse";
 import Connections from "./Connections";
 import { t, useLang } from "./i18n";
 import { closeTab, cycleTab, placeLabel, placePath, restoreTabs, samePlace, saveTabs, tabShortcut, tabTitle, type BrowseTab, type Place, type SavedTabs } from "./tabs";
-import { theme, tokens } from "./theme";
+import { eyebrow, setMode, themes, tokens, useMode } from "./theme";
 import { TaskPanel, useTransfers } from "./transfers";
 import { ErrorAlert, PinToggle } from "./ui";
 import { zoomShortcut } from "./zoom";
@@ -40,6 +40,9 @@ const nowhere = (clusterId: string): Place => ({ clusterId, uid: "", bucket: "",
 export default function App() {
   // Every string below (and in every child) is looked up again when the language changes.
   useLang();
+  const mode = useMode();
+  // The app-bar menu: theme, audit log.
+  const [appMenu, setAppMenu] = useState<HTMLElement | null>(null);
   const [page, setPage] = useState("browse");
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -197,7 +200,7 @@ export default function App() {
   const known = recents.filter((r) => profiles?.some((p) => p.id === r.clusterId));
   const knownPins = pins.filter((pin) => profiles?.some((p) => p.id === pin.place.clusterId));
   return (
-    <ThemeProvider theme={theme}>
+    <ThemeProvider theme={themes[mode]}>
       <CssBaseline />
       <AccessContext.Provider value={{ profiles: profiles ?? [], pins: knownPins, recents: known }}>
       <Box sx={{ display: "flex", flexDirection: "column", height: "100vh" }}>
@@ -227,6 +230,20 @@ export default function App() {
               title={t("app.update.title", { current: update.current, url: update.url })}
             />
           )}
+          <Button size="small" variant="outlined" aria-haspopup="menu" onClick={(e) => setAppMenu(e.currentTarget)}>
+            {t("app.menu")}
+          </Button>
+          <Menu anchorEl={appMenu} open={appMenu !== null} onClose={() => setAppMenu(null)} slotProps={{ list: { "aria-label": t("app.menu") } }}>
+            <Typography component="li" role="presentation" sx={{ ...eyebrow, color: "text.secondary", px: 2, pt: 0.5, pb: 0.75 }}>
+              {t("app.theme")}
+            </Typography>
+            {(["dark", "light"] as const).map((choice) => (
+              <MenuItem key={choice} role="menuitemradio" aria-checked={mode === choice} selected={mode === choice} onClick={() => setMode(choice)} sx={{ minHeight: 40, gap: 1.25 }}>
+                <Box component="span" aria-hidden sx={{ width: 10, height: 10, borderRadius: "50%", border: 2, borderColor: mode === choice ? "primary.main" : "divider", bgcolor: mode === choice ? "primary.main" : "transparent" }} />
+                {t(`theme.${choice}`)}
+              </MenuItem>
+            ))}
+          </Menu>
         </Box>
         <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
           {/* The browse layer stays mounted (and keeps every tab's state) while the connections screen is shown. */}

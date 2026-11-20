@@ -53,8 +53,8 @@ test("150 buckets: the list has a height limit of its own and scrolls inside the
   expect(rule).toContain("overflow-y:auto");
   // A thin bar in the theme's line colour: WebKit's properties, and the standard ones where those do not exist.
   expect(css).toContain(`.${cls}::-webkit-scrollbar{width:8px;}`);
-  expect(css).toContain(`.${cls}::-webkit-scrollbar-thumb{background:#3e362e;border-radius:8px;}`);
-  expect(css).toContain(`@supports not selector(::-webkit-scrollbar){.${cls}{scrollbar-width:thin;scrollbar-color:#3e362e transparent;}}`);
+  expect(css).toContain(`.${cls}::-webkit-scrollbar-thumb{background:var(--ba-line);border-radius:8px;}`);
+  expect(css).toContain(`@supports not selector(::-webkit-scrollbar){.${cls}{scrollbar-width:thin;scrollbar-color:var(--ba-line) transparent;}}`);
   // All 150 rows are in the list; everything else of the card is not.
   const inside = html.slice(html.indexOf(listTag(html)), html.indexOf("</ul>"));
   expect(inside.match(/role="button"/g)).toHaveLength(150);

@@ -4,6 +4,7 @@ import { invoke } from "../api";
 import { formatBytes } from "../format";
 import { getLang, t } from "../i18n";
 import type { ObjectAt, ObjectTabProps } from "../ObjectDrawer";
+import { getMode, palettes } from "../theme";
 import { CopyButton, ErrorAlert, useAction } from "../ui";
 import { VirtualTable, type Column } from "../virtual";
 import {
@@ -377,8 +378,8 @@ function MediaView({ at, kind, name }: { at: ObjectAt; kind: PreviewKind; name: 
         <iframe
           ref={frame}
           title={t("preview.frameTitle", { name })}
-          // The frame is outside the bundle: the one sentence it can show comes along in its language.
-          src={`/preview.html#${new URLSearchParams({ kind, url, name, lang: getLang(), fail: t("preview.unavailable") })}`}
+          // The frame is outside the bundle: the one sentence it can show comes along in its language, and the theme's colours with it.
+          src={`/preview.html#${new URLSearchParams({ kind, url, name, lang: getLang(), fail: t("preview.unavailable"), bg: palettes[getMode()].bg, fg: palettes[getMode()].text })}`}
           style={{ width: "100%", height: FRAME_HEIGHT[kind], border: 0, borderRadius: 4 }}
         />
       )}

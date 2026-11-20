@@ -6,7 +6,7 @@ import { t, type Key } from "./i18n";
 import { PathPicker } from "./PathPicker";
 import { startPath } from "./paths";
 import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
-import { ErrorAlert, LangToggle } from "./ui";
+import { ErrorAlert, LangToggle, ThemeSwitch } from "./ui";
 import { stepScale, UI_SCALES } from "./zoom";
 
 // Kept as data, not as text: what is on screen follows a change of language.
@@ -370,6 +370,9 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
             {t("settings.language")}
           </Typography>
           <LangToggle />
+          <Box sx={{ ml: 3 }}>
+            <ThemeSwitch />
+          </Box>
         </Stack>
       </Paper>
     </>
