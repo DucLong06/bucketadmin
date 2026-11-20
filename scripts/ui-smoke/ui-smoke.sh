@@ -2,7 +2,8 @@
 # UI smoke test of the real app against a real RGW: the whole app, end to end, as a user who
 # only has an S3 key. Needs RGW_ACCESS_KEY / RGW_SECRET_KEY (lab at http://127.0.0.1:7480),
 # xdotool, xclip, ffmpeg, python3 with Pillow, cargo, and a Secret Service.
-# It creates throw-away data on the cluster (users ba-m4-ui*, two buckets) and removes it again.
+# It creates throw-away data on the cluster (users ba-m4-ui*, their buckets: two for the flow and
+# 32 empty ones for the bucket list) and removes it again.
 #   npx tauri build --debug --no-bundle
 #   xvfb-run -a -s "-screen 0 1280x900x24" scripts/ui-smoke/ui-smoke.sh "$PWD/src-tauri/target/debug/bucketadmin"
 # $1 = app binary (debug build: only those honour BUCKETADMIN_DEV_SCRIPT). Screenshots: /tmp/ba-smoke/*.png.
@@ -24,6 +25,8 @@ cp "${1:?usage: ui-smoke.sh <debug app binary built by tauri build --debug>}" "$
 export NAMES="$(grep -oE 'await shot\("[^"]+"\)' "$FLOW_JS" | sed -E 's/.*"(.*)".*/\1/' | tr '\n' ' ')"
 # Slots at which the shell presses a real Enter (the clipboard ignores synthetic clicks).
 ENTER_AT="06-csv 28-copy-url"
+# Slots at which the shell presses a real Ctrl+D (a synthetic key event does not prove a shortcut).
+CTRL_D_AT="38-ctrl-d"
 # Debug builds take GitHub's "latest release" answer from here: the flow sees a newer release.
 export BUCKETADMIN_DEV_UPDATE='{"tag_name":"v9.9.9","html_url":"https://github.com/DucLong06/bucketadmin/releases/tag/v9.9.9"}'
 # Files the flow uploads, and where its downloads go. Native file dialogs cannot be driven
@@ -91,6 +94,10 @@ for name in $NAMES; do
     echo "clipboard after a real Enter at $name: ${clip%%\?*}$([[ "$clip" == *X-Amz-Signature=* ]] && echo "?… (presigned, X-Amz-Expires=$(printf '%s' "$clip" | grep -o 'X-Amz-Expires=[0-9]*' | cut -d= -f2))")"
     shot "${name}-copied"
   fi
+  if [[ " $CTRL_D_AT " == *" $name "* ]]; then
+    xdotool key ctrl+d; sleep 0.8
+    shot "${name}-pressed"
+  fi
 done
 sleep 1.5; shot 99-final
 kill $APP; rm -f /tmp/ba-smoke/driver.js
@@ -103,7 +110,8 @@ echo "== profiles.json and settings.json after the run"; cat /tmp/ba-smoke/data/
 python3 - <<'PY'
 import json
 s = json.load(open("/tmp/ba-smoke/data/bucketadmin/settings.json"))
-print("settings.json: lang", s.get("lang"), "| ui_scale", s.get("ui_scale"), "| proxy", s.get("proxy"), "| update tag", (s.get("update") or {}).get("tag"), "| recent places left", len(s.get("recent", [])))
+print("settings.json: lang", s.get("lang"), "| ui_scale", s.get("ui_scale"), "| proxy", s.get("proxy"), "| update tag", (s.get("update") or {}).get("tag"),
+      "| recent places left", len(s.get("recent", [])), "| pins left", len(s.get("pins", [])), "| tabs saved", len((s.get("tabs") or {}).get("tabs", [])))
 PY
 # A flow that fails before its last step leaves its connections behind; the profile file is
 # throw-away, but the secrets sit in the real keychain: remove exactly those entries.

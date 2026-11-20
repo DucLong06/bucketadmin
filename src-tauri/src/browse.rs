@@ -196,22 +196,50 @@ pub fn browse_key_clear(state: St<'_>, cluster_id: String) -> Cmd<ClusterProfile
     state.profiles.clear_browse_key(&cluster_id)
 }
 
-#[derive(Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 pub struct Opened {
     /// Which of the user's keys the session signs with (the secret stays in the backend).
-    access_key: String,
-    buckets: Vec<BucketEntry>,
+    pub access_key: String,
+    pub buckets: Vec<BucketEntry>,
+    /// The S3 error code when the key may not list buckets (e.g. `AccessDenied`). Normal for a
+    /// user who was only granted one folder: such a key still opens a path it is told.
+    pub buckets_error: Option<String>,
+}
+
+/// What a session shows after its ListBuckets answer. A refusal by S3 is not a failure of the
+/// session; a key RGW does not accept, or a cluster that cannot be reached, is.
+pub fn opened(
+    access_key: &str,
+    listed: Result<Vec<BucketEntry>, String>,
+) -> Result<Opened, String> {
+    let (buckets, buckets_error) = match listed {
+        Ok(buckets) => (buckets, None),
+        Err(error) => {
+            // `S3 <Code> (<status>): ...` (see `s3::s3_error`); anything else is the network.
+            let code = error.strip_prefix("S3 ").and_then(|e| e.split(' ').next());
+            match code {
+                Some("InvalidAccessKeyId" | "SignatureDoesNotMatch") | None => return Err(error),
+                Some(code) => (Vec::new(), Some(code.to_string())),
+            }
+        }
+    };
+    Ok(Opened {
+        access_key: access_key.to_string(),
+        buckets,
+        buckets_error,
+    })
+}
+
+/// Lists the buckets of a fresh session the way `browse_open` reports them.
+pub async fn open_session(s3: &S3) -> Result<Opened, String> {
+    opened(s3.access_key(), s3.list_buckets().await)
 }
 
 /// Starts (or restarts) browsing as `uid` (empty: with the caller's own saved key) and lists
-/// the buckets that key's user owns.
+/// the buckets that key's user owns. A key that may not list buckets still gets its session.
 #[tauri::command]
 pub async fn browse_open(state: St<'_>, cluster_id: String, uid: String) -> Cmd<Opened> {
-    let s3 = state.s3(&cluster_id, &uid, true).await?;
-    Ok(Opened {
-        access_key: s3.access_key().to_string(),
-        buckets: s3.list_buckets().await?,
-    })
+    open_session(&state.s3(&cluster_id, &uid, true).await?).await
 }
 
 #[tauri::command]
@@ -727,5 +755,35 @@ mod tests {
         assert_eq!(s3.access_key(), "AKALICE");
         assert_eq!(lookup.calls(), ["GET /admin/user?format=json&uid=alice"]);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// M9.1: a key that may not list buckets (one folder granted by a bucket policy) still
+    /// gets a session; a key RGW rejects, or no answer at all, still fails.
+    #[test]
+    fn a_refused_bucket_listing_is_a_state_of_the_session_not_a_failure() {
+        let bucket = BucketEntry {
+            name: "logs".into(),
+            created: String::new(),
+        };
+        let listed = opened("AK", Ok(vec![bucket.clone()])).unwrap();
+        assert_eq!((listed.buckets, listed.buckets_error), (vec![bucket], None));
+
+        let denied = opened("AK", Err("S3 AccessDenied (403): ".into())).unwrap();
+        assert_eq!(denied.access_key, "AK");
+        assert!(denied.buckets.is_empty());
+        assert_eq!(denied.buckets_error.as_deref(), Some("AccessDenied"));
+        let other = opened("AK", Err("S3 MethodNotAllowed (405): no".into())).unwrap();
+        assert_eq!(other.buckets_error.as_deref(), Some("MethodNotAllowed"));
+
+        for fatal in [
+            "S3 InvalidAccessKeyId (403): ",
+            "S3 SignatureDoesNotMatch (403): ",
+            "cannot reach RGW: dispatch failure: connection refused",
+        ] {
+            assert_eq!(opened("AK", Err(fatal.into())), Err(fatal.to_string()));
+        }
+        // The UI reads this field by name.
+        let json = serde_json::to_string(&denied).unwrap();
+        assert!(json.contains(r#""buckets_error":"AccessDenied""#), "{json}");
     }
 }

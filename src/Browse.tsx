@@ -13,6 +13,7 @@ import {
   LinearProgress,
   Link,
   List,
+  ListItem,
   ListItemButton,
   ListItemText,
   Menu,
@@ -28,16 +29,20 @@ import { invoke, maskKey, type BrowseBucket, type Listing, type Marker, type Obj
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { formatBytes, TZ, vnTime } from "./format";
 import AclEditor from "./AclEditor";
+import BucketPanel from "./BucketPanel";
 import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import { accessLevel, type Access } from "./caps";
 import MyInfo from "./MyInfo";
+import PinnedPanel from "./PinnedPanel";
+import { isPinned, type Pin, type PinOps } from "./pins";
 import ObjectDrawer, { canUndelete, download, finalDeleteWarning, undeleteHint, type Versioning } from "./ObjectDrawer";
-import { placeLabel, type Place } from "./tabs";
+import { splitPath } from "./paths";
+import { placeLabel, placePath, type Place } from "./tabs";
 import { eyebrow, tokens } from "./theme";
 import type { StartTransfer } from "./transfers";
 import { explain } from "./errors";
 import { t, type Key } from "./i18n";
-import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, useAction } from "./ui";
+import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, PinToggle, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
 
 type Props = {
@@ -54,10 +59,15 @@ type Props = {
   recents: Place[];
   /** Go to a recent place (the app picks the tab). */
   onRecent: (at: Place) => void;
+  /** Pinned places of every connection, in the user's order, and how to change them. */
+  pins: Pin[];
+  pinOps: PinOps;
+  /** Open a place in a new tab. */
+  onOpenTab: (at: Place) => void;
 };
 const RECENT_IN_SIDEBAR = 6;
 /** `uid` is empty while browsing with the caller's own saved key. */
-type Session = { uid: string; access_key: string; buckets: BrowseBucket[] };
+type Session = { uid: string; access_key: string; buckets: BrowseBucket[]; buckets_error: string | null };
 type Row = { folder: string } | { object: ObjectEntry };
 type DeleteReport = { objects: number; deleted: number; failed: { key: string; error: string }[]; markers: Marker[] };
 /** `undo`: delete markers the toast's undo button removes again. */
@@ -93,7 +103,7 @@ const th = (text: string) => (
 /** "a/b/c.txt" under prefix "a/b/" is shown as "c.txt". */
 const baseName = (key: string, prefix: string) => key.slice(prefix.length);
 
-export default function Browse({ profiles, start, active, startTransfer, onPlace, remember, recents, onRecent }: Props) {
+export default function Browse({ profiles, start, active, startTransfer, onPlace, remember, recents, onRecent, pins, pinOps, onOpenTab }: Props) {
   const [clusterId, setClusterId] = useState(start.clusterId);
   // Wide enough for every column of the object list (CSS px: the zoom setting narrows the page).
   const roomy = useMediaQuery("(min-width:1150px)");
@@ -123,8 +133,11 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const [uidInput, setUidInput] = useState("");
   const [session, setSession] = useState<Session | null>(null);
   const [bucket, setBucket] = useState("");
-  const [bucketInput, setBucketInput] = useState("");
   const [prefix, setPrefix] = useState("");
+  // The Open-path field of the sidebar: where a key that was refused a listing is sent.
+  const pathField = useRef<HTMLInputElement | null>(null);
+  // The last listing was refused by S3 (AccessDenied): the error gains the way out.
+  const [denied, setDenied] = useState(false);
   const [listing, setListing] = useState<Listing | null>(null);
   const { busy, error, run, setError } = useAction();
   const request = useRef(0);
@@ -138,6 +151,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   };
   // Right-clicked row and where the pointer was.
   const [menu, setMenu] = useState<{ row: Row; x: number; y: number } | null>(null);
+  // The same for a bucket of the sidebar list.
+  const [bucketMenu, setBucketMenu] = useState<{ bucket: string; x: number; y: number } | null>(null);
   const tableHeight = useTableHeight();
   const [versioning, setVersioning] = useState<Versioning>(NO_VERSIONING);
   // The prefix whose ACL dialog is open ("" = the bucket itself); null when closed.
@@ -297,7 +312,10 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
     setSession({ uid: target, ...opened });
     const goTo = first.current;
     first.current = null;
+    // With nowhere to go yet, the connection's own key lands at its start path.
+    const home = target === "" ? splitPath(profiles.find((p) => p.id === clusterId)?.start_path ?? "") : null;
     if (goTo?.bucket && goTo.clusterId === clusterId) load(goTo.bucket, goTo.prefix, null, target);
+    else if (home && !home.error) load(home.bucket, home.prefix, null, target);
     else onPlace({ clusterId, uid: target, bucket: "", prefix: "" });
   }
   useEffect(() => {
@@ -328,8 +346,12 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
       setGone(null);
       if (showDeleted && toBucket === bucket) loadGone(toBucket, toPrefix, mine);
     }
+    setDenied(false);
     const page = await run(() =>
-      invoke<Listing>("browse_list", { clusterId, uid, bucket: toBucket, prefix: toPrefix, token }),
+      invoke<Listing>("browse_list", { clusterId, uid, bucket: toBucket, prefix: toPrefix, token }).catch((e) => {
+        if (mine === request.current) setDenied(String(e).startsWith("S3 AccessDenied"));
+        throw e;
+      }),
     );
     // A slower answer for a folder the user already left must not overwrite the table.
     if (!page || mine !== request.current) return;
@@ -344,6 +366,17 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
         : { prefixes: [...old.prefixes, ...page.prefixes], objects: [...old.objects, ...page.objects], next_token: page.next_token },
     );
   }
+
+  // A pinned place opens in this tab, whichever connection or key it belongs to.
+  function goHere(place: Place) {
+    if (place.clusterId === clusterId && session && place.uid === session.uid) return void load(place.bucket, place.prefix, null);
+    first.current = place;
+    if (place.clusterId !== clusterId) return setClusterId(place.clusterId);
+    setUidInput(place.uid);
+    open(place.uid);
+  }
+  /** A place of the session in this tab. */
+  const placeOf = (ofBucket: string, ofPrefix: string): Place => ({ clusterId, uid: session?.uid ?? "", bucket: ofBucket, prefix: ofPrefix });
 
   function onBucketCreated(name: string) {
     const byName = (a: BrowseBucket, b: BrowseBucket) => a.name.localeCompare(b.name);
@@ -428,11 +461,6 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const parts = prefix.split("/").filter(Boolean);
   const crumbs = parts.map((name, i) => ({ name, prefix: `${parts.slice(0, i + 1).join("/")}/` }));
 
-  function openByName(e: FormEvent) {
-    e.preventDefault();
-    if (bucketInput.trim()) load(bucketInput.trim(), "", null);
-  }
-
   if (profiles.length === 0) {
     return <Alert severity="info">{t("browse.noConnection")}</Alert>;
   }
@@ -489,41 +517,22 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               )}
             </Typography>
           )}
+          <PinnedPanel pins={pins} profiles={profiles} clusterId={clusterId} onOpen={goHere} onOpenTab={onOpenTab} ops={pinOps} />
           {session && (
-            <Paper variant="outlined" sx={card}>
-              <Typography component="h2" sx={{ ...eyebrow, color: "text.secondary", px: 2, pt: 2 }}>
-                {session.uid ? t("browse.bucketsOfUser", { uid: session.uid }) : t("browse.bucketsMine")}
-              </Typography>
-              <List dense aria-label={t("browse.bucketList")}>
-                {session.buckets.map((b) => (
-                  <ListItemButton key={b.name} selected={b.name === bucket} onClick={() => load(b.name, "", null)}>
-                    <ListItemText primary={b.name} slotProps={{ primary: { sx: { fontFamily: tokens.mono, fontSize: 15 } } }} />
-                  </ListItemButton>
-                ))}
-              </List>
-              {session.buckets.length === 0 && (
-                <Typography variant="body2" color="text.secondary" sx={{ px: 2, pb: 1 }}>
-                  {t("browse.noBuckets")}
-                </Typography>
-              )}
-              <Box sx={{ px: 2, pb: 2 }}>
-                <Button size="small" variant="outlined" fullWidth onClick={() => setCreating("bucket")}>
-                  {t("browse.createBucket")}
-                </Button>
-              </Box>
-              <Stack component="form" onSubmit={openByName} spacing={1} sx={{ p: 2, borderTop: 1, borderColor: "divider" }}>
-                <TextField
-                  label={t("browse.openByName")}
-                  value={bucketInput}
-                  onChange={(e) => setBucketInput(e.target.value)}
-                  size="small"
-                  helperText={t("browse.openByNameHelp")}
-                />
-                <Button type="submit" size="small" variant="outlined" disabled={!bucketInput.trim()}>
-                  {t("browse.openBucket")}
-                </Button>
-              </Stack>
-            </Paper>
+            <BucketPanel
+              title={session.uid ? t("browse.bucketsOfUser", { uid: session.uid }) : t("browse.bucketsMine")}
+              buckets={session.buckets}
+              bucketsError={session.buckets_error}
+              current={bucket}
+              active={active}
+              onOpen={(toBucket, toPrefix) => load(toBucket, toPrefix, null)}
+              onCreate={() => setCreating("bucket")}
+              onBucketMenu={(name, e) => {
+                e.preventDefault();
+                setBucketMenu({ bucket: name, x: e.clientX, y: e.clientY });
+              }}
+              pathRef={pathField}
+            />
           )}
           {recents.length > 0 && (
             <Paper variant="outlined" sx={card}>
@@ -532,9 +541,18 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               </Typography>
               <List dense aria-label={t("browse.recentList")}>
                 {recents.slice(0, RECENT_IN_SIDEBAR).map((place) => (
-                  <ListItemButton key={JSON.stringify(place)} onClick={() => onRecent(place)}>
-                    <ListItemText primary={placeLabel(place, profiles)} slotProps={{ primary: { sx: { fontSize: 14, wordBreak: "break-all" } } }} />
-                  </ListItemButton>
+                  <ListItem
+                    key={JSON.stringify(place)}
+                    disablePadding
+                    secondaryAction={
+                      <PinToggle pinned={isPinned(pins, place)} label={t(isPinned(pins, place) ? "browse.unpinThis" : "browse.pinThis", { path: placePath(place) })} onToggle={() => pinOps.toggle(place)} />
+                    }
+                    sx={{ "& .MuiListItemSecondaryAction-root": { right: 6 } }}
+                  >
+                    <ListItemButton onClick={() => onRecent(place)} sx={{ pr: "44px !important" }}>
+                      <ListItemText primary={placeLabel(place, profiles)} slotProps={{ primary: { sx: { fontSize: 14, wordBreak: "break-all" } } }} />
+                    </ListItemButton>
+                  </ListItem>
                 ))}
               </List>
             </Paper>
@@ -543,7 +561,18 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
 
         <Stack spacing={2} sx={{ minWidth: 0 }}>
           {busy && <LinearProgress aria-label={t("browse.loading")} />}
-          {plan === null && switching === null && <ErrorAlert error={error} />}
+          {plan === null && switching === null && (
+            <ErrorAlert error={error}>
+              {denied && (
+                <Box sx={{ mt: 0.5 }}>
+                  {t("browse.deniedHint")}{" "}
+                  <Link component="button" color="inherit" onClick={() => pathField.current?.focus()} sx={{ fontWeight: 600, verticalAlign: "baseline" }}>
+                    {t("browse.openPath")}
+                  </Link>
+                </Box>
+              )}
+            </ErrorAlert>
+          )}
           {session && !bucket && (
             <Box>
               <Typography variant="overline" color="primary" component="p">
@@ -553,7 +582,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                 {t("browse.chooseBucket")}
               </Typography>
               <Typography color="text.secondary" sx={{ mt: 0.5, mb: 2.5 }}>
-                {t(session.buckets.length > 0 ? "browse.chooseBucketHint" : "browse.chooseBucketNone")}
+                {t(session.buckets_error ? "browse.chooseBucketDenied" : session.buckets.length > 0 ? "browse.chooseBucketHint" : "browse.chooseBucketNone")}
               </Typography>
               <Box component="ul" aria-label={t("browse.bucketCards")} sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 1.75, listStyle: "none", p: 0, m: 0 }}>
                 {session.buckets.map((b) => (
@@ -583,7 +612,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                   <Typography variant="overline" color="primary" component="p">
                     {t("browse.eyebrow", { label })}
                   </Typography>
-                  <Breadcrumbs aria-label={t("browse.path")} separator="/" sx={{ fontFamily: tokens.serif, fontSize: 29, fontWeight: 600, lineHeight: 1.25, "& .MuiBreadcrumbs-separator": { color: "divider" } }}>
+                  <Stack direction="row" sx={{ alignItems: "center", gap: 1 }}>
+                  <Breadcrumbs aria-label={t("browse.path")} separator="/" sx={{ minWidth: 0, fontFamily: tokens.serif, fontSize: 29, fontWeight: 600, lineHeight: 1.25, "& .MuiBreadcrumbs-separator": { color: "divider" } }}>
                     <Link component="button" underline="none" color={crumbs.length ? "text.secondary" : "text.primary"} onClick={() => load(bucket, "", null)} sx={{ font: "inherit" }}>
                       {bucket}
                     </Link>
@@ -600,6 +630,14 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                       </Link>
                     ))}
                   </Breadcrumbs>
+                    {/* At the end of the breadcrumb row: pins the place it spells out. */}
+                    <PinToggle
+                      size={40}
+                      pinned={isPinned(pins, placeOf(bucket, prefix))}
+                      label={t(isPinned(pins, placeOf(bucket, prefix)) ? "browse.unpinCurrent" : "browse.pinCurrent")}
+                      onToggle={() => pinOps.toggle(placeOf(bucket, prefix))}
+                    />
+                  </Stack>
                 </Box>
                 <Stack direction="row" spacing={1}>
                   <Button variant="contained" onClick={async () => upload(await invoke<string[]>("browse_pick_upload", { title: t("browse.pickUploadTitle") }))}>
@@ -748,10 +786,50 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
         {menuFolder && <MenuItem onClick={pick(() => load(bucket, menuFolder, null))}>{t("common.open")}</MenuItem>}
         {menuFolder && <MenuItem onClick={pick(() => setAclOf(menuFolder))}>{t("browse.acl")}</MenuItem>}
         {menuFolder && (
+          <MenuItem onClick={pick(() => pinOps.toggle(placeOf(bucket, menuFolder)))}>{t(isPinned(pins, placeOf(bucket, menuFolder)) ? "browse.unpinFolder" : "browse.pinFolder")}</MenuItem>
+        )}
+        {menuFolder && (
           <MenuItem onClick={pick(() => planDelete([], [menuFolder]))} sx={{ color: "error.main" }}>
             {t("common.delete")}
           </MenuItem>
         )}
+      </Menu>
+      <Menu
+        open={bucketMenu !== null}
+        onClose={() => setBucketMenu(null)}
+        anchorReference="anchorPosition"
+        anchorPosition={bucketMenu ? { top: bucketMenu.y, left: bucketMenu.x } : undefined}
+        slotProps={{ list: { "aria-label": t("browse.bucketMenu") } }}
+      >
+        {bucketMenu && [
+          <MenuItem
+            key="open"
+            onClick={() => {
+              setBucketMenu(null);
+              load(bucketMenu.bucket, "", null);
+            }}
+          >
+            {t("common.open")}
+          </MenuItem>,
+          <MenuItem
+            key="tab"
+            onClick={() => {
+              setBucketMenu(null);
+              onOpenTab(placeOf(bucketMenu.bucket, ""));
+            }}
+          >
+            {t("pins.openTab")}
+          </MenuItem>,
+          <MenuItem
+            key="pin"
+            onClick={() => {
+              setBucketMenu(null);
+              pinOps.toggle(placeOf(bucketMenu.bucket, ""));
+            }}
+          >
+            {t(isPinned(pins, placeOf(bucketMenu.bucket, "")) ? "browse.unpinBucket" : "browse.pinBucket")}
+          </MenuItem>,
+        ]}
       </Menu>
       <ConfirmDialog
         open={plan !== null}

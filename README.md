@@ -21,7 +21,13 @@ canned answer that test gives the update check.
   for each connection: automatic (environment variables), no proxy, or one you enter; for an internal endpoint the app
   suggests "No proxy".
 - **Tabs**: each tab is at one place (connection + bucket + folder) and keeps its listing, scroll position and ticked rows
-  while you are in another tab (shortcuts: see Shortcuts).
+  while you are in another tab (shortcuts: see Shortcuts). The open tabs come back when the app is started again.
+- **Open path**: type `bucket` or `bucket/folder/` to go straight there, also when your key may only list that one folder;
+  a connection can have a start path that is opened by itself (see Scoped access).
+- **Pinned**: bookmarks to buckets and to folders deep inside them, one click away in the left column and in the app bar,
+  remembered between runs (see Pinned places).
+- **Bucket list**: however many buckets the key owns, the list keeps a fixed height and scrolls inside its card; a filter
+  field appears above 8 buckets (`↑` `↓` move, `Enter` opens, `Esc` clears) and the header shows the count.
 - **Recent**: the 20 places opened last, remembered between runs; choosing one opens it as a tab (a place that is already
   open is shown in its tab).
 - Create buckets and folders, upload (pick files or drag and drop, multipart), download with resume, delete one or many
@@ -59,6 +65,12 @@ canned answer that test gives the update check.
 
 ![Recently opened places](docs/images/recent.png)
 
+![Pinned places in the left column](docs/images/pinned.png)
+
+![A key that was granted one folder, opened by its path](docs/images/scoped-path.png)
+
+![A long bucket list stays inside its card](docs/images/buckets-many.png)
+
 ![The interface at 125%](docs/images/zoom.png)
 
 ## Install
@@ -67,8 +79,8 @@ Requirements: Ubuntu 22.04 or later (amd64) with a keyring service (GNOME Keyrin
 Ubuntu desktop).
 
 ```bash
-wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.1/bucketadmin_0.1.1_amd64.deb
-sudo apt install ./bucketadmin_0.1.1_amd64.deb
+wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.2/bucketadmin_0.1.2_amd64.deb
+sudo apt install ./bucketadmin_0.1.2_amd64.deb
 ```
 
 Other formats and older versions: the [Releases](https://github.com/DucLong06/bucketadmin/releases) page.
@@ -86,13 +98,39 @@ To play compressed video / audio in the preview, the machine needs GStreamer's c
 `http://rgw.example.com:7480`), your access key and secret key → **Test connection** → **Save**. The test only lists buckets
 over S3, so an ordinary key without any caps works.
 
-**2. Browse.** **Browse** → choose a bucket. A bucket that is shared with you (S3 does not list those) is opened by its name
-in the left column.
+**2. Browse.** **Browse** → choose a bucket. A bucket that is shared with you (S3 does not list those) is opened by its path
+under **Open path** in the left column.
 
 **3. Work with objects.** Click a name to preview it; right-click a row for its menu; tick several rows to delete them in one
 go; drop files onto the window to upload them into the open folder.
 
 **4. Share.** "Bucket ACL" / "Folder ACL" in the toolbar, or the ACL of a single object from the right-click menu.
+
+### Scoped access (one folder only)
+
+On many clusters a user is granted a single folder of somebody else's bucket: the bucket policy allows listing only under
+one prefix, and often the key may not list buckets at all. Such a key works like this:
+
+- **Open path** (left column of Browse) takes `bucket` or `bucket/folder/…` and lands exactly there. `s3://bucket/folder/` and
+  a leading `/` mean the same; the path of a file (`bucket/folder/report.csv`) opens the folder the file is in. A folder whose
+  name looks like a file name (`v1.2`) needs its trailing `/`.
+- **Start path** (optional field of a connection, also editable on a saved one): `team-bucket/project-a/` is opened by itself
+  whenever that connection is opened, in every new tab.
+- When the key may not list buckets, the bucket card says so instead of showing an error, and the keyboard is already in the
+  Open-path field. "Test connection" passes for such a key and tells you to set a start path.
+- The breadcrumb still leads upwards. Above your folder S3 answers "not allowed"; the message then points back to Open path.
+
+### Pinned places
+
+Pin what you use every day: a bucket, or a folder any number of levels down.
+
+- Pin the place that is open with the pin button at the end of the breadcrumb row, or with `Ctrl+D`; the same again unpins it.
+- Right-click a bucket in the left column, or a folder in the list, for "Pin bucket" / "Pin this folder"; every row of Recent
+  has a pin button too.
+- The **Pinned** card in the left column lists the pins of the connection you are browsing first and those of other
+  connections under a divider. A click opens the place in the current tab; `Ctrl`+click or the middle button opens a new tab.
+- Right-click a pin to open it in a new tab, rename it, unpin it, or move it up or down. Up to 100 pins are kept.
+- The **Pinned** button next to Recent in the app bar lists the first 15 from anywhere in the app.
 
 ### Admin key (optional)
 
@@ -114,6 +152,7 @@ The cluster administration screens (users, keys, caps, quotas, onboarding from C
 | `Ctrl+T` | New tab |
 | `Ctrl+W` | Close the current tab |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
+| `Ctrl+D` | Pin or unpin the place that is open |
 | `Ctrl+=` (or `Ctrl++`) | Interface one step bigger |
 | `Ctrl+-` | Interface one step smaller |
 | `Ctrl+0` | Back to 100% |
@@ -128,7 +167,8 @@ The cluster administration screens (users, keys, caps, quotas, onboarding from C
   load from the cluster's own endpoint.
 - Presigned URLs: 15 minutes by default; the audit log records that a URL was made, not the URL.
 - Update check: at most one request a day to `api.github.com` (through the app's proxy setting) to read the latest release
-  tag. The request carries none of your data; when GitHub cannot be reached the app silently skips it.
+  tag; a notice appears only when that release is newer than the version you run. The request carries none of your data;
+  when GitHub cannot be reached the app silently skips it.
 
 Every CSP directive and the handling of presigned URLs in detail: [docs/SECURITY.md](docs/SECURITY.md) (in Vietnamese).
 
@@ -143,6 +183,7 @@ Every CSP directive and the handling of presigned URLs in detail: [docs/SECURITY
 | "The bucket does not exist" / an HTTP 404 error when testing a connection | The endpoint is not the S3 address of RGW (wrong host, wrong port, or it points at the dashboard). |
 | Usage in "My info" is always empty | RGW does not record usage: the cluster administrator sets `rgw_enable_usage_log = true` and restarts RGW. |
 | "This user's key is not allowed to do this" | Just what it says: the key in use is stopped by a policy, an ACL or the op-mask. That is the key's real permission. |
+| "This user's key is not allowed to do this" as soon as a bucket is opened, or "This key may not list buckets" | The key was granted one folder, not the whole bucket: type that folder's path under **Open path**, and save it as the connection's start path (see Scoped access). |
 | A connection cannot be saved, with a keychain error | The machine has no unlocked keyring service. Install / unlock GNOME Keyring (`gnome-keyring`) and try again. |
 | The app takes about 25 seconds to open | Happens when the session has no keyring service (a minimal machine, an SSH + X session): the desktop portal waits for the keyring before it answers. In a full desktop session with GNOME Keyring running the app opens at once. |
 | Video / audio does not play in the preview | GStreamer codecs are missing, see Install. |
@@ -155,8 +196,8 @@ npm ci
 npm run tauri dev                      # run the app in development mode
 npm test && npm run build              # test and build the frontend
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-scripts/build-deb.sh 0.1.1~dev1        # build the deb
-scripts/render-gate.sh bucketadmin_0.1.1~dev1_amd64.deb   # check that the package just built shows the real interface
+scripts/build-deb.sh 0.1.2~dev1        # build the deb
+scripts/render-gate.sh bucketadmin_0.1.2~dev1_amd64.deb   # check that the package just built shows the real interface
 python3 scripts/gen-icons.py           # render the icon set again from src-tauri/icons/icon.svg (needs google-chrome, Pillow)
 ```
 

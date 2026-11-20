@@ -27,6 +27,37 @@ pub struct ClusterProfile {
     /// This cluster's own proxy choice; absent = follow the app-wide setting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy: Option<Proxy>,
+    /// Where a session on this connection lands: `bucket` or `bucket/prefix/`; empty = nowhere
+    /// in particular. For a key that may only list one folder of a bucket.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub start_path: String,
+}
+
+/// A start path as it is stored: `bucket` or `bucket/prefix/`, or empty for none. Accepts what
+/// people paste (`s3://bucket/a`, `/bucket/a`, spaces around) and rejects what no path can be.
+pub fn normalize_start_path(path: &str) -> Result<String, String> {
+    let path = path.trim();
+    let path = path.strip_prefix("s3://").unwrap_or(path);
+    let path = path.trim_start_matches('/');
+    if path.is_empty() {
+        return Ok(String::new());
+    }
+    let (bucket, prefix) = path.split_once('/').unwrap_or((path, ""));
+    if bucket.chars().any(char::is_whitespace) {
+        return Err(format!(
+            "invalid start path {path:?}: the bucket name has a space in it"
+        ));
+    }
+    if path.split('/').any(|part| part == "..") {
+        return Err(format!(
+            "invalid start path {path:?}: \"..\" is not a folder"
+        ));
+    }
+    let prefix = prefix.trim_matches('/');
+    Ok(match prefix {
+        "" => bucket.to_string(),
+        prefix => format!("{bucket}/{prefix}/"),
+    })
 }
 
 /// Where secret keys go. The app uses [`Keychain`]; tests use an in-memory map.
@@ -150,6 +181,7 @@ impl<S: SecretStore> ProfileStore<S> {
             browse_access_key: None,
             plain_user: false,
             proxy: None,
+            start_path: String::new(),
         })?;
         let _guard = self.lock.lock().map_err(|e| e.to_string())?;
         let mut profiles = self.read()?;
@@ -230,6 +262,15 @@ impl<S: SecretStore> ProfileStore<S> {
         })
     }
 
+    /// Sets (or, with an empty path, clears) where a session on this connection lands.
+    pub fn set_start_path(&self, id: &str, path: &str) -> Result<ClusterProfile, String> {
+        let path = normalize_start_path(path)?;
+        self.change(id, |profile| {
+            profile.start_path = path;
+            Ok(())
+        })
+    }
+
     /// The cluster's own proxy choice, if it has one.
     pub fn proxy(&self, id: &str) -> Result<Option<Proxy>, String> {
         Ok(self.find(id)?.proxy)
@@ -304,6 +345,7 @@ fn validated(mut p: ClusterProfile) -> Result<ClusterProfile, String> {
     p.label = p.label.trim().to_string();
     p.endpoint = p.endpoint.trim().trim_end_matches('/').to_string();
     p.access_key = p.access_key.trim().to_string();
+    p.start_path = normalize_start_path(&p.start_path)?;
     if p.label.is_empty() {
         return Err("label is required".into());
     }
@@ -408,6 +450,7 @@ pub(crate) mod tests {
             browse_access_key: None,
             plain_user: false,
             proxy: None,
+            start_path: String::new(),
         };
         assert!(store.update(ghost, Some("SK")).is_err());
         assert!(secrets.0.lock().unwrap().is_empty());
@@ -552,6 +595,60 @@ pub(crate) mod tests {
         let listed = ProfileStore::new(dir.clone(), &secrets).list().unwrap();
         assert_eq!(listed[0].browse_access_key, None);
         assert!(!listed[0].plain_user);
+        assert_eq!(listed[0].start_path, "", "a file from before M9 has none");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn start_path_is_normalised_validated_and_survives_a_reload() {
+        for (typed, stored) in [
+            ("", ""),
+            ("  ", ""),
+            ("/", ""),
+            ("team-bucket", "team-bucket"),
+            (" team-bucket/ ", "team-bucket"),
+            ("team-bucket/project-a", "team-bucket/project-a/"),
+            ("team-bucket/project-a/", "team-bucket/project-a/"),
+            ("/team-bucket/a/b", "team-bucket/a/b/"),
+            ("s3://team-bucket/a/b/", "team-bucket/a/b/"),
+            ("team-bucket/my folder/", "team-bucket/my folder/"),
+        ] {
+            assert_eq!(
+                normalize_start_path(typed),
+                Ok(stored.to_string()),
+                "{typed:?}"
+            );
+        }
+        for refused in ["team-bucket/../other/", "..", "team bucket/a/", "a/b/.."] {
+            assert!(normalize_start_path(refused).is_err(), "{refused:?}");
+        }
+
+        let dir = temp_dir("startpath");
+        let secrets = MemorySecrets::default();
+        let store = ProfileStore::new(dir.clone(), &secrets);
+        let p = store.add("lab", "http://h:1", "AK", "SK").unwrap();
+        let file = || std::fs::read_to_string(dir.join("profiles.json")).unwrap();
+        assert!(!file().contains("start_path"), "none set, nothing written");
+        let saved = store.set_start_path(&p.id, " s3://team-bucket/project-a ");
+        assert_eq!(saved.unwrap().start_path, "team-bucket/project-a/");
+        let reopened = ProfileStore::new(dir.clone(), &secrets).list().unwrap();
+        assert_eq!(reopened[0].start_path, "team-bucket/project-a/");
+        assert!(store.set_start_path(&p.id, "team-bucket/../x").is_err());
+        assert_eq!(
+            store.list().unwrap()[0].start_path,
+            "team-bucket/project-a/",
+            "a refused path changes nothing"
+        );
+        // The whole-profile update normalises it the same way.
+        let edited = ClusterProfile {
+            start_path: "/other-bucket/".into(),
+            ..reopened[0].clone()
+        };
+        store.update(edited, None).unwrap();
+        assert_eq!(store.list().unwrap()[0].start_path, "other-bucket");
+        assert_eq!(store.set_start_path(&p.id, "").unwrap().start_path, "");
+        assert!(!file().contains("start_path"));
+        assert!(store.set_start_path("missing", "b").is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

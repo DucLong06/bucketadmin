@@ -5,7 +5,11 @@
     const OWNER = "ba-m4-ui";
     const READ_ONLY = "ba-m4-ui-ro";
     const KEY = (n) => ({ ak: `BAM7UISMOKEKEY00000${n}`, sk: `bam7uismokesecret00000000000000000000000${n}` });
-    const [MINE, RO] = [KEY(1), KEY(2)];
+    const [MINE, RO, MANY_KEY, SCOPED, NO_LIST] = [KEY(1), KEY(2), KEY(3), KEY(4), KEY(5)];
+    // M9: the fixture's third user owns this many empty buckets, named ba-m9-ui-many-01 and up.
+    const MANY = 32;
+    const manyBucket = (n) => `ba-m9-ui-many-${String(n).padStart(2, "0")}`;
+    const invoke = (command, args) => window.__TAURI_INTERNALS__.invoke(command, args);
     const drawer = () => last(all(".MuiDrawer-paper"));
     // Media is shown by /preview.html inside a frame of the drawer.
     const media = (tag) => drawer().querySelector("iframe")?.contentDocument?.querySelector(tag);
@@ -55,6 +59,33 @@
       return r.left >= 0 && r.top >= 0 && r.right <= page.clientWidth && r.bottom <= page.clientHeight;
     };
     const rowOf = async (key) => (await waitFor(() => objectLink(key), `row of ${key}`)).closest('[role="row"]');
+    // The sidebar of the tab on screen: its connection, its bucket rows, its pinned rows.
+    const connectionShown = () => first(all("aside select"))?.selectedOptions[0]?.textContent;
+    const useConnection = async (label) => {
+      const select = await field(T("common.connection"));
+      // A connection saved a moment ago reaches the tab's list with the next reload of the profiles.
+      const option = await waitFor(() => [...select.options].find((o) => o.textContent === label), `connection ${label} in the tab's list`);
+      setValue(select, option.value);
+    };
+    const bucketRow = (name) => all(bucketButtons).find((row) => row.textContent.trim() === name);
+    const pinnedButtons = () => all(`${sel("browse.pinnedList")} [role=button]`);
+    const pinnedRows = () => pinnedButtons().map((row) => row.textContent.trim());
+    const savedPins = async () => (await invoke("pin_list")).map((pin) => `${pin.place.bucket}/${pin.place.prefix}${pin.label ? `=${pin.label}` : ""}`).join(" | ");
+    const panelOf = (key) => last(all(sel(key)))?.closest(".MuiPaper-root");
+    const addConnection = async (label, key, startPath) => {
+      await click(T("app.connections"));
+      await type(T("conn.label"), label);
+      await type(T("conn.endpoint"), CFG.ENDPOINT);
+      await type(T("conn.accessKey"), key.ak);
+      await type(T("conn.secretKey"), key.sk);
+      // The form's own field: every saved connection below it has a start path field too.
+      if (startPath !== undefined) await type(T("conn.startPath"), startPath, first);
+    };
+    // The add-connection form is the first form of the Connections screen; every saved connection
+    // below it has a "Test connection" button of its own, so the form's is asked for by position.
+    const testForm = async () => (await waitFor(() => first(all("form button").filter((b) => b.textContent.trim() === T("conn.test") && !b.disabled)), "the form's test button")).click();
+    const formSays = (text) => first(all("form")).innerText.includes(text);
+    const notes = [];
 
     // ---- no connection yet: the app opens where one can be added. The update check (its
     // answer is canned for this run) shows a toast once and a badge that stays.
@@ -499,18 +530,211 @@
     await waitFor(() => hasText(T("browse.usingKeyOfUser", { uid: OWNER })) && all(bucketButtons).length === 2, "browsing with the owner's key", 20000);
     await click(T("browse.backToMyKey"));
     await waitFor(() => hasText(T("browse.usingKeyMine")) && hasText(T("browse.noBuckets")), "back on my own key", 20000);
-    await type(T("browse.openByName"), BUCKET);
-    await click(T("browse.openBucket"));
+    await type(T("browse.openPath"), BUCKET);
+    (await field(T("browse.openPath"))).form.requestSubmit();
     await waitFor(() => hasText(loaded(4, 0)), "the read-only user can list");
     await click(T("common.upload"));
     await waitFor(() => hasText(T("error.s3.AccessDenied")), "upload refused for the read-only user", 30000);
     await shot("35-readonly-denied");
 
-    // ---- remove both connections: their tabs have nothing left to show
+    // ---- M9.3 pinned places: back in the first tab (the owner's key). The task panel is folded:
+    // it keeps the refused upload on show, and the sidebar needs the room.
+    await click(T("tasks.fold"));
+    await waitFor(() => button(T("tasks.unfold")), "task panel folded");
+    // Errors shown by the tab on screen (the task panel has its own).
+    const pane = () => last(all("[role=tabpanel]"));
+    const paneErrors = () => [...pane().querySelectorAll('[class*="MuiAlert-"][class*="rror"]')].filter(visible).length;
+    await menusGone();
+    press("Tab");
+    await waitFor(() => connectionShown() === "lab" && hasText(loaded(4, 0)), "Ctrl+Tab: the first tab again");
+    check(pinnedRows().length === 0 && !panelOf("browse.pinnedList"), "nothing pinned yet: no Pinned panel");
+    // (a) the toggle at the end of the breadcrumb row pins the open folder
+    await clickSel(folder("notes/"));
+    await waitFor(() => objectLink("notes/readme.txt"), "notes/");
+    await clickSel(sel("browse.pinCurrent"));
+    await waitFor(() => pinnedRows().join() === `${BUCKET}/notes` && last(all(sel("browse.unpinCurrent")))?.getAttribute("aria-pressed") === "true", "the open folder is pinned: a row in the panel, the toggle filled");
+    // (c) the context menu of a folder row
+    await click(BUCKET);
+    await waitFor(() => hasText(loaded(4, 0)), "bucket root");
+    rightClick(last(all(folder("media/"))).closest('[role="row"]'));
+    await waitFor(() => menuItems().join(" | ") === [T("common.open"), T("browse.acl"), T("browse.pinFolder"), T("common.delete")].join(" | "), "a folder's menu offers to pin it");
+    await click(T("browse.pinFolder"));
+    await menusGone();
+    await waitFor(() => pinnedRows().length === 2, "folder pinned from its menu");
+    // (b) the context menu of a bucket row
+    rightClick(bucketRow(BUCKET));
+    await waitFor(() => menuItems().join(" | ") === [T("common.open"), T("pins.openTab"), T("browse.pinBucket")].join(" | "), "a bucket's menu");
+    await click(T("browse.pinBucket"));
+    await menusGone();
+    await waitFor(() => pinnedRows().join(" | ") === [`${BUCKET}/notes`, `${BUCKET}/media`, BUCKET].join(" | "), "three pins, in the order they were pinned");
+    check((await savedPins()) === [`${BUCKET}/notes/`, `${BUCKET}/media/`, `${BUCKET}/`].join(" | "), `the pins are in settings.json: ${await savedPins()}`);
+    // (d) a recent place is pinned from its row, and unpinned from the menu of its pin
+    first(all(`${sel("browse.recentList")} button[aria-pressed="false"]`)).click();
+    await waitFor(() => pinnedRows().length === 4, "a recent place pinned from its row");
+    rightClick(last(pinnedButtons()));
+    await waitFor(() => menuItems().join(" | ") === [T("pins.openTab"), T("pins.rename"), T("browse.unpin"), T("pins.moveUp"), T("pins.moveDown")].join(" | "), "menu of a pinned place");
+    check(last(all("[role=menuitem]")).getAttribute("aria-disabled") === "true", "the last pin cannot move down");
+    check(inWindow(last(all(".MuiMenu-paper"))), "the menu of a pin is not clipped");
+    await shot("36-pin-menu");
+    await click(T("browse.unpin"));
+    await menusGone();
+    await waitFor(() => pinnedRows().length === 3, "unpinned from the menu");
+    // Rename, then manual order.
+    rightClick(first(pinnedButtons()));
+    await click(T("pins.rename"));
+    await type(T("pins.label"), "daily notes");
+    await click(T("common.save"));
+    await dialogsGone();
+    await waitFor(() => pinnedRows()[0] === "daily notes" && first(pinnedButtons()).title === `lab · ${BUCKET}/notes`, "renamed; the tooltip still says where it leads");
+    rightClick(first(pinnedButtons()));
+    await click(T("pins.moveDown"));
+    await menusGone();
+    await waitFor(() => pinnedRows().join(" | ") === [`${BUCKET}/media`, "daily notes", BUCKET].join(" | "), "moved down");
+    rightClick(pinnedButtons()[1]);
+    await click(T("pins.moveUp"));
+    await menusGone();
+    await waitFor(() => pinnedRows().join(" | ") === ["daily notes", `${BUCKET}/media`, BUCKET].join(" | "), "and up again");
+    check((await savedPins()) === [`${BUCKET}/notes/=daily notes`, `${BUCKET}/media/`, `${BUCKET}/`].join(" | "), `name and order are saved: ${await savedPins()}`);
+    // A click opens the pin in this tab; Ctrl+click in a new one.
+    first(pinnedButtons()).click();
+    await waitFor(() => objectLink("notes/readme.txt") && tabs().length === 2, "a pin opens in the tab on screen");
+    pinnedButtons()[1].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }));
+    await waitFor(() => tabs().length === 3 && objectLink("media/icon.png") && tabs()[2].textContent.startsWith("media"), "Ctrl+click opens the pin in a new tab");
+    press("w");
+    await waitFor(() => tabs().length === 2, "that tab closed again");
+    press("Tab");
+    press("Tab");
+    await waitFor(() => connectionShown() === "lab" && objectLink("notes/readme.txt"), "the first tab, in the pinned folder");
+    // The app bar's Pinned menu lists them too; a place that is open is shown in its tab.
+    await click(T("app.pinned"));
+    await waitFor(() => menuItems().join(" | ") === [`daily notes · lab · ${BUCKET}/notes`, `lab · ${BUCKET}/media`, `lab · ${BUCKET}`].join(" | "), "the Pinned menu of the app bar");
+    check(fits() && inWindow(last(all(".MuiMenu-paper"))), "the Pinned menu fits the window");
+    first(all("[role=menuitem]")).click();
+    await waitFor(() => menuItems().length === 0 && tabs().length === 2 && objectLink("notes/readme.txt"), "an open place is not opened twice");
+    check(fits(), "Browse with the Pinned panel does not scroll sideways");
+    await shot("37-pinned");
+    // Ctrl+D: first as the page sees it, then pressed for real by the shell (a synthetic event proves no shortcut).
+    await openFolder("data/");
+    await waitFor(() => objectLink("data/people.csv") && all(sel("browse.pinCurrent")).length === 1, "data/, not pinned");
+    press("d");
+    await waitFor(() => pinnedRows().length === 4 && all(sel("browse.unpinCurrent")).length === 1, "Ctrl+D pins the open folder");
+    press("d");
+    await waitFor(() => pinnedRows().length === 3 && all(sel("browse.pinCurrent")).length === 1, "Ctrl+D again unpins it");
+    await shot("38-ctrl-d"); // the shell presses a real Ctrl+D here
+    await waitFor(() => pinnedRows().join(" | ") === ["daily notes", `${BUCKET}/media`, BUCKET, `${BUCKET}/data`].join(" | "), "a real Ctrl+D pinned the open folder");
+    press("d");
+    await waitFor(() => pinnedRows().length === 3, "and it is unpinned again");
+
+    // ---- M9.1 a key that was granted one folder: start path, the refused root, Open path
+    await addConnection("du-an", SCOPED, "my bucket/notes");
+    await waitFor(() => hasText(T("paths.bucketSpace")), "a start path that cannot be one is refused while typing");
+    check(!button(T("common.save")), "and cannot be saved");
+    await type(T("conn.startPath"), ` s3://${BUCKET}/notes`, first);
+    await testForm();
+    await waitFor(() => formSays(T("conn.ok", { n: 0 })), "the scoped key connects (the lab lets every user list the buckets it owns: none)");
+    await click(T("common.save"));
+    const startPathOf = (label) => document.querySelector(`input${sel("conn.startPathOf", { label })}`)?.value;
+    await waitFor(() => hasText(T("conn.saved", { label: "du-an" })) && startPathOf("du-an") === `${BUCKET}/notes/`, "saved; the start path reads back in its stored form");
+    check(startPathOf("lab") === "", "a connection without a start path shows an empty field");
+    await click(T("app.browse"));
+    await menusGone();
+    press("t");
+    await waitFor(() => tabs().length === 3 && hasText(T("browse.chooseBucket")), "a new tab");
+    await useConnection("du-an");
+    await waitFor(() => objectLink("notes/readme.txt") && hasText(loaded(0, 3)) && tabs()[2].textContent.startsWith("notes"), "the connection lands at its start path", 20000);
+    check(pinnedRows().length === 3 && all(`${sel("browse.pinnedList")} [role=separator]`).length === 1, "another connection's pins are listed under a divider");
+    // Above the granted folder S3 refuses; the error says what to do and leads to the field.
+    await click(BUCKET);
+    await waitFor(() => paneErrors() === 1 && pane().innerText.includes(T("error.s3.AccessDenied")) && hasText(T("browse.deniedHint")), "the bucket root is refused, with the way out");
+    await shot("39-scoped-denied");
+    await click(T("browse.openPath"));
+    const pathField = await field(T("browse.openPath"));
+    await waitFor(() => document.activeElement === pathField, "the hint puts the keyboard in the Open-path field");
+    setValue(pathField, "bad bucket/x");
+    await waitFor(() => hasText(T("paths.bucketSpace")), "a path that cannot be one says why");
+    setValue(pathField, `s3://${BUCKET}/notes/readme.txt`);
+    pathField.form.requestSubmit();
+    await waitFor(() => objectLink("notes/readme.txt") && hasText(loaded(0, 3)) && paneErrors() === 0 && !hasText(T("browse.deniedHint")), "a file's path opens the folder the file is in", 20000);
+    check(fits(), "nothing scrolls sideways");
+    await shot("40-scoped-path");
+
+    // ---- M9.1 a key RGW refuses ListBuckets: a notice, not an error
+    await addConnection("no-list", NO_LIST);
+    await testForm();
+    await waitFor(() => formSays(T("conn.okNoList")), "the connection test passes and says the key may not list buckets");
+    await click(T("common.save"));
+    await waitFor(() => hasText(T("conn.saved", { label: "no-list" })), "saved");
+    await click(T("app.browse"));
+    await useConnection("no-list");
+    await waitFor(() => hasText(T("browse.bucketsDenied")) && hasText(T("browse.chooseBucketDenied")), "the bucket panel explains instead of failing", 20000);
+    check(paneErrors() === 0 && !hasText(T("browse.noBuckets")), "no error, and not the empty-list text");
+    await waitFor(() => document.activeElement === last(all("aside form input")), "the Open-path field has the keyboard");
+    await shot("41-no-list");
+
+    // ---- M9.2 many buckets: a list of bounded height with a filter
+    await addConnection("many", MANY_KEY);
+    await testForm();
+    await waitFor(() => formSays(T("conn.ok", { n: MANY })), "the key owns many buckets");
+    await click(T("common.save"));
+    await waitFor(() => hasText(T("conn.saved", { label: "many" })), "saved");
+    await click(T("app.browse"));
+    await useConnection("many");
+    const counted = T("browse.bucketsCount", { title: T("browse.bucketsMine"), n: MANY });
+    await waitFor(() => all(bucketButtons).length === MANY && all("aside h2").some((h) => h.textContent === counted), "every bucket listed, counted in the header", 20000);
+    const list = last(all(sel("browse.bucketList")));
+    const limit = Math.max(200, 0.38 * window.innerHeight);
+    check(list.scrollHeight > list.clientHeight && list.clientHeight <= limit + 1 && getComputedStyle(list).overflowY === "auto", `the list scrolls inside its card: ${list.clientHeight} of ${list.scrollHeight} px, limit ${limit}`);
+    const box = (key) => panelOf(key).getBoundingClientRect();
+    const paneBox = pane().getBoundingClientRect();
+    check(box("browse.pinnedList").bottom <= paneBox.bottom && box("browse.pinnedList").bottom <= box("browse.bucketList").top, "the Pinned panel is on screen, above the buckets");
+    // The buckets no longer decide how far away the rest is: the Recent panel starts right under the bucket card.
+    check(box("browse.recentList").top - box("browse.bucketList").bottom < 24 && pane().scrollHeight < 2 * window.innerHeight, "Recent follows the bucket card; the page is not thousands of pixels long");
+    notes.push(`window ${window.innerWidth}x${window.innerHeight}: pinned ${Math.round(box("browse.pinnedList").top)}-${Math.round(box("browse.pinnedList").bottom)}, bucket card ${Math.round(box("browse.bucketList").top)}-${Math.round(box("browse.bucketList").bottom)} (list ${list.clientHeight} of ${list.scrollHeight}), recent from ${Math.round(box("browse.recentList").top)}, pane ${Math.round(paneBox.top)}-${Math.round(paneBox.bottom)} scrolls ${pane().scrollHeight}`);
+    check(fits(), "nothing scrolls sideways");
+    const filter = await waitFor(() => last(all(`input${sel("browse.filterBuckets")}`)), "the filter field");
+    // For the picture: the whole bucket card in view (the pane scrolls; the list scrolls inside the card).
+    pane().scrollTop = box("browse.bucketList").top - paneBox.top - 12;
+    list.scrollTop = 6 * 40;
+    await shot("42-buckets-many");
+    pane().scrollTop = 0;
+    list.scrollTop = 0;
+    filter.focus();
+    setValue(filter, "MANY-1");
+    await waitFor(() => all(bucketButtons).length === 10 && hasText(T("browse.filterCount", { n: 10, m: MANY })), "a case-insensitive filter: 10 of 32");
+    const key = (name) => filter.dispatchEvent(new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true }));
+    key("ArrowDown");
+    key("ArrowDown");
+    await waitFor(() => all(bucketButtons)[2].classList.contains("Mui-focusVisible"), "the arrow keys move a highlight down the list");
+    await shot("43-buckets-filter");
+    key("Enter");
+    await waitFor(() => hasText(T("browse.emptyFolder")) && tabs()[2].textContent.startsWith(manyBucket(12)), "Enter opens the highlighted bucket", 20000);
+    key("Escape");
+    await waitFor(() => filter.value === "" && all(bucketButtons).length === MANY, "Esc clears the filter");
+    // The open bucket is in view, and again when its tab is shown again.
+    const selected = bucketRow(manyBucket(12));
+    await waitFor(() => selected.classList.contains("Mui-selected") && selected.offsetTop >= list.scrollTop && selected.offsetTop + selected.offsetHeight <= list.scrollTop + list.clientHeight, "the open bucket is scrolled into view");
+    bucketRow(manyBucket(30)).click();
+    await waitFor(() => tabs()[2].textContent.startsWith(manyBucket(30)), "a bucket far down the list", 20000);
+    list.scrollTop = 0;
+    const open30 = () => bucketRow(manyBucket(30));
+    check(open30().offsetTop > list.clientHeight, "it is out of view after scrolling the list back up");
+    tabs()[0].click();
+    await waitFor(() => connectionShown() === "lab", "another tab");
+    tabs()[2].click();
+    await waitFor(() => connectionShown() === "many" && open30().offsetTop + open30().offsetHeight <= list.scrollTop + list.clientHeight && open30().offsetTop >= list.scrollTop, "the open bucket is scrolled into view when its tab is shown again");
+    // M9.4: the open tabs are written to settings.json (read back at the next start).
+    await sleep(700);
+    const kept = await invoke("tabs_get");
+    check(kept.tabs.length === 3 && kept.tabs[2].at.bucket === manyBucket(30) && kept.active === kept.tabs[2].id, `open tabs saved: ${JSON.stringify(kept)}`);
+    await shot("-"); // a slot of its own for the steps above; the removals below get the next one
+
+    // ---- remove every connection: their tabs and pins have nothing left to show
     await click(T("app.connections"));
-    await clickSel(sel("conn.remove", { label: "chi-doc" }));
-    await waitFor(() => !document.querySelector(sel("conn.remove", { label: "chi-doc" })), "second connection removed");
-    await clickSel(sel("conn.remove", { label: "lab" }));
+    for (const label of ["chi-doc", "du-an", "no-list", "many", "lab"]) {
+      await clickSel(sel("conn.remove", { label }));
+      await waitFor(() => !document.querySelector(sel("conn.remove", { label })), `connection ${label} removed`);
+    }
     await waitFor(() => hasText(T("conn.none")), "connections removed");
-    banner(`SMOKE DONE: ${n + 1} slots, late: [${late.join(", ")}]`, late.length ? "#fc6" : "#8f8");
-    await shot("36-done");
+    check((await invoke("pin_list")).length === 0, "the pins of removed connections are gone");
+    banner(`SMOKE DONE: ${n + 1} slots, late: [${late.join(", ")}] | ${notes.join(" | ")}`, late.length ? "#fc6" : "#8f8");
+    await shot("44-done");

@@ -1259,6 +1259,16 @@ async fn m4_search_bounded() {
 const SMOKE_OWNER: &str = "ba-m4-ui";
 const SMOKE_READ_ONLY: &str = "ba-m4-ui-ro";
 const SMOKE_BUCKET: &str = "ba-m4-ui-bucket";
+/// M9: a user owning many (empty) buckets, a user granted one folder of the fixture bucket
+/// by a bucket policy, and a user RGW refuses ListBuckets (an op-mask without read).
+const SMOKE_MANY: &str = "ba-m4-ui-many";
+const SMOKE_SCOPED: &str = "ba-m4-ui-scoped";
+const SMOKE_NO_LIST: &str = "ba-m4-ui-nolist";
+const SMOKE_MANY_BUCKETS: usize = 32;
+
+fn many_bucket(n: usize) -> String {
+    format!("ba-m9-ui-many-{n:02}")
+}
 
 /// One second of a 440 Hz tone as a 16-bit mono WAV file.
 fn wav() -> Vec<u8> {
@@ -1421,7 +1431,18 @@ async fn ui_smoke_browse_fixture_create() {
             .expect("version");
     }
 
-    let grant = policy(bucket, SMOKE_READ_ONLY, r#""s3:*""#);
+    // The read-only user gets the whole bucket; the scoped user may list `notes/` and what
+    // is below it, and read the objects there. Nothing else, not even the bucket root.
+    smoke_user(&admin, SMOKE_SCOPED, 4).await;
+    let user_arn = |uid: &str| format!(r#"{{"AWS":["arn:aws:iam:::user/{uid}"]}}"#);
+    let (everyone, scoped) = (user_arn(SMOKE_READ_ONLY), user_arn(SMOKE_SCOPED));
+    let grant = format!(
+        r#"{{"Version":"2012-10-17","Statement":[
+            {{"Effect":"Allow","Principal":{everyone},"Action":["s3:*"],"Resource":["arn:aws:s3:::{bucket}","arn:aws:s3:::{bucket}/*"]}},
+            {{"Effect":"Allow","Principal":{scoped},"Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::{bucket}"],"Condition":{{"StringLike":{{"s3:prefix":["notes/*"]}}}}}},
+            {{"Effect":"Allow","Principal":{scoped},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::{bucket}/notes/*"]}}
+        ]}}"#
+    );
     owner
         .client()
         .put_bucket_policy()
@@ -1438,12 +1459,56 @@ async fn ui_smoke_browse_fixture_create() {
         .modify_user(SMOKE_READ_ONLY, &read_only)
         .await
         .expect("op-mask=read");
+
+    // Many buckets for the bucket list of the sidebar, made a few at a time.
+    use futures_util::StreamExt;
+    let many = smoke_user(&admin, SMOKE_MANY, 3).await;
+    let creates = (1..=SMOKE_MANY_BUCKETS).map(|n| {
+        let many = many.clone();
+        async move { many.create_bucket(&many_bucket(n), false).await }
+    });
+    let made: Vec<_> = futures_util::stream::iter(creates)
+        .buffer_unordered(8)
+        .collect()
+        .await;
+    for result in made {
+        result.expect("create one of the many buckets");
+    }
+    let listed = many.list_buckets().await.expect("list the many buckets");
+    assert_eq!(listed.len(), SMOKE_MANY_BUCKETS);
+
+    smoke_user(&admin, SMOKE_NO_LIST, 5).await;
+    let write_only = UserModify {
+        op_mask: Some("write".into()),
+        ..Default::default()
+    };
+    admin
+        .modify_user(SMOKE_NO_LIST, &write_only)
+        .await
+        .expect("op-mask=write");
 }
 
 #[tokio::test]
 #[ignore = "fixture for scripts/ui-smoke/ui-smoke.sh, not a test"]
 async fn ui_smoke_browse_fixture_remove() {
+    use futures_util::StreamExt;
     let admin = lab().expect("RGW_ACCESS_KEY / RGW_SECRET_KEY must be set");
+    remove_user(&admin, SMOKE_NO_LIST).await;
+    remove_user(&admin, SMOKE_SCOPED).await;
+    // The many buckets go a few at a time: RGW's own purge takes them one after another.
+    let found = admin.get_user(SMOKE_MANY).await.ok();
+    if let Some(key) = found.and_then(|u| u.keys.into_iter().next()) {
+        let many = S3::new(&endpoint(), &key.access_key, &key.secret_key);
+        let buckets = many.list_buckets().await.unwrap_or_default();
+        let deletes = buckets
+            .iter()
+            .map(|b| many.client().delete_bucket().bucket(&b.name).send());
+        let _: Vec<_> = futures_util::stream::iter(deletes)
+            .buffer_unordered(8)
+            .collect()
+            .await;
+    }
+    remove_user(&admin, SMOKE_MANY).await;
     remove_user(&admin, SMOKE_READ_ONLY).await;
     remove_user(&admin, SMOKE_OWNER).await;
 }
@@ -2235,4 +2300,89 @@ async fn m7_versioning_delete_undo_restore() {
 
     remove_user(&admin, "ba-m7-ver-x").await;
     remove_user(&admin, uid).await;
+}
+
+/// M9.1: a user who was granted one folder of somebody else's bucket by a bucket policy
+/// (`s3:ListBucket` only under a prefix, `s3:GetObject` only below it). Opening the session
+/// must not depend on listing buckets, the folder lists, and the bucket root is refused.
+#[tokio::test]
+async fn m9_prefix_scoped_access() {
+    use bucketadmin_lib::browse_open_session as open_session;
+    use bucketadmin_lib::s3::LIST_PAGE;
+
+    let Some(admin) = lab() else { return };
+    let (bucket, scoped_uid, mute_uid) = ("ba-m9-scoped", "ba-m9-scoped-user", "ba-m9-nolist");
+    let (_, owner) = user(&admin, "ba-m9-owner").await;
+    let (_, scoped) = user(&admin, scoped_uid).await;
+    let (_, mute) = user(&admin, mute_uid).await;
+    let created = owner.client().create_bucket().bucket(bucket).send().await;
+    created.expect("create bucket");
+    for key in ["scoped/a.txt", "scoped/sub/b.txt", "other/c.txt", "top.txt"] {
+        put(&owner, bucket, key, key.as_bytes()).await.expect("put");
+    }
+    let grant = format!(
+        r#"{{"Version":"2012-10-17","Statement":[
+            {{"Effect":"Allow","Principal":{{"AWS":["arn:aws:iam:::user/{scoped_uid}"]}},"Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::{bucket}"],"Condition":{{"StringLike":{{"s3:prefix":["scoped/*"]}}}}}},
+            {{"Effect":"Allow","Principal":{{"AWS":["arn:aws:iam:::user/{scoped_uid}"]}},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::{bucket}/scoped/*"]}}
+        ]}}"#
+    );
+    let put_policy = owner.client().put_bucket_policy().bucket(bucket);
+    put_policy.policy(grant).send().await.expect("put policy");
+
+    // The session opens whatever ListBuckets says; this user owns nothing.
+    let opened = open_session(&scoped).await.expect("a scoped key opens");
+    println!(
+        "scoped user: buckets={} buckets_error={:?}",
+        opened.buckets.len(),
+        opened.buckets_error
+    );
+    assert!(opened.buckets.is_empty());
+    assert_eq!(opened.access_key, scoped.access_key());
+
+    // The granted folder lists (also one level down); the bucket root and a sibling do not.
+    let folder = scoped.list(bucket, "scoped/", None, LIST_PAGE).await;
+    let folder = folder.expect("the granted prefix lists");
+    assert_eq!(folder.prefixes, ["scoped/sub/"]);
+    let keys: Vec<&str> = folder.objects.iter().map(|o| o.key.as_str()).collect();
+    assert_eq!(keys, ["scoped/a.txt"]);
+    let deeper = scoped.list(bucket, "scoped/sub/", None, LIST_PAGE).await;
+    assert_eq!(deeper.expect("below the prefix").objects.len(), 1);
+    for refused in ["", "other/"] {
+        let denied = scoped.list(bucket, refused, None, LIST_PAGE).await;
+        let error = denied.expect_err("outside the granted prefix");
+        println!("scoped user: list {refused:?} -> {error}");
+        assert!(error.starts_with("S3 AccessDenied (403)"), "{error}");
+    }
+    let body = scoped.read_range(bucket, "scoped/a.txt", None, 0, 64).await;
+    assert_eq!(body.expect("read below the prefix"), b"scoped/a.txt");
+    let outside = scoped.read_range(bucket, "other/c.txt", None, 0, 64).await;
+    assert!(outside.is_err(), "objects outside the prefix stay closed");
+
+    // A key RGW refuses ListBuckets itself (here: an op-mask without read): still a session,
+    // with the refusal reported as a state instead of failing the command.
+    let write_only = UserModify {
+        op_mask: Some("write".into()),
+        ..Default::default()
+    };
+    let masked = admin.modify_user(mute_uid, &write_only).await;
+    masked.expect("op-mask=write");
+    let direct = mute.list_buckets().await;
+    println!("no-list user: ListBuckets -> {direct:?}");
+    let opened = open_session(&mute)
+        .await
+        .expect("a refusal is not a failure");
+    println!("no-list user: buckets_error={:?}", opened.buckets_error);
+    assert!(opened.buckets.is_empty());
+    assert_eq!(opened.buckets_error.as_deref(), Some("AccessDenied"));
+
+    // A key RGW does not know is still an error of the command.
+    let unknown = S3::new(&endpoint(), "BAM9NOSUCHKEY0000000", "nope");
+    let refused = open_session(&unknown)
+        .await
+        .expect_err("an unknown key fails");
+    assert!(refused.starts_with("S3 InvalidAccessKeyId"), "{refused}");
+
+    remove_user(&admin, mute_uid).await;
+    remove_user(&admin, scoped_uid).await;
+    remove_user(&admin, "ba-m9-owner").await;
 }

@@ -26,6 +26,21 @@ export function placeLabel(at: Place, profiles: Profile[]): string {
   return [connection, at.uid && t("common.userNamed", { uid: at.uid }), placePath(at)].filter(Boolean).join(" · ");
 }
 
+/** The open tabs as they are saved for the next start (backend `tabs_set` / `tabs_get`). */
+export type SavedTabs = { tabs: { id: string; at: Place }[]; active: string };
+
+export const saveTabs = (tabs: BrowseTab[], active: string): SavedTabs => ({ tabs: tabs.map(({ id, at }) => ({ id, at })), active });
+
+/** The tabs to show again after a relaunch: each starts where it was. Tabs whose connection is
+ *  gone are dropped; null when none is left (the app then opens its usual first tab). */
+export function restoreTabs(saved: SavedTabs | null | undefined, clusterIds: string[]): { tabs: BrowseTab[]; active: string } | null {
+  const kept = (saved?.tabs ?? []).filter((tab) => clusterIds.includes(tab.at.clusterId));
+  if (!saved || kept.length === 0) return null;
+  // The tab that was on screen, or the first one when that tab was dropped.
+  const active = kept.some((tab) => tab.id === saved.active) ? saved.active : kept[0].id;
+  return { tabs: kept.map(({ id, at }) => ({ id, start: at, at })), active };
+}
+
 /** Closes a tab. The tab to its right (else to its left) becomes active when the active one
  *  goes; closing the last tab leaves `fresh` in its place, so there is always a tab. */
 export function closeTab(tabs: BrowseTab[], active: string, id: string, fresh: BrowseTab): { tabs: BrowseTab[]; active: string } {
@@ -42,11 +57,11 @@ export function cycleTab(tabs: BrowseTab[], active: string, step: 1 | -1): strin
   return tabs.length === 0 ? active : tabs[(at + step + tabs.length) % tabs.length].id;
 }
 
-/** What a key press asks of the tab bar: Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab; null for anything else. */
-export function tabShortcut(e: { key: string; code: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }): "new" | "close" | "next" | "previous" | null {
+/** What a key press asks of the tab bar: Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+Shift+Tab, and Ctrl+D (pin the tab's place); null for anything else. */
+export function tabShortcut(e: { key: string; code: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }): "new" | "close" | "next" | "previous" | "pin" | null {
   if (!e.ctrlKey || e.altKey || e.metaKey) return null;
   // Tab by its physical key: with Shift held, GTK sends ISO_Left_Tab, which WebKit reports as key "Unidentified".
   if (e.code === "Tab" || e.key === "Tab") return e.shiftKey ? "previous" : "next";
   const key = e.key.toLowerCase();
-  return key === "t" ? "new" : key === "w" ? "close" : null;
+  return key === "t" ? "new" : key === "w" ? "close" : key === "d" && !e.shiftKey ? "pin" : null;
 }

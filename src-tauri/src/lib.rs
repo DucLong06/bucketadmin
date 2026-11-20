@@ -11,6 +11,8 @@ pub mod update;
 use audit::{Audit, AuditEntry};
 /// How a browse session gets its S3 client; public so the lab tests build one the app's way.
 pub use browse::connect as browse_connect;
+/// What `browse_open` answers for a session; public for the same reason.
+pub use browse::{open_session as browse_open_session, Opened};
 use clusters::{ClusterProfile, ProfileStore};
 use ops::{
     BucketDetail, CallerAccess, NewSubuser, Ops, Quotas, RotatedKey, TrimmedUsage, UsageSupport,
@@ -21,7 +23,7 @@ use rgw_admin::{
     BucketInfo, Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin,
     Usage, UserInfo,
 };
-use settings::{EndpointKind, Place, Proxy, SettingsStore};
+use settings::{EndpointKind, Pin, Place, Proxy, SavedTabs, SettingsStore};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -105,20 +107,76 @@ fn add_profile(
     endpoint: String,
     access_key: String,
     secret_key: String,
+    start_path: Option<String>,
 ) -> Cmd<'_, ClusterProfile> {
-    state
+    // Checked first: a path that is refused must not leave a connection behind.
+    let start_path = clusters::normalize_start_path(&start_path.unwrap_or_default())?;
+    let added = state
         .profiles
-        .add(&label, &endpoint, &access_key, &secret_key)
+        .add(&label, &endpoint, &access_key, &secret_key)?;
+    if start_path.is_empty() {
+        return Ok(added);
+    }
+    state.profiles.set_start_path(&added.id, &start_path)
+}
+
+/// Where the connection lands when it is opened: `bucket` or `bucket/prefix/`; empty for none.
+#[tauri::command(async)]
+fn profile_set_start_path(
+    state: St<'_>,
+    id: String,
+    start_path: String,
+) -> Cmd<'_, ClusterProfile> {
+    state.profiles.set_start_path(&id, &start_path)
 }
 
 #[tauri::command(async)]
 fn remove_profile(state: St<'_>, id: String) -> Cmd<'_, ()> {
     state.profiles.remove(&id)?;
-    // Its recent places lead nowhere now.
-    let forgotten = state
-        .settings
-        .change(|s| s.recent.retain(|place| place.cluster_id != id));
+    // Its recent and pinned places lead nowhere now.
+    let forgotten = state.settings.change(|s| {
+        s.recent.retain(|place| place.cluster_id != id);
+        s.pins.retain(|pin| pin.place.cluster_id != id);
+    });
     forgotten.map(|_| ())
+}
+
+/// The pinned places, in the user's order.
+#[tauri::command(async)]
+fn pin_list(state: St<'_>) -> Cmd<'_, Vec<Pin>> {
+    Ok(state.settings.get()?.pins)
+}
+
+/// Pins a place (a no-op when it is pinned already) and returns the list.
+#[tauri::command(async)]
+fn pin_add(state: St<'_>, place: Place, label: String) -> Cmd<'_, Vec<Pin>> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+    let now = now.map(|d| d.as_secs() as i64).unwrap_or(0);
+    let mut pinned = Ok(());
+    let saved = state
+        .settings
+        .change(|s| pinned = s.pin(place, &label, now))?;
+    pinned?;
+    Ok(saved.pins)
+}
+
+#[tauri::command(async)]
+fn pin_remove(state: St<'_>, place: Place) -> Cmd<'_, Vec<Pin>> {
+    Ok(state.settings.change(|s| s.unpin(&place))?.pins)
+}
+
+#[tauri::command(async)]
+fn pin_rename(state: St<'_>, place: Place, label: String) -> Cmd<'_, Vec<Pin>> {
+    Ok(state
+        .settings
+        .change(|s| s.rename_pin(&place, &label))?
+        .pins)
+}
+
+/// Manual order: the pin of `place` goes to position `to`.
+#[tauri::command(async)]
+fn pin_move(state: St<'_>, place: Place, to: usize) -> Cmd<'_, Vec<Pin>> {
+    Ok(state.settings.change(|s| s.move_pin(&place, to))?.pins)
 }
 
 /// The places browsed last, newest first.
@@ -134,6 +192,18 @@ fn recent_add(state: St<'_>, place: Place) -> Cmd<'_, Vec<Place>> {
         return Err("a recent place needs a connection and a bucket".into());
     }
     Ok(state.settings.change(|s| s.remember(place))?.recent)
+}
+
+/// The browse tabs that were open when the app was last used; `None` on a first start.
+#[tauri::command(async)]
+fn tabs_get(state: St<'_>) -> Cmd<'_, Option<SavedTabs>> {
+    Ok(state.settings.get()?.tabs)
+}
+
+/// Saves the open browse tabs for the next start.
+#[tauri::command(async)]
+fn tabs_set(state: St<'_>, tabs: SavedTabs) -> Cmd<'_, ()> {
+    state.settings.change(|s| s.keep_tabs(tabs)).map(|_| ())
 }
 
 /// Ticks or clears "I am a normal user" on a saved profile.
@@ -199,7 +269,7 @@ fn apply_ui_scale(window: &tauri::WebviewWindow, percent: u16) -> Result<(), Str
         .map_err(|e| e.to_string())
 }
 
-/// The release to tell the user about, if the latest one is not this build. Never an error.
+/// The release to tell the user about, if the latest one is newer than this build. Never an error.
 #[tauri::command]
 async fn update_check(state: St<'_>) -> Cmd<'_, Option<update::Update>> {
     Ok(update::check(&state.settings).await)
@@ -230,8 +300,9 @@ fn endpoint_kind(endpoint: String) -> Cmd<'static, EndpointKind> {
 }
 
 /// Tests a key typed into the connection form by listing its buckets over S3: no Admin API
-/// request, so no cap is needed. Returns how many buckets the key's user owns. `proxy` is the
-/// choice made in the form; without one the app-wide setting applies.
+/// request, so no cap is needed. Answers like `browse_open`: a key that is valid but may not
+/// list buckets passes, with `buckets_error` set. `proxy` is the choice made in the form;
+/// without one the app-wide setting applies.
 #[tauri::command]
 async fn test_s3(
     state: St<'_>,
@@ -239,14 +310,14 @@ async fn test_s3(
     access_key: String,
     secret_key: String,
     proxy: Option<Proxy>,
-) -> Cmd<'_, usize> {
+) -> Cmd<'_, Opened> {
     rgw_admin::parse_endpoint(&endpoint).map_err(|e| e.to_string())?;
     let proxy = match proxy {
         Some(own) => own.validated()?,
         None => state.settings.get()?.proxy,
     };
     let s3 = s3::S3::with_proxy(&endpoint, access_key.trim(), secret_key.trim(), &proxy)?;
-    Ok(s3.list_buckets().await?.len())
+    browse::open_session(&s3).await
 }
 
 /// Test credentials typed into the form, before anything is saved. `proxy` is the choice
@@ -616,7 +687,15 @@ pub fn run() {
             remove_profile,
             recent_list,
             recent_add,
+            pin_list,
+            pin_add,
+            pin_remove,
+            pin_rename,
+            pin_move,
+            tabs_get,
+            tabs_set,
             profile_set_proxy,
+            profile_set_start_path,
             network_get,
             network_set,
             get_ui_scale,
