@@ -161,7 +161,7 @@ Các màn hình quản trị cụm (user, key, caps, quota, onboarding từ CSV)
   chỉ báo khi release đó mới hơn bản bạn đang chạy. Request không mang dữ liệu nào của bạn; không tới được GitHub thì app im
   lặng bỏ qua.
 
-Chi tiết từng directive của CSP và cách xử lý presigned URL: [docs/SECURITY.md](docs/SECURITY.md).
+Chi tiết từng directive của CSP và cách xử lý presigned URL: [docs/SECURITY.vi.md](docs/SECURITY.vi.md) ([English](docs/SECURITY.md)).
 
 ## Lỗi thường gặp
 

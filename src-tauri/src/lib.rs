@@ -674,6 +674,54 @@ fn audit_recent(
     state.audit.recent(action.as_deref(), cluster_id.as_deref())
 }
 
+/// One row of the audit-log viewer, with the connection's label as the user knows it
+/// ("" when that connection is no longer saved).
+#[derive(serde::Serialize)]
+struct AuditListed {
+    #[serde(flatten)]
+    row: audit::AuditRow,
+    connection: String,
+}
+
+/// A page of the audit log for its viewer, newest first. Read-only: the log has no command
+/// that deletes or exports it. `filter` is looked for in action, path and connection label.
+#[tauri::command(async)]
+fn audit_list(
+    state: St<'_>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+    filter: Option<String>,
+    since_unix: Option<i64>,
+) -> Cmd<'_, Vec<AuditListed>> {
+    let filter = filter.unwrap_or_default();
+    let profiles = state.profiles.list()?;
+    let wanted = filter.trim().to_lowercase();
+    let labelled = profiles
+        .iter()
+        .filter(|p| !wanted.is_empty() && p.label.to_lowercase().contains(&wanted));
+    let clusters: Vec<String> = labelled.map(|p| p.id.clone()).collect();
+    let rows = state.audit.list(
+        limit.unwrap_or(200),
+        offset.unwrap_or(0),
+        &filter,
+        &clusters,
+        since_unix.unwrap_or(0),
+    )?;
+    let label = |id: &str| {
+        profiles
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.label.clone())
+    };
+    Ok(rows
+        .into_iter()
+        .map(|row| AuditListed {
+            connection: label(&row.cluster_id).unwrap_or_default(),
+            row,
+        })
+        .collect())
+}
+
 pub fn run() {
     let builder = tauri::Builder::default();
     // Debug builds only: run the JS file named by BUCKETADMIN_DEV_SCRIPT in the page.
@@ -731,6 +779,7 @@ pub fn run() {
             set_lang,
             get_theme,
             set_theme,
+            audit_list,
             endpoint_kind,
             test_s3,
             update_check,

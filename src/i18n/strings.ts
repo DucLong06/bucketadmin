@@ -629,6 +629,31 @@ export const en = {
   "conn.duplicateLabel": "Another connection has this label. Tell them apart by their endpoint.",
   "conn.duplicateNew": "A saved connection already has this label. You can still save.",
   "recent.others": "Other connections ({n})",
+
+  // Audit log viewer (M10.4): read-only
+  "app.audit": "Audit log",
+  "audit.intro": "Every change made from this app — uploads, deletions, permissions, versioning — newest first. This list is read-only. Times are {tz}.",
+  "audit.filter": "Filter by action, path or connection…",
+  "audit.range": "Time range",
+  "audit.range.today": "Today",
+  "audit.range.7d": "7 days",
+  "audit.range.30d": "30 days",
+  "audit.range.all": "All",
+  "audit.table": "Audit log entries",
+  "audit.col.time": "Time ({tz})",
+  "audit.col.action": "Action",
+  "audit.col.prefix": "Folder",
+  "audit.col.object": "Object",
+  "audit.col.result": "Result",
+  "audit.ok": "Done",
+  "audit.failed": "Failed: {message}",
+  "audit.empty": "Nothing has been recorded yet. Changes you make while browsing — uploads, deletions, permissions — will be listed here.",
+  "audit.emptyFiltered": "No entry matches the filter in this time range.",
+  "audit.more": "Show older entries",
+  "audit.count": "{n:entry|entries} shown: {n}",
+
+  // Audit log viewer: bucket column
+  "audit.col.bucket": "Bucket",
 };
 
 export const vi: Record<keyof typeof en, string> = {
@@ -1241,4 +1266,29 @@ export const vi: Record<keyof typeof en, string> = {
   "conn.duplicateLabel": "Một kết nối khác cũng mang tên này. Hãy phân biệt chúng bằng endpoint.",
   "conn.duplicateNew": "Đã có một kết nối mang tên này. Bạn vẫn lưu được.",
   "recent.others": "Kết nối khác ({n})",
+
+  // Audit log viewer (M10.4): read-only
+  "app.audit": "Nhật ký thao tác",
+  "audit.intro": "Mọi thay đổi thực hiện từ app này — đưa file lên, xoá, phân quyền, versioning — mới nhất ở trên. Danh sách này chỉ để xem. Giờ hiển thị là {tz}.",
+  "audit.filter": "Lọc theo thao tác, đường dẫn hoặc kết nối…",
+  "audit.range": "Khoảng thời gian",
+  "audit.range.today": "Hôm nay",
+  "audit.range.7d": "7 ngày",
+  "audit.range.30d": "30 ngày",
+  "audit.range.all": "Tất cả",
+  "audit.table": "Các mục của nhật ký thao tác",
+  "audit.col.time": "Thời gian ({tz})",
+  "audit.col.action": "Thao tác",
+  "audit.col.prefix": "Thư mục",
+  "audit.col.object": "Object",
+  "audit.col.result": "Kết quả",
+  "audit.ok": "Thành công",
+  "audit.failed": "Lỗi: {message}",
+  "audit.empty": "Chưa có gì được ghi lại. Những thay đổi bạn thực hiện khi duyệt — đưa file lên, xoá, phân quyền — sẽ hiện ở đây.",
+  "audit.emptyFiltered": "Không có mục nào khớp bộ lọc trong khoảng thời gian này.",
+  "audit.more": "Xem các mục cũ hơn",
+  "audit.count": "Đang hiện {n} mục",
+
+  // Audit log viewer: bucket column
+  "audit.col.bucket": "Bucket",
 };

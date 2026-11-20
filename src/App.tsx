@@ -21,6 +21,7 @@ import { invoke, type Profile } from "./api";
 import { explain } from "./errors";
 import { AccessContext, PathPickerDialog } from "./PathPicker";
 import { isPinned, movePin, pinLabel, togglePin, type Pin, type PinOps } from "./pins";
+import AuditLog from "./AuditLog";
 import Browse from "./Browse";
 import Connections from "./Connections";
 import { t, useLang } from "./i18n";
@@ -228,7 +229,8 @@ export default function App() {
             </Box>
           </Typography>
           <Tabs
-            value={page}
+            // The audit log is reached from the app-bar menu, not from a tab.
+            value={page === "audit" ? false : page}
             onChange={(_, value) => setPage(value)}
             aria-label={t("app.nav")}
             textColor="inherit"
@@ -259,6 +261,17 @@ export default function App() {
                 {t(`theme.${choice}`)}
               </MenuItem>
             ))}
+            <Divider component="li" sx={{ my: 0.5 }} />
+            <MenuItem
+              selected={page === "audit"}
+              onClick={() => {
+                setAppMenu(null);
+                setPage("audit");
+              }}
+              sx={{ minHeight: 40 }}
+            >
+              {t("app.audit")}
+            </MenuItem>
           </Menu>
         </Box>
         <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
@@ -409,7 +422,7 @@ export default function App() {
             <Box sx={{ position: "absolute", inset: 0, overflow: "auto" }}>
               <Container maxWidth="lg" sx={{ py: 4, px: "40px !important" }}>
                 <ErrorAlert error={error} />
-                <Connections profiles={profiles ?? []} onChanged={reload} scale={scale} onScale={zoomTo} />
+                {page === "audit" ? <AuditLog /> : <Connections profiles={profiles ?? []} onChanged={reload} scale={scale} onScale={zoomTo} />}
               </Container>
             </Box>
           )}

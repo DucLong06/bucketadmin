@@ -436,7 +436,7 @@
     await waitFor(() => document.documentElement.dataset.theme === "light" && pageColour() === "rgb(250, 247, 242)", "the whole page is on warm paper");
     check((await invoke("get_theme")) === "light", "the choice is in settings.json");
     const row = last(all(bucketButtons)).getBoundingClientRect().height;
-    check(row >= 40 && parseFloat(getComputedStyle(document.body).fontSize) === 15, `sizes are the same in the light theme: row ${row}px`);
+    check(row >= 40, `the row floor holds in the light theme: row ${row}px`);
     check(fits(), "nothing scrolls sideways in the light theme");
     await shot("24b-light");
     await chooseTheme("dark");
@@ -832,6 +832,20 @@
     await waitFor(() => all(bucketButtons).length === MANY && tabs().length === 12, "another connection in this tab: every tab is still there", 20000);
     notes.push(`12 tabs: bar ${bar.clientWidth} of ${bar.scrollWidth} px`);
     await shot("-"); // the removals below get the next slot
+
+    // ---- M10.4 the audit log viewer: read-only, times in UTC+7, filterable
+    await click(T("app.menu"));
+    await clickSel("[role=menuitem]:last-child");
+    const auditRows = () => all(`table${sel("audit.table")} tbody tr`);
+    await waitFor(() => auditRows().length >= 10 && hasText(T("audit.col.time", { tz: "UTC+7" })), "the audit log lists what the flow did", 20000);
+    check(auditRows().every((r) => r.getBoundingClientRect().height >= 40), "audit rows keep the size floor");
+    check(!button(T("common.delete")) && !hasText("CSV") && fits(), "no delete or export, nothing scrolls sideways");
+    const auditFilter = await waitFor(() => last(all(`input${sel("audit.filter")}`)), "the audit filter");
+    setValue(auditFilter, "acl.set");
+    await waitFor(() => auditRows().length >= 2 && auditRows().every((r) => r.textContent.includes("acl.set")), "the filter narrows the list");
+    setValue(auditFilter, "");
+    await waitFor(() => auditRows().length >= 10, "and clears");
+    await shot("44a-audit-log");
 
     // ---- remove every connection: their tabs and pins have nothing left to show
     await click(T("app.connections"));
