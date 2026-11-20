@@ -26,6 +26,17 @@ của bài test cho phần kiểm tra bản mới.
   qua các lần mở app (xem Vị trí đã ghim).
 - **Danh sách bucket**: key sở hữu bao nhiêu bucket thì danh sách vẫn cao cố định và cuộn bên trong khung; trên 8 bucket có ô
   lọc (`↑` `↓` di chuyển, `Enter` mở, `Esc` bỏ lọc), tiêu đề hiện số bucket.
+- **Bộ chọn đường dẫn cho thấy quyền của bạn**: Mở đường dẫn, ghim một đường dẫn gõ tay và đường dẫn bắt đầu của kết nối dùng
+  chung một bộ chọn. Nó hiện "Đường dẫn bạn dùng được" (đường dẫn bắt đầu, vị trí đã ghim, vị trí gần đây và, nếu key được đọc,
+  phần bucket policy cấp) và, khi bạn gõ, các thư mục mà S3 liệt kê đúng tại đường dẫn đó, bấm một lần để đi sâu hơn. Khi key
+  không được liệt kê ở đó, một gợi ý màu hổ phách báo như vậy; đường dẫn vẫn mở được. App không bao giờ liệt kê phía trên
+  phần bạn đã gõ.
+- **Giao diện tối & sáng**: giao diện tối màu than ấm và giao diện sáng màu giấy ấm, cùng một màu nhấn hổ phách, chọn ở trình
+  đơn trên thanh app hoặc ở Cài đặt chung và được nhớ lại (không chớp trắng lúc mở; không có chế độ "theo hệ thống").
+- **Chạy tốt với hàng trăm bucket và nhiều kết nối**: danh sách bucket chỉ dựng các dòng đang thấy (500 bucket tốn như 30);
+  trên 8 kết nối thì màn Kết nối và ô chọn kết nối của tab có thể tìm kiếm, tên trùng được cảnh báo, tab ghi
+  `kết nối · bucket` và thanh tab cuộn được; Gần đây được nhóm theo kết nối như Đã ghim.
+- **Nhật ký thao tác** (trình đơn trên thanh app): bảng chỉ để xem những gì app đã thay đổi, có ô lọc và hôm nay / 7 ngày / 30 ngày / tất cả.
 - **Gần đây**: 20 vị trí mở gần nhất, nhớ qua các lần mở app; chọn một vị trí là mở thành tab (vị trí đang mở sẵn thì chuyển
   sang tab đó).
 - Tạo bucket, tạo thư mục, tải lên (chọn file hoặc kéo-thả, multipart), tải xuống có resume, xoá một hoặc nhiều object.
@@ -70,8 +81,8 @@ của bài test cho phần kiểm tra bản mới.
 Yêu cầu: Ubuntu 22.04 trở lên (amd64), có dịch vụ keyring (GNOME Keyring hoặc tương đương — mặc định có sẵn trên Ubuntu desktop).
 
 ```bash
-wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.2/bucketadmin_0.1.2_amd64.deb
-sudo apt install ./bucketadmin_0.1.2_amd64.deb
+wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.3/bucketadmin_0.1.3_amd64.deb
+sudo apt install ./bucketadmin_0.1.3_amd64.deb
 ```
 
 Các định dạng khác và các bản cũ: trang [Releases](https://github.com/DucLong06/bucketadmin/releases).
@@ -187,8 +198,8 @@ npm ci
 npm run tauri dev                      # chạy app ở chế độ phát triển
 npm test && npm run build              # test và build frontend
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-scripts/build-deb.sh 0.1.2~dev1        # đóng gói deb
-scripts/render-gate.sh bucketadmin_0.1.2~dev1_amd64.deb   # kiểm tra gói vừa build có hiện giao diện thật
+scripts/build-deb.sh 0.1.3~dev1        # đóng gói deb
+scripts/render-gate.sh bucketadmin_0.1.3~dev1_amd64.deb   # kiểm tra gói vừa build có hiện giao diện thật
 python3 scripts/gen-icons.py           # render lại bộ icon từ src-tauri/icons/icon.svg (cần google-chrome, Pillow)
 ```
 
