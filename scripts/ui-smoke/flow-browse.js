@@ -38,6 +38,17 @@
     const rightClick = (el) => el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 560, clientY: 430 }));
     // Nothing scrolls sideways: the page, the pane of each view, the object sheet.
     const fits = () => [document.documentElement, ...all(".MuiContainer-root").map((c) => c.parentElement), ...all(".MuiDrawer-paper")].every((e) => e.scrollWidth <= e.clientWidth);
+    // The object list shows every column it has and cannot be scrolled sideways. Asked by scrolling it:
+    // at a fractional zoom scrollWidth and clientWidth are rounded apart by a pixel on a list that fits.
+    const lists = () => all(`[role="table"][aria-label="${T("browse.objectList")}"]`);
+    const listFits = () =>
+      lists().every((e) => {
+        e.scrollLeft = 8;
+        const moved = e.scrollLeft;
+        e.scrollLeft = 0;
+        return moved === 0;
+      });
+    const listOver = () => lists().map((e) => `${e.scrollWidth} in ${e.clientWidth} px`).join(", ");
     // Wholly inside the window (menus, the sheet).
     const inWindow = (el) => {
       const [r, page] = [el.getBoundingClientRect(), document.documentElement];
@@ -79,7 +90,7 @@
     await waitFor(() => hasText(loaded(4, 0)), "bucket root");
     await waitFor(() => hasText(versioningIs("on")), "versioning chip");
     check(tabs().length === 1 && tabs()[0].textContent.startsWith(BUCKET), "the tab is named after the bucket");
-    check(fits(), "Browse does not scroll sideways");
+    check(fits() && listFits(), "Browse does not scroll sideways, nor does its object list");
     await shot("03-bucket-root");
 
     // ---- zoom: the webview's own zoom, so the window keeps its size and the page gets narrower in CSS px
@@ -92,7 +103,10 @@
     await waitFor(() => zoomed() === 125, "Ctrl++: 125 %");
     check((await savedScale()) === 125, "the size is written to settings.json at once");
     // Asked of the standard window (1200 px, 960 CSS px at 125 %); a smaller window may scroll at this size.
-    check(wide < 1200 || fits(), "Browse does not scroll sideways at 125 %");
+    // Waited for: the page learns its new width (a media query) a moment after the zoom.
+    await waitFor(() => wide < 1200 || (fits() && listFits()), "Browse does not scroll sideways at 125 %, nor does its object list").catch((e) => {
+      throw new Error(`${e.message} (list: ${listOver()})`);
+    });
     rightClick(last(all(folder("notes/"))).closest('[role="row"]'));
     await waitFor(() => menuItems().length > 0, "context menu at 125 %");
     check(inWindow(last(all(".MuiMenu-paper"))), "the context menu is not clipped at 125 %");

@@ -22,6 +22,7 @@ import {
   Stack,
   TextField,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
 import { invoke, maskKey, type BrowseBucket, type Listing, type Marker, type ObjectEntry, type Profile } from "./api";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -94,6 +95,8 @@ const baseName = (key: string, prefix: string) => key.slice(prefix.length);
 
 export default function Browse({ profiles, start, active, startTransfer, onPlace, remember, recents, onRecent }: Props) {
   const [clusterId, setClusterId] = useState(start.clusterId);
+  // Wide enough for every column of the object list (CSS px: the zoom setting narrows the page).
+  const roomy = useMediaQuery("(min-width:1150px)");
   useEffect(() => {
     // The tab's connection was removed (or there was none yet): fall back to the first one.
     if (!profiles.some((p) => p.id === clusterId)) setClusterId(profiles[0]?.id ?? "");
@@ -390,7 +393,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
     },
     {
       header: th(t("browse.col.name")),
-      width: "minmax(240px, 4fr)",
+      width: "minmax(160px, 4fr)",
       cell: (r) =>
         "folder" in r ? (
           <Link component="button" onClick={() => load(bucket, r.folder, null)} aria-label={t("browse.openFolder", { folder: r.folder })} sx={{ fontFamily: tokens.mono, fontSize: 15 }}>
@@ -417,7 +420,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
     { header: th(t("browse.col.size")), width: "110px", align: "right", cell: (r) => ("object" in r && !r.object.deleted ? formatBytes(r.object.size) : "—") },
     { header: th(t("browse.col.modified", { tz: TZ })), width: "190px", cell: (r) => ("object" in r ? vnTime(r.object.last_modified) : "") },
     // The owner is in the object's properties; the concept's table stops at the storage class.
-    { header: th(t("browse.col.storageClass")), width: "140px", cell: (r) => ("object" in r ? r.object.storage_class : "") },
+    // A narrow page (a 1100 px window, or 125 % zoom) drops that column rather than scroll sideways; the properties keep it.
+    ...(roomy ? [{ header: th(t("browse.col.storageClass")), width: "140px", cell: (r: Row) => ("object" in r ? r.object.storage_class : "") }] : []),
   ];
 
   // Breadcrumb: bucket, then one link per folder level of the prefix.
