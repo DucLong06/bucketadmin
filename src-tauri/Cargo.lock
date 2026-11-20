@@ -911,7 +911,7 @@ dependencies = [
 
 [[package]]
 name = "bucketadmin"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "arrow-array",
  "arrow-json",
