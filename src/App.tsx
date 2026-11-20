@@ -22,13 +22,13 @@ import { isPinned, movePin, pinLabel, togglePin, type Pin, type PinOps } from ".
 import Browse from "./Browse";
 import Connections from "./Connections";
 import { t, useLang } from "./i18n";
-import { closeTab, cycleTab, placeLabel, placePath, samePlace, tabShortcut, tabTitle, type BrowseTab, type Place } from "./tabs";
+import { closeTab, cycleTab, placeLabel, placePath, restoreTabs, samePlace, saveTabs, tabShortcut, tabTitle, type BrowseTab, type Place, type SavedTabs } from "./tabs";
 import { theme, tokens } from "./theme";
 import { TaskPanel, useTransfers } from "./transfers";
 import { ErrorAlert, PinToggle } from "./ui";
 import { zoomShortcut } from "./zoom";
 
-/** A release whose tag is not this build's version (backend `update_check`). */
+/** A release newer than this build (backend `update_check`). */
 type Update = { tag: string; url: string; current: string };
 
 /** Pins the app-bar menu lists (the sidebar has them all). */
@@ -99,8 +99,9 @@ export default function App() {
   const openRelease = () => invoke("update_open").then(() => setUpdateToast(null), () => setUpdateToast("no-browser"));
 
   const reload = () =>
-    Promise.all([invoke<Profile[]>("list_profiles"), invoke<Place[]>("recent_list"), invoke<Pin[]>("pin_list")])
-      .then(([list, recent, pinned]) => {
+    // The saved tabs are a convenience: without them the app starts with its usual first tab.
+    Promise.all([invoke<Profile[]>("list_profiles"), invoke<Place[]>("recent_list"), invoke<Pin[]>("pin_list"), invoke<SavedTabs | null>("tabs_get").catch(() => null)])
+      .then(([list, recent, pinned, saved]) => {
         setPins(pinned);
         // Nothing to browse yet: start where a connection can be added.
         if (profiles === null && list.length === 0) setPage("connections");
@@ -108,15 +109,24 @@ export default function App() {
         setRecents(recent);
         setTabs((old) => {
           if (old.length > 0) return old;
+          // After a relaunch: the tabs that were open, each where it was.
+          const again = restoreTabs(saved, list.map((p) => p.id));
           const tab = newTab(nowhere(list[0]?.id ?? ""));
-          setActive(tab.id);
-          return [tab];
+          setActive(again?.active ?? tab.id);
+          return again?.tabs ?? [tab];
         });
       })
       .catch((e) => setError(String(e)));
   useEffect(() => {
     reload();
   }, []);
+
+  // Every change of the tabs is saved for the next start, once the changes pause.
+  useEffect(() => {
+    if (tabs.length === 0) return; // not loaded yet
+    const timer = setTimeout(() => invoke("tabs_set", { tabs: saveTabs(tabs, active) }).catch(() => {}), 300);
+    return () => clearTimeout(timer);
+  }, [tabs, active]);
 
   function openTab(start: Place) {
     const tab = newTab(start);

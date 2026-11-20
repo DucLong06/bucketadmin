@@ -33,6 +33,48 @@ pub fn same_version(tag: &str, current: &str) -> bool {
     plain(tag) == plain(current)
 }
 
+/// `v0.2.0-preview1` or `0.2.0~preview1` as numbers plus the pre-release part ("" for a
+/// release); `None` for text that is no version.
+fn version(text: &str) -> Option<([u64; 3], String)> {
+    let plain = text.trim().trim_start_matches('v').replace('~', "-");
+    let plain = plain.split('+').next().unwrap_or_default();
+    let (numbers, pre) = plain.split_once('-').unwrap_or((plain, ""));
+    let mut parts = numbers.split('.').map(|n| n.parse::<u64>().ok());
+    let triple = [
+        parts.next()??,
+        parts.next().unwrap_or(Some(0))?,
+        parts.next().unwrap_or(Some(0))?,
+    ];
+    match parts.next() {
+        None => Some((triple, pre.to_string())),
+        Some(_) => None,
+    }
+}
+
+/// `preview2` sorts as ("preview", 2), so `preview10` comes after `preview9`.
+fn pre_release(pre: &str) -> (&str, u64) {
+    let name = pre.trim_end_matches(|c: char| c.is_ascii_digit());
+    (name, pre[name.len()..].parse().unwrap_or(0))
+}
+
+/// Whether the release tagged `tag` is newer than the build `current` (semver order: a
+/// pre-release comes before its release). Text that is no version is never "newer".
+pub fn is_newer(tag: &str, current: &str) -> bool {
+    use std::cmp::Ordering;
+    let (Some((theirs, their_pre)), Some((mine, my_pre))) = (version(tag), version(current)) else {
+        return false;
+    };
+    match theirs.cmp(&mine) {
+        Ordering::Greater => true,
+        Ordering::Less => false,
+        Ordering::Equal => match (their_pre.is_empty(), my_pre.is_empty()) {
+            (true, false) => true,
+            (false, false) => pre_release(&their_pre) > pre_release(&my_pre),
+            _ => false,
+        },
+    }
+}
+
 /// Tag and page of the latest release in GitHub's answer; `None` when it names none.
 pub fn parse_latest(body: &str) -> Option<(String, String)> {
     let json: serde_json::Value = serde_json::from_str(body).ok()?;
@@ -55,10 +97,10 @@ pub fn is_due(seen: Option<&UpdateSeen>, now: u64) -> bool {
     seen.is_none_or(|seen| now.saturating_sub(seen.checked_at) >= DAY_SECS)
 }
 
-/// What to tell the user after an answer: a release whose tag is not this build's.
+/// What to tell the user after an answer: a release newer than this build. A build ahead of
+/// the latest release (a preview, a local build) is not told to go back.
 pub fn pending(seen: &UpdateSeen, current: &'static str) -> Option<Update> {
-    let differs = !seen.tag.is_empty() && !same_version(&seen.tag, current);
-    differs.then(|| Update {
+    is_newer(&seen.tag, current).then(|| Update {
         tag: seen.tag.clone(),
         url: seen.url.clone(),
         current,
@@ -130,6 +172,43 @@ mod tests {
         assert!(!same_version("v0.2.0", "0.1.0"));
         assert!(!same_version("v0.1.0", "0.1.0~preview2"));
         assert!(!same_version("v0.1.0-preview3", "0.1.0~preview2"));
+    }
+
+    #[test]
+    fn only_a_newer_release_is_reported_never_an_older_one() {
+        // The case from the field: this build is ahead of the latest tag.
+        assert_eq!(pending(&seen(1, "v0.1.1"), "0.1.2"), None);
+        let told = pending(&seen(1, "v0.1.2"), "0.1.1").expect("a newer release");
+        assert_eq!((told.tag.as_str(), told.current), ("v0.1.2", "0.1.1"));
+        assert_eq!(pending(&seen(1, "v0.1.2"), "0.1.2"), None);
+
+        for (tag, current) in [
+            ("v0.1.2", "0.1.1"),
+            ("v0.2.0", "0.1.9"),
+            ("v1.0.0", "0.9.9"),
+            ("v0.1.10", "0.1.9"), // numbers, not text
+            ("v0.2", "0.1.5"),
+            ("v0.1.2", "0.1.2~preview1"), // the release of my preview
+            ("v0.1.2-preview2", "0.1.2~preview1"),
+            ("v0.1.2-preview10", "0.1.2~preview9"),
+            ("v0.1.3-preview1", "0.1.2"),
+        ] {
+            assert!(is_newer(tag, current), "{tag} is newer than {current}");
+            assert!(!is_newer(current, tag), "{current} is not newer than {tag}");
+        }
+        for (tag, current) in [
+            ("v0.1.2", "0.1.2"),
+            ("v0.1.2+build7", "0.1.2"),
+            ("v0.1.2-preview1", "0.1.2~preview1"),
+            ("v0.1.2-preview1", "0.1.2"), // a preview of what I already run
+            ("", "0.1.2"),
+            ("nightly", "0.1.2"),
+            ("v1.2.3.4", "0.1.2"),
+        ] {
+            assert!(!is_newer(tag, current), "{tag} vs {current}");
+        }
+        // A package version of an old milestone build still compares.
+        assert!(is_newer("v0.1.2", "0.0.0~m7afinal"));
     }
 
     #[test]

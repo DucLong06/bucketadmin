@@ -23,7 +23,7 @@ use rgw_admin::{
     BucketInfo, Capability, ClusterInfo, Credentials, KeyPair, QuotaType, ReqwestClient, RgwAdmin,
     Usage, UserInfo,
 };
-use settings::{EndpointKind, Pin, Place, Proxy, SettingsStore};
+use settings::{EndpointKind, Pin, Place, Proxy, SavedTabs, SettingsStore};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -194,6 +194,18 @@ fn recent_add(state: St<'_>, place: Place) -> Cmd<'_, Vec<Place>> {
     Ok(state.settings.change(|s| s.remember(place))?.recent)
 }
 
+/// The browse tabs that were open when the app was last used; `None` on a first start.
+#[tauri::command(async)]
+fn tabs_get(state: St<'_>) -> Cmd<'_, Option<SavedTabs>> {
+    Ok(state.settings.get()?.tabs)
+}
+
+/// Saves the open browse tabs for the next start.
+#[tauri::command(async)]
+fn tabs_set(state: St<'_>, tabs: SavedTabs) -> Cmd<'_, ()> {
+    state.settings.change(|s| s.keep_tabs(tabs)).map(|_| ())
+}
+
 /// Ticks or clears "I am a normal user" on a saved profile.
 #[allow(dead_code)] // admin UI removed M7b
 #[tauri::command(async)]
@@ -257,7 +269,7 @@ fn apply_ui_scale(window: &tauri::WebviewWindow, percent: u16) -> Result<(), Str
         .map_err(|e| e.to_string())
 }
 
-/// The release to tell the user about, if the latest one is not this build. Never an error.
+/// The release to tell the user about, if the latest one is newer than this build. Never an error.
 #[tauri::command]
 async fn update_check(state: St<'_>) -> Cmd<'_, Option<update::Update>> {
     Ok(update::check(&state.settings).await)
@@ -680,6 +692,8 @@ pub fn run() {
             pin_remove,
             pin_rename,
             pin_move,
+            tabs_get,
+            tabs_set,
             profile_set_proxy,
             profile_set_start_path,
             network_get,

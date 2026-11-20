@@ -124,6 +124,26 @@ fn pin_label(label: &str) -> String {
     label.trim().chars().take(MAX_PIN_LABEL).collect()
 }
 
+/// One open browse tab as it is saved: its id and where it was.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedTab {
+    pub id: String,
+    pub at: Place,
+}
+
+/// The open browse tabs and which one was on screen, so a relaunch shows them again.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SavedTabs {
+    #[serde(default)]
+    pub tabs: Vec<SavedTab>,
+    /// Id of the tab that was on screen.
+    #[serde(default)]
+    pub active: String,
+}
+
+/// Tabs kept across a relaunch.
+pub const MAX_TABS: usize = 50;
+
 /// Sizes the whole interface can be shown at, in percent.
 pub const UI_SCALES: [u16; 6] = [80, 90, 100, 110, 125, 150];
 
@@ -172,6 +192,9 @@ pub struct Settings {
     /// Pinned places in the user's own order, at most [`MAX_PINS`], no place twice.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pins: Vec<Pin>,
+    /// The browse tabs that were open, at most [`MAX_TABS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tabs: Option<SavedTabs>,
 }
 
 impl Default for Settings {
@@ -183,6 +206,7 @@ impl Default for Settings {
             update: None,
             recent: Vec::new(),
             pins: Vec::new(),
+            tabs: None,
         }
     }
 }
@@ -203,6 +227,12 @@ impl Settings {
         self.recent.retain(|known| *known != place);
         self.recent.insert(0, place);
         self.recent.truncate(MAX_RECENT);
+    }
+
+    /// Keeps the open tabs for the next start (the first [`MAX_TABS`] of them).
+    pub fn keep_tabs(&mut self, mut open: SavedTabs) {
+        open.tabs.truncate(MAX_TABS);
+        self.tabs = Some(open);
     }
 
     fn pin_at(&self, place: &Place) -> Option<usize> {
@@ -522,6 +552,49 @@ mod tests {
         let mut nowhere = place("");
         nowhere.bucket.clear();
         assert!(full.pin(nowhere, "", 0).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn open_tabs_survive_a_relaunch() {
+        let dir = temp_dir("tabs");
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = SettingsStore::new(&dir);
+        // A settings.json written before tabs were saved.
+        std::fs::write(dir.join("settings.json"), r#"{"ui_scale":110}"#).unwrap();
+        assert_eq!(store.get().unwrap().tabs, None);
+
+        let tab = |id: &str, bucket: &str, prefix: &str| SavedTab {
+            id: id.into(),
+            at: Place {
+                cluster_id: "c1".into(),
+                uid: String::new(),
+                bucket: bucket.into(),
+                prefix: prefix.into(),
+            },
+        };
+        let open = SavedTabs {
+            tabs: vec![tab("t1", "logs", "2026/"), tab("t2", "", "")],
+            active: "t2".into(),
+        };
+        store.change(|s| s.keep_tabs(open.clone())).unwrap();
+        let reloaded = SettingsStore::new(&dir).get().unwrap();
+        assert_eq!(reloaded.tabs, Some(open));
+        assert_eq!(reloaded.ui_scale, 110);
+        // What the UI sends (camelCase places, a tab with no bucket open) reads back the same.
+        let sent = r#"{"tabs":[{"id":"a","at":{"clusterId":"c1","uid":"","bucket":"","prefix":""}}],"active":"a"}"#;
+        let parsed: SavedTabs = serde_json::from_str(sent).unwrap();
+        assert_eq!(parsed.tabs[0].at.cluster_id, "c1");
+        assert_eq!(serde_json::to_string(&parsed).unwrap(), sent);
+        // Far too many tabs: the first MAX_TABS are kept.
+        let many = SavedTabs {
+            tabs: (0..MAX_TABS + 9)
+                .map(|n| tab(&n.to_string(), "b", ""))
+                .collect(),
+            active: "0".into(),
+        };
+        let kept = store.change(|s| s.keep_tabs(many)).unwrap().tabs.unwrap();
+        assert_eq!(kept.tabs.len(), MAX_TABS);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

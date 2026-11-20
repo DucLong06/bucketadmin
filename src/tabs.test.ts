@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { applyLang } from "./i18n";
-import { closeTab, cycleTab, placeLabel, placePath, samePlace, tabShortcut, tabTitle, type BrowseTab, type Place } from "./tabs";
+import { closeTab, cycleTab, placeLabel, placePath, restoreTabs, samePlace, saveTabs, tabShortcut, tabTitle, type BrowseTab, type Place } from "./tabs";
 
 const place = (bucket = "", prefix = "", clusterId = "c1", uid = ""): Place => ({ clusterId, uid, bucket, prefix });
 const tab = (id: string, at = place()): BrowseTab => ({ id, start: at, at });
@@ -64,4 +64,37 @@ test("tab shortcuts, as the keys really arrive in the webview", () => {
   expect(press("D", "KeyD", { shiftKey: true })).toBeNull();
   expect(press("d", "KeyD", { altKey: true })).toBeNull();
   expect(press("d", "KeyD", { ctrlKey: false })).toBeNull();
+});
+
+test("open tabs are saved and come back after a relaunch, without those whose connection is gone", () => {
+  const where = (clusterId: string, bucket = "", prefix = ""): Place => ({ clusterId, uid: "", bucket, prefix });
+  const open: BrowseTab[] = [
+    { id: "t1", start: where("c1"), at: where("c1", "logs", "2026/11/") },
+    { id: "t2", start: where("c2", "media"), at: where("c2", "media", "clips/") },
+    { id: "t3", start: where("c1"), at: where("c1") },
+  ];
+  // Saved: where each tab is now (not where it started), and which one is on screen.
+  const saved = saveTabs(open, "t2");
+  expect(saved).toEqual({ tabs: [{ id: "t1", at: open[0].at }, { id: "t2", at: open[1].at }, { id: "t3", at: open[2].at }], active: "t2" });
+  // Through JSON, as settings.json holds it.
+  const read = JSON.parse(JSON.stringify(saved));
+
+  // Restored: every tab starts where it was.
+  const all = restoreTabs(read, ["c1", "c2"]);
+  expect(all?.active).toBe("t2");
+  expect(all?.tabs).toEqual(open.map((tab) => ({ id: tab.id, start: tab.at, at: tab.at })));
+
+  // Connection c2 was removed meanwhile: its tab is dropped, and the first tab left is shown.
+  const fewer = restoreTabs(read, ["c1"]);
+  expect(fewer?.tabs.map((tab) => tab.id)).toEqual(["t1", "t3"]);
+  expect(fewer?.active).toBe("t1");
+  // The tab on screen is kept when it survives.
+  expect(restoreTabs(saveTabs(open, "t3"), ["c1"])?.active).toBe("t3");
+
+  // Nothing to restore: a first start, an empty list, or no connection left.
+  expect(restoreTabs(null, ["c1"])).toBeNull();
+  expect(restoreTabs(undefined, ["c1"])).toBeNull();
+  expect(restoreTabs({ tabs: [], active: "" }, ["c1"])).toBeNull();
+  expect(restoreTabs(read, [])).toBeNull();
+  expect(restoreTabs(read, ["c9"])).toBeNull();
 });
