@@ -24,7 +24,7 @@ const t = tokens;
 const line = `1px solid ${t.line}`;
 const heading = { fontFamily: t.serif, fontWeight: 600, letterSpacing: "-0.01em" };
 /** Small caps label above a heading or a group ("eyebrow" in the concept), also the table header style. */
-export const eyebrow = { fontSize: 12, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" as const };
+export const eyebrow = { fontSize: 12.5, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" as const };
 
 export const theme = createTheme({
   palette: {
@@ -42,19 +42,22 @@ export const theme = createTheme({
   shape: { borderRadius: 14 },
   typography: {
     fontFamily: t.sans,
+    // MUI's base size (14 by default): body2, table cells and buttons follow it; body1, inputs,
+    // chips, captions and h1–h3 scale by the same 15/14.
+    fontSize: 15,
     h1: heading,
     h2: heading,
     h3: heading,
-    h4: heading,
-    h5: heading,
-    h6: { ...heading, fontSize: 19 },
+    h4: { ...heading, fontSize: 35 },
+    h5: { ...heading, fontSize: 25 },
+    h6: { ...heading, fontSize: 20 },
     overline: { ...eyebrow, lineHeight: 1.8 },
-    button: { textTransform: "none", fontWeight: 500, fontSize: 14 },
+    button: { textTransform: "none", fontWeight: 500, fontSize: 15 },
   },
   components: {
     MuiCssBaseline: {
       styleOverrides: {
-        "code, pre": { fontFamily: t.mono, fontSize: 13 },
+        "code, pre": { fontFamily: t.mono, fontSize: 14 },
         ":focus-visible": { outline: `2px solid ${t.accent}`, outlineOffset: 2 },
         summary: { cursor: "pointer", color: t.muted },
       },
@@ -71,14 +74,25 @@ export const theme = createTheme({
       },
     },
     MuiDialog: { styleOverrides: { paper: { border: line, boxShadow: "none" } } },
+    MuiDialogTitle: { styleOverrides: { root: { padding: "20px 28px" } } },
+    MuiDialogContent: { styleOverrides: { root: { padding: "24px 28px" } } },
+    MuiDialogActions: { styleOverrides: { root: { padding: "12px 20px" } } },
     MuiDrawer: { styleOverrides: { paper: { boxShadow: "none" } } },
     // The one place a soft shadow stays: things that float over content.
     MuiPopover: { styleOverrides: { paper: { border: line, boxShadow: "0 10px 28px rgba(0, 0, 0, 0.3)", borderRadius: 14 } } },
     MuiMenu: { styleOverrides: { paper: { border: line, boxShadow: "0 10px 28px rgba(0, 0, 0, 0.3)", borderRadius: 14 } } },
     MuiChip: { styleOverrides: { root: { borderRadius: 999 }, outlined: { borderColor: t.line } } },
-    MuiOutlinedInput: { styleOverrides: { root: { borderRadius: 14 }, notchedOutline: { borderColor: t.line } } },
-    MuiTableCell: { styleOverrides: { root: { borderColor: t.line }, head: { ...eyebrow, color: t.muted } } },
-    MuiTab: { styleOverrides: { root: { textTransform: "none", fontSize: 15, minWidth: 0 } } },
+    MuiOutlinedInput: { styleOverrides: { root: { borderRadius: 14, minHeight: 40 }, notchedOutline: { borderColor: t.line } } },
+    MuiTableCell: {
+      styleOverrides: {
+        // Checkbox cells keep their own narrow padding.
+        root: { borderColor: t.line, "&.MuiTableCell-sizeSmall:not(.MuiTableCell-paddingCheckbox)": { padding: "8px 18px" } },
+        head: { ...eyebrow, color: t.muted },
+      },
+    },
+    MuiTab: { styleOverrides: { root: { textTransform: "none", fontSize: 16, minWidth: 0 } } },
+    MuiListItemButton: { styleOverrides: { dense: { minHeight: 40 } } },
+    MuiTooltip: { styleOverrides: { tooltip: { fontSize: 13 } } },
     MuiAlert: { styleOverrides: { root: { borderRadius: 14 } } },
     MuiAccordion: { styleOverrides: { root: { borderRadius: t.radius, "&::before": { display: "none" } } } },
     MuiLinearProgress: { styleOverrides: { root: { borderRadius: 999 } } },

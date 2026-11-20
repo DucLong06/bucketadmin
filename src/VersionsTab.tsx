@@ -79,7 +79,7 @@ export default function VersionsTab({ at, startTransfer, onChanged, versioning }
           <Paper key={ver.version_id} component="li" variant="outlined" sx={{ px: 2, py: 1 }}>
             <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
               <Stack sx={{ flexGrow: 1, minWidth: 0 }}>
-                <Typography sx={{ fontSize: 13, wordBreak: "break-all" }}>{ver.version_id}</Typography>
+                <Typography sx={{ fontSize: 14, wordBreak: "break-all" }}>{ver.version_id}</Typography>
                 <Typography variant="body2" color="text.secondary">
                   {vnTime(ver.last_modified, true)} ({TZ}){ver.delete_marker ? "" : ` · ${formatBytes(ver.size)}`}
                 </Typography>

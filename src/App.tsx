@@ -126,8 +126,8 @@ export default function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <Box sx={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-        <Box component="header" sx={{ display: "flex", alignItems: "center", gap: 4.5, height: 64, px: 5, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
-          <Typography component="div" sx={{ fontFamily: tokens.serif, fontStyle: "italic", fontWeight: 600, fontSize: 24, letterSpacing: "-0.01em" }}>
+        <Box component="header" sx={{ display: "flex", alignItems: "center", gap: 4.5, height: 68, px: 5, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
+          <Typography component="div" sx={{ fontFamily: tokens.serif, fontStyle: "italic", fontWeight: 600, fontSize: 25, letterSpacing: "-0.01em" }}>
             Bucket
             <Box component="span" sx={{ color: "primary.main", fontStyle: "normal" }}>
               Admin
@@ -177,8 +177,8 @@ export default function App() {
                     gap: 0.5,
                     pl: 2,
                     pr: 0.75,
-                    height: 38,
-                    maxWidth: 240,
+                    height: 42,
+                    maxWidth: 256,
                     cursor: "pointer",
                     border: 1,
                     borderBottom: 0,
@@ -189,7 +189,7 @@ export default function App() {
                     fontWeight: t.id === active ? 600 : 400,
                   }}
                 >
-                  <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 14 }}>
+                  <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 15 }}>
                     {tabTitle(t.at)}
                   </Box>
                   <IconButton
@@ -200,13 +200,14 @@ export default function App() {
                       e.stopPropagation();
                       close(t.id);
                     }}
-                    sx={{ width: 24, height: 24, fontSize: 16 }}
+                    // 28 px to look at, 40 × 40 to hit.
+                    sx={{ width: 28, height: 28, fontSize: 17, "&::after": { content: '""', position: "absolute", inset: -6 } }}
                   >
                     ×
                   </IconButton>
                 </Box>
               ))}
-              <IconButton size="small" aria-label="Tab mới" title="Tab mới (Ctrl+T)" onClick={openEmptyTab} sx={{ width: 32, height: 32, mb: 0.375 }}>
+              <IconButton size="small" aria-label="Tab mới" title="Tab mới (Ctrl+T)" onClick={openEmptyTab} sx={{ width: 40, height: 40, mb: 0.125 }}>
                 +
               </IconButton>
               <Box sx={{ flexGrow: 1 }} />

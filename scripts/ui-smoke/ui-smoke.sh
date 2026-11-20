@@ -64,6 +64,8 @@ if [ -z "$WID" ]; then
   echo "NO VISIBLE WINDOW"; cat /tmp/ba-smoke/app.log; rm -f /tmp/ba-smoke/driver.js; exit 1
 fi
 xdotool windowfocus "$WID"
+# WINDOW=1100x700 runs the same flow in a smaller window; the flow checks that nothing scrolls sideways.
+[ -n "${WINDOW:-}" ] && xdotool windowsize "$WID" "${WINDOW%x*}" "${WINDOW#*x}"
 n=0
 for name in $NAMES; do
   n=$((n+1))

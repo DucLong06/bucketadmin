@@ -39,7 +39,7 @@ type Props<T> = {
 };
 
 /** A table that only mounts the rows in view, so 100 000 rows cost the same as 30. */
-export function VirtualTable<T>({ columns, rows, height, rowHeight = 36, minWidth, label, empty, focusRow, onRowMenu }: Props<T>) {
+export function VirtualTable<T>({ columns, rows, height, rowHeight = 40, minWidth, label, empty, focusRow, onRowMenu }: Props<T>) {
   const [scrollTop, setScrollTop] = useState(0);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -51,9 +51,9 @@ export function VirtualTable<T>({ columns, rows, height, rowHeight = 36, minWidt
     gridTemplateColumns: columns.map((c) => c.width).join(" "),
     alignItems: "center",
     columnGap: 2,
-    px: 2,
+    px: 2.25,
     height: rowHeight,
-    fontSize: 14,
+    fontSize: 15,
     borderBottom: 1,
     borderColor: "divider",
   };

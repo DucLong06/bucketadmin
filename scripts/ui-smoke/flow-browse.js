@@ -26,6 +26,13 @@
     const menuItems = () => all("[role=menuitem]").map((m) => m.textContent.trim());
     const press = (key, shiftKey = false) => window.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey: true, shiftKey, bubbles: true }));
     const rightClick = (el) => el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 560, clientY: 430 }));
+    // Nothing scrolls sideways: the page, the pane of each view, the object sheet.
+    const fits = () => [document.documentElement, ...all(".MuiContainer-root").map((c) => c.parentElement), ...all(".MuiDrawer-paper")].every((e) => e.scrollWidth <= e.clientWidth);
+    // Wholly inside the window (menus, the sheet).
+    const inWindow = (el) => {
+      const [r, page] = [el.getBoundingClientRect(), document.documentElement];
+      return r.left >= 0 && r.top >= 0 && r.right <= page.clientWidth && r.bottom <= page.clientHeight;
+    };
     const rowOf = async (key) => (await waitFor(() => objectLink(key), `row of ${key}`)).closest('[role="row"]');
 
     // ---- no connection yet: the app opens where one can be added. The update check (its
@@ -47,6 +54,7 @@
     await type("Secret key của tôi", MINE.sk);
     await click("Kiểm tra kết nối");
     await waitFor(() => hasText("Kết nối thành công: key hợp lệ, user của key sở hữu 1 bucket."), "connection test over S3, no admin caps needed");
+    check(fits(), "Connections does not scroll sideways");
     await shot("01-connection");
     await click("Lưu");
     await waitFor(() => hasText('Đã lưu "lab"') && proxyOf("của lab")?.value === "none", "connection saved with its own proxy choice");
@@ -55,11 +63,13 @@
     await click("Browse");
     await waitFor(() => hasText("Chọn một bucket") && hasText("của bạn.") && hasText(BUCKET), "bucket cards of the key's user", 20000);
     check(all("label").every((l) => !l.textContent.startsWith("Duyệt thay user")) && !hasText("Thông tin của tôi"), "a key without caps: no admin extras");
+    check(fits(), "the bucket cards do not scroll sideways");
     await shot("02-buckets");
     await clickSel('[aria-label="Danh sách bucket"] [role=button]');
     await waitFor(() => hasText("4 thư mục, 0 object đã tải"), "bucket root");
     await waitFor(() => hasText("Versioning: Bật"), "versioning chip");
     check(tabs().length === 1 && tabs()[0].textContent.startsWith(BUCKET), "the tab is named after the bucket");
+    check(fits(), "Browse does not scroll sideways");
     await shot("03-bucket-root");
 
     // ---- text: line numbers, Ctrl-F, find
@@ -72,6 +82,7 @@
     await waitFor(() => hasText("1/3 dòng") && hasText("dòng 50: ERROR"), "first hit scrolled into view");
     await click("Sau");
     await waitFor(() => hasText("2/3 dòng") && hasText("dòng 250: ERROR"), "second hit scrolled into view");
+    check(fits() && inWindow(drawer()), "the object sheet fits the window");
     await shot("04-text-find");
     await closeDrawer();
     await openObject("notes/config.json");
@@ -213,6 +224,7 @@
     await openFolder("notes/");
     rightClick(await rowOf("notes/versioned.txt"));
     await waitFor(() => menuItems().join(" | ") === "Tải xuống | Copy URL | ACL | Phiên bản | Xoá", "context menu of an object");
+    check(inWindow(last(all(".MuiMenu-paper"))), "the context menu is not clipped");
     await shot("18-context-menu");
     await click("Phiên bản");
     await waitFor(() => versions() === 3 && all(".MuiDrawer-paper [role=tab][aria-selected=true]")[0]?.textContent === "Phiên bản", "the sheet opens on its versions tab");
@@ -292,6 +304,7 @@
     await click("Gần đây");
     await waitFor(() => menuItems().length >= 5, "recent places listed");
     check(menuItems()[0] === `lab · ${BUCKET}/media` && menuItems().includes(`lab · ${BUCKET}/data`), `newest first, the search hit's folder is there: ${menuItems().join(", ")}`);
+    check(fits() && inWindow(last(all(".MuiMenu-paper"))), "the recent menu fits the window");
     await shot("25-recent");
     all("[role=menuitem]").find((m) => m.textContent.trim() === `lab · ${BUCKET}/media`).click();
     await waitFor(() => objectLink("media/icon.png") && tabs().length === 2 && menuItems().length === 0, "a place already open is shown in its tab, not opened twice");

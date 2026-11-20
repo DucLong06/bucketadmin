@@ -146,8 +146,8 @@ function TextView({ at, size, kind }: { at: ObjectAt; size: number; kind: Previe
         columns={columns}
         rows={lines}
         height={440}
-        rowHeight={24}
-        minWidth={Math.min(60000, 90 + widest * 8.5)}
+        rowHeight={26}
+        minWidth={Math.min(60000, 90 + widest * 9.1)}
         focusRow={current}
         label="Nội dung file"
       />
@@ -293,7 +293,7 @@ function ParquetView({ at }: { at: ObjectAt }) {
           </Typography>
           <details>
             <summary>Schema ({page.columns.length} cột)</summary>
-            <Box component="ul" sx={{ m: 0, fontSize: 13 }}>
+            <Box component="ul" sx={{ m: 0, fontSize: 14 }}>
               {page.columns.map((c) => (
                 <li key={c.name}>
                   {c.name}: {c.data_type}
@@ -318,7 +318,7 @@ function HexView({ at, size }: { at: ObjectAt; size: number }) {
         component="pre"
         aria-label="Hex dump"
         tabIndex={0}
-        sx={{ m: 0, p: 2, bgcolor: "background.default", borderRadius: 1, overflow: "auto", maxHeight: 440, fontSize: 13 }}
+        sx={{ m: 0, p: 2, bgcolor: "background.default", borderRadius: 1, overflow: "auto", maxHeight: 440, fontSize: 14 }}
       >
         {lines.join("\n")}
       </Box>

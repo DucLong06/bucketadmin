@@ -396,7 +396,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
       width: "minmax(240px, 4fr)",
       cell: (r) =>
         "folder" in r ? (
-          <Link component="button" onClick={() => load(bucket, r.folder, null)} aria-label={`Mở thư mục ${r.folder}`} sx={{ fontFamily: tokens.mono, fontSize: 14 }}>
+          <Link component="button" onClick={() => load(bucket, r.folder, null)} aria-label={`Mở thư mục ${r.folder}`} sx={{ fontFamily: tokens.mono, fontSize: 15 }}>
             {baseName(r.folder, prefix)}
           </Link>
         ) : (
@@ -404,7 +404,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
             component="button"
             color="inherit"
             underline="hover"
-            sx={{ fontFamily: tokens.mono, fontSize: 14 }}
+            sx={{ fontFamily: tokens.mono, fontSize: 15 }}
             onClick={() => {
               openObject(r.object);
               // Reached through a search: the folder it lies in is worth finding again.
@@ -470,7 +470,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
           {session && (
             <Typography variant="body2" color="text.secondary">
               Đang dùng key{" "}
-              <Box component="span" sx={{ fontFamily: tokens.mono, fontSize: 13 }}>
+              <Box component="span" sx={{ fontFamily: tokens.mono, fontSize: 14 }}>
                 {maskKey(session.access_key)}
               </Box>{" "}
               {session.uid ? `của user ${session.uid}.` : "của bạn."}
@@ -496,7 +496,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               <List dense aria-label="Danh sách bucket">
                 {session.buckets.map((b) => (
                   <ListItemButton key={b.name} selected={b.name === bucket} onClick={() => load(b.name, "", null)}>
-                    <ListItemText primary={b.name} slotProps={{ primary: { sx: { fontFamily: tokens.mono, fontSize: 14 } } }} />
+                    <ListItemText primary={b.name} slotProps={{ primary: { sx: { fontFamily: tokens.mono, fontSize: 15 } } }} />
                   </ListItemButton>
                 ))}
               </List>
@@ -532,7 +532,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               <List dense aria-label="Vị trí mở gần đây">
                 {recents.slice(0, RECENT_IN_SIDEBAR).map((place) => (
                   <ListItemButton key={JSON.stringify(place)} onClick={() => onRecent(place)}>
-                    <ListItemText primary={placeLabel(place, profiles)} slotProps={{ primary: { sx: { fontSize: 13, wordBreak: "break-all" } } }} />
+                    <ListItemText primary={placeLabel(place, profiles)} slotProps={{ primary: { sx: { fontSize: 14, wordBreak: "break-all" } } }} />
                   </ListItemButton>
                 ))}
               </List>
@@ -565,7 +565,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                       onClick={() => load(b.name, "", null)}
                       sx={{ ...card, display: "block", width: "100%", p: "14px 18px", textAlign: "left", color: "inherit", cursor: "pointer", "&:hover": { borderColor: "text.secondary" } }}
                     >
-                      <Box component="strong" sx={{ display: "block", fontFamily: tokens.mono, fontSize: 15 }}>
+                      <Box component="strong" sx={{ display: "block", fontFamily: tokens.mono, fontSize: 16 }}>
                         {b.name}
                       </Box>
                       <Typography variant="body2" color="text.secondary">
@@ -584,7 +584,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                   <Typography variant="overline" color="primary" component="p">
                     Browse · {label}
                   </Typography>
-                  <Breadcrumbs aria-label="Đường dẫn" separator="/" sx={{ fontFamily: tokens.serif, fontSize: 28, fontWeight: 600, lineHeight: 1.25, "& .MuiBreadcrumbs-separator": { color: "divider" } }}>
+                  <Breadcrumbs aria-label="Đường dẫn" separator="/" sx={{ fontFamily: tokens.serif, fontSize: 29, fontWeight: 600, lineHeight: 1.25, "& .MuiBreadcrumbs-separator": { color: "divider" } }}>
                     <Link component="button" underline="none" color={crumbs.length ? "text.secondary" : "text.primary"} onClick={() => load(bucket, "", null)} sx={{ font: "inherit" }}>
                       {bucket}
                     </Link>

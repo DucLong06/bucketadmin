@@ -152,7 +152,7 @@ function DetailsTab({ at, object, startTransfer, versioning, onDeleted, onClose 
               value={url}
               size="small"
               fullWidth
-              slotProps={{ input: { readOnly: true, sx: { fontFamily: "monospace", fontSize: 12 } } }}
+              slotProps={{ input: { readOnly: true, sx: { fontFamily: "monospace", fontSize: 13 } } }}
             />
             <CopyButton value={url} label="Copy presigned URL" />
           </Stack>
@@ -223,14 +223,14 @@ export default function ObjectDrawer({ clusterId, uid, bucket, object, startTab,
     >
       {object && (
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
-          <Box sx={{ position: "relative", px: 3.5, pt: 2.5, pb: 2, borderBottom: 1, borderColor: "divider" }}>
+          <Box sx={{ position: "relative", px: 4, pt: 3, pb: 2.5, borderBottom: 1, borderColor: "divider" }}>
             <Typography variant="overline" color="primary" component="p">
               Object · {bucket}
             </Typography>
-            <Typography variant="h4" component="h2" sx={{ pr: 10, fontSize: 28, wordBreak: "break-all" }}>
+            <Typography variant="h4" component="h2" sx={{ pr: 10, fontSize: 29, wordBreak: "break-all" }}>
               {fileName(object.key)}
             </Typography>
-            <Button onClick={rest.onClose} sx={{ position: "absolute", top: 18, right: 18 }}>
+            <Button onClick={rest.onClose} sx={{ position: "absolute", top: 22, right: 22 }}>
               Đóng
             </Button>
           </Box>
@@ -241,13 +241,13 @@ export default function ObjectDrawer({ clusterId, uid, bucket, object, startTab,
               onChange={(_, value) => setTab(value)}
               aria-label="Chi tiết object"
               textColor="inherit"
-              sx={{ flexShrink: 0, width: 148, pt: 1, borderRight: 1, borderColor: "divider", "& .MuiTab-root": { alignItems: "flex-start", pl: 3.5 } }}
+              sx={{ flexShrink: 0, width: 156, pt: 1, borderRight: 1, borderColor: "divider", "& .MuiTab-root": { alignItems: "flex-start", pl: 4 } }}
             >
               {tabs.map((t, i) => (
                 <Tab key={t.label} value={i} label={t.label} />
               ))}
             </Tabs>
-            <Box sx={{ flexGrow: 1, minWidth: 0, overflow: "auto", p: 3 }}>
+            <Box sx={{ flexGrow: 1, minWidth: 0, overflow: "auto", p: 3.5 }}>
               <Panel key={object.key + tab} at={{ clusterId, uid, bucket, key: object.key }} object={object} {...rest} />
             </Box>
           </Box>
