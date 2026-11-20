@@ -1,3 +1,5 @@
+import type { Key } from "./i18n";
+
 // Cap types RGW accepts. adminops.rst has no list, so this was probed against the lab
 // (Ceph squid 19.2.7): these 17 are accepted; "zones", "dedup", "sync", "topics", "admin" are rejected.
 // Other Ceph releases may differ, which is what the custom `type=perm` field is for.
@@ -42,11 +44,12 @@ export type Access = {
  *  self: only the caller's own info / usage. browse: no admin cap at all. */
 export type Level = "admin" | "partial" | "self" | "browse";
 
-export const LEVEL_LABEL: Record<Level, string> = {
-  admin: "Admin đầy đủ",
-  partial: "Thiếu caps",
-  self: "Xem của mình",
-  browse: "Chỉ browse",
+/** String keys, worded with `t()` where a level is shown. */
+export const LEVEL_LABEL: Record<Level, Key> = {
+  admin: "caps.level.admin",
+  partial: "caps.level.partial",
+  self: "caps.level.self",
+  browse: "caps.level.browse",
 };
 
 /** Caps a tab needs before it can show anything. */

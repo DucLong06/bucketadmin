@@ -43,6 +43,29 @@
   const check = (ok, what) => {
     if (!ok) throw new Error("check failed: " + what);
   };
+  // The app's own string table in the language under test (CFG.STR, from src/i18n/strings.ts):
+  // the flow names texts by key, so it runs in either language. Same rules as t() in
+  // src/i18n/index.ts: {name} is a variable, {n:one|other} picks a form by whether n is 1.
+  const HOLE = /\{(\w+)(?::([^|}]*)\|([^}]*))?\}/g;
+  const T = (key, vars = {}) => {
+    if (!(key in CFG.STR)) throw new Error(`no string "${key}" in the ${CFG.LANG} table`);
+    return CFG.STR[key].replace(HOLE, (whole, name, one, other) => {
+      if (!(name in vars)) return whole;
+      return other === undefined ? String(vars[name]) : vars[name] === 1 ? (one ?? "") : other;
+    });
+  };
+  // The fixed text of a string around the variables the flow cannot know (those left out of `vars`).
+  const fixed = (key, vars) => T(key, vars).split(/\{\w+(?::[^}]*)?\}/);
+  // The sentence of `key` is on screen, whatever stands in for the variables left out.
+  const like = (key, vars) => new RegExp(fixed(key, vars).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".+?"));
+  const seen = (key, vars) => like(key, vars).test(document.body.innerText);
+  // The longest fixed piece of a string: enough to recognise it when no variable is known.
+  const piece = (key) => fixed(key).reduce((a, b) => (b.length > a.length ? b : a));
+  // Sizes: the decimal mark follows the language ("4.00 KiB" is "4,00 KiB" in Vietnamese).
+  const num = (text) => (CFG.LANG === "vi" ? text.replace(".", ",") : text);
+  // Selectors by accessible name: the whole name, or how it begins when it ends in a variable.
+  const sel = (key, vars) => `[aria-label="${T(key, vars)}"]`;
+  const starts = (key) => `[aria-label^="${piece(key)}"]`;
   // Last visible match: dialogs and drawers are appended after the page, so they win.
   const button = (text) => last(all("button, [role=tab], [role=menuitem]").filter((e) => e.textContent.trim() === text && !e.disabled));
   const click = async (text) => (await waitFor(() => button(text), `button "${text}"`)).click();
@@ -58,33 +81,11 @@
       return l && document.getElementById(l.htmlFor);
     }, `field "${label}"`);
   const type = async (label, value, pick) => setValue(await field(label, pick), value);
-  const dialogsGone = () => waitFor(() => all(".MuiDialog-root").length === 0, "dialog to close");
-  const drawersGone = () => waitFor(() => all(".MuiDrawer-root").length === 0, "drawer to close");
+  // These close when the request behind them has answered; the lab can take its time over a delete.
+  const dialogsGone = () => waitFor(() => all(".MuiDialog-root").length === 0, "dialog to close", 30000);
+  const drawersGone = () => waitFor(() => all(".MuiDrawer-root").length === 0, "drawer to close", 30000);
   const menusGone = () => waitFor(() => all(".MuiPopover-root").length === 0, "menu to close");
   const idle = (what) => waitFor(() => all(".MuiLinearProgress-root").length === 0, what, 20000);
-  const openUser = (uid) => clickSel(`[aria-label="Mở chi tiết user ${uid}"]`);
-  const openBucket = (name) => clickSel(`[aria-label="Mở chi tiết bucket ${name}"]`);
-  const chips = () => all(".MuiDrawer-root .MuiChip-deletable");
-  const rows = () => all("tbody tr").length;
-  // Users come in pages of 25 behind a "load more" button.
-  async function loadAllUsers() {
-    for (;;) {
-      await waitFor(() => all(".MuiLinearProgress-root").length === 0 && hasText("user đã tải"), "user page", 20000);
-      if (hasText("đã tải hết")) return;
-      const before = rows();
-      await click("Tải thêm 25 user");
-      await waitFor(() => rows() > before || hasText("đã tải hết"), "next user page", 20000);
-    }
-  }
-  async function deleteOpenUser(uid, purge) {
-    await click("Thông tin");
-    await click("Xoá user");
-    if (purge) {
-      last(all(".MuiDialog-root input[type=checkbox]")).click();
-      await waitFor(() => hasText("không khôi phục được"), "purge warning");
-    }
-    await type(`Gõ "${uid}" để xác nhận`, uid);
-  }
 
   try {
     // __FLOW__

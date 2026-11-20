@@ -19,10 +19,12 @@ import {
 import { invoke, type Profile } from "./api";
 import Browse from "./Browse";
 import Connections from "./Connections";
+import { t, useLang } from "./i18n";
 import { closeTab, cycleTab, placeLabel, samePlace, tabShortcut, tabTitle, type BrowseTab, type Place } from "./tabs";
 import { theme, tokens } from "./theme";
 import { TaskPanel, useTransfers } from "./transfers";
 import { ErrorAlert } from "./ui";
+import { zoomShortcut } from "./zoom";
 
 /** A release whose tag is not this build's version (backend `update_check`). */
 type Update = { tag: string; url: string; current: string };
@@ -31,6 +33,8 @@ const newTab = (start: Place): BrowseTab => ({ id: crypto.randomUUID(), start, a
 const nowhere = (clusterId: string): Place => ({ clusterId, uid: "", bucket: "", prefix: "" });
 
 export default function App() {
+  // Every string below (and in every child) is looked up again when the language changes.
+  useLang();
   const [page, setPage] = useState("browse");
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +58,18 @@ export default function App() {
       () => {},
     );
   }, []);
+  // Size of the whole interface in percent. The backend zooms the webview and saves the choice.
+  const [scale, setScale] = useState(100);
+  useEffect(() => {
+    invoke<number>("get_ui_scale").then(setScale, () => {});
+  }, []);
+  function zoomTo(percent: number) {
+    // Shown and stepped from at once: a second key press must not start from the size before this one.
+    keys.current.scale = percent;
+    setScale(percent);
+    // The backend answers with the size it saved; if it refused, show the size that is really in effect.
+    invoke<number>("set_ui_scale", { percent }).then(setScale, () => invoke<number>("get_ui_scale").then(setScale, () => {}));
+  }
   const openRelease = () => invoke("update_open").then(() => setUpdateToast(null), () => setUpdateToast("no-browser"));
 
   const reload = () =>
@@ -81,7 +97,7 @@ export default function App() {
     setActive(tab.id);
     setPage("browse");
   }
-  const activeCluster = () => tabs.find((t) => t.id === active)?.at.clusterId ?? profiles?.[0]?.id ?? "";
+  const activeCluster = () => tabs.find((tab) => tab.id === active)?.at.clusterId ?? profiles?.[0]?.id ?? "";
   const openEmptyTab = () => openTab(nowhere(activeCluster()));
   function close(id: string) {
     const next = closeTab(tabs, active, id, newTab(nowhere(activeCluster())));
@@ -91,23 +107,30 @@ export default function App() {
   // A place already open in a tab is shown there instead of being opened twice.
   function goTo(place: Place) {
     setRecentMenu(null);
-    const open = tabs.find((t) => samePlace(t.at, place));
+    const open = tabs.find((tab) => samePlace(tab.at, place));
     if (!open) return openTab(place);
     setActive(open.id);
     setPage("browse");
   }
   const remember = (place: Place) => invoke<Place[]>("recent_add", { place }).then(setRecents, () => {});
 
-  // Ctrl+T new tab, Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab next / previous. The handler is
-  // registered once and reads the current state through this ref.
-  const keys = useRef({ openEmptyTab, close, tabs, active });
-  keys.current = { openEmptyTab, close, tabs, active };
+  // Ctrl+T new tab, Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab next / previous; Ctrl+= / Ctrl+- /
+  // Ctrl+0 zoom. The handler is registered once and reads the current state through this ref.
+  const keys = useRef({ openEmptyTab, close, tabs, active, scale });
+  keys.current = { openEmptyTab, close, tabs, active, scale };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const now = keys.current;
+      // Zoom works everywhere, also over a dialog.
+      const size = zoomShortcut(e, now.scale);
+      if (size !== null) {
+        e.preventDefault();
+        if (size !== now.scale) zoomTo(size);
+        return;
+      }
       const asked = tabShortcut(e);
       // A dialog, drawer or menu belongs to the tab on screen: no switching underneath it.
       if (!asked || document.querySelector(".MuiDialog-root, .MuiDrawer-root, .MuiPopover-root")) return;
-      const now = keys.current;
       if (asked === "new") now.openEmptyTab();
       else if (asked === "close") now.close(now.active);
       else {
@@ -126,8 +149,8 @@ export default function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <Box sx={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-        <Box component="header" sx={{ display: "flex", alignItems: "center", gap: 4.5, height: 64, px: 5, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
-          <Typography component="div" sx={{ fontFamily: tokens.serif, fontStyle: "italic", fontWeight: 600, fontSize: 24, letterSpacing: "-0.01em" }}>
+        <Box component="header" sx={{ display: "flex", alignItems: "center", gap: 4.5, height: 68, px: 5, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
+          <Typography component="div" sx={{ fontFamily: tokens.serif, fontStyle: "italic", fontWeight: 600, fontSize: 25, letterSpacing: "-0.01em" }}>
             Bucket
             <Box component="span" sx={{ color: "primary.main", fontStyle: "normal" }}>
               Admin
@@ -136,85 +159,86 @@ export default function App() {
           <Tabs
             value={page}
             onChange={(_, value) => setPage(value)}
-            aria-label="Điều hướng chính"
+            aria-label={t("app.nav")}
             textColor="inherit"
             sx={{ flexGrow: 1, alignSelf: "stretch", "& .MuiTabs-flexContainer": { height: "100%", gap: 2 } }}
           >
-            <Tab value="browse" label="Browse" />
-            <Tab value="connections" label="Kết nối" />
+            <Tab value="browse" label={t("app.browse")} />
+            <Tab value="connections" label={t("app.connections")} />
           </Tabs>
           {update && (
             <Chip
               variant="outlined"
               color="primary"
-              label={`Có bản mới ${update.tag}`}
+              label={t("app.update.badge", { tag: update.tag })}
               onClick={openRelease}
-              title={`Đang dùng ${update.current}. Bấm để mở trang tải về: ${update.url}`}
+              title={t("app.update.title", { current: update.current, url: update.url })}
             />
           )}
         </Box>
         <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
-          {/* The browse layer stays mounted (and keeps every tab's state) while Kết nối is shown. */}
+          {/* The browse layer stays mounted (and keeps every tab's state) while the connections screen is shown. */}
           <Box sx={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", visibility: browsing ? "visible" : "hidden" }}>
             <Stack
               direction="row"
               role="tablist"
-              aria-label="Các tab browse"
+              aria-label={t("app.tabs")}
               sx={{ alignItems: "flex-end", gap: 0.75, px: 5, pt: 1.25, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}
             >
-              {tabs.map((t) => (
+              {tabs.map((tab) => (
                 <Box
-                  key={t.id}
+                  key={tab.id}
                   role="tab"
                   tabIndex={0}
-                  aria-selected={t.id === active}
-                  title={placeLabel(t.at, profiles ?? [])}
-                  onClick={() => setActive(t.id)}
-                  onKeyDown={(e) => e.key === "Enter" && setActive(t.id)}
+                  aria-selected={tab.id === active}
+                  title={placeLabel(tab.at, profiles ?? [])}
+                  onClick={() => setActive(tab.id)}
+                  onKeyDown={(e) => e.key === "Enter" && setActive(tab.id)}
                   sx={{
                     display: "flex",
                     alignItems: "center",
                     gap: 0.5,
                     pl: 2,
                     pr: 0.75,
-                    height: 38,
-                    maxWidth: 240,
+                    height: 42,
+                    maxWidth: 256,
                     cursor: "pointer",
                     border: 1,
                     borderBottom: 0,
-                    borderColor: t.id === active ? "primary.main" : "divider",
+                    borderColor: tab.id === active ? "primary.main" : "divider",
                     borderRadius: "14px 14px 0 0",
-                    bgcolor: t.id === active ? "action.selected" : undefined,
-                    color: t.id === active ? "text.primary" : "text.secondary",
-                    fontWeight: t.id === active ? 600 : 400,
+                    bgcolor: tab.id === active ? "action.selected" : undefined,
+                    color: tab.id === active ? "text.primary" : "text.secondary",
+                    fontWeight: tab.id === active ? 600 : 400,
                   }}
                 >
-                  <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 14 }}>
-                    {tabTitle(t.at)}
+                  <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 15 }}>
+                    {tabTitle(tab.at)}
                   </Box>
                   <IconButton
                     size="small"
-                    aria-label={`Đóng tab ${tabTitle(t.at)}`}
-                    title="Đóng tab (Ctrl+W)"
+                    aria-label={t("app.tab.close", { title: tabTitle(tab.at) })}
+                    title={t("app.tab.closeTip")}
                     onClick={(e) => {
                       e.stopPropagation();
-                      close(t.id);
+                      close(tab.id);
                     }}
-                    sx={{ width: 24, height: 24, fontSize: 16 }}
+                    // 28 px to look at, 40 × 40 to hit.
+                    sx={{ width: 28, height: 28, fontSize: 17, "&::after": { content: '""', position: "absolute", inset: -6 } }}
                   >
                     ×
                   </IconButton>
                 </Box>
               ))}
-              <IconButton size="small" aria-label="Tab mới" title="Tab mới (Ctrl+T)" onClick={openEmptyTab} sx={{ width: 32, height: 32, mb: 0.375 }}>
+              <IconButton size="small" aria-label={t("tabs.new")} title={t("app.tab.newTip")} onClick={openEmptyTab} sx={{ width: 40, height: 40, mb: 0.125 }}>
                 +
               </IconButton>
               <Box sx={{ flexGrow: 1 }} />
               <Button size="small" aria-haspopup="menu" onClick={(e) => setRecentMenu(e.currentTarget)} sx={{ mb: 0.5 }}>
-                Gần đây
+                {t("app.recent")}
               </Button>
-              <Menu anchorEl={recentMenu} open={recentMenu !== null} onClose={() => setRecentMenu(null)} slotProps={{ list: { "aria-label": "Vị trí mở gần đây (mở thành tab)" } }}>
-                {known.length === 0 && <MenuItem disabled>Chưa có vị trí nào.</MenuItem>}
+              <Menu anchorEl={recentMenu} open={recentMenu !== null} onClose={() => setRecentMenu(null)} slotProps={{ list: { "aria-label": t("app.recent.list") } }}>
+                {known.length === 0 && <MenuItem disabled>{t("app.recent.none")}</MenuItem>}
                 {known.map((place) => (
                   <MenuItem key={JSON.stringify(place)} onClick={() => goTo(place)}>
                     {placeLabel(place, profiles ?? [])}
@@ -224,18 +248,18 @@ export default function App() {
             </Stack>
             <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
               {profiles &&
-                tabs.map((t) => {
-                  const shown = browsing && t.id === active;
+                tabs.map((tab) => {
+                  const shown = browsing && tab.id === active;
                   return (
                     // Hidden, not unmounted and not display:none: the tab keeps its state and its scroll position.
-                    <Box key={t.id} role="tabpanel" aria-hidden={!shown} sx={{ position: "absolute", inset: 0, overflow: "auto", visibility: shown ? "visible" : "hidden" }}>
+                    <Box key={tab.id} role="tabpanel" aria-hidden={!shown} sx={{ position: "absolute", inset: 0, overflow: "auto", visibility: shown ? "visible" : "hidden" }}>
                       <Container maxWidth="xl" sx={{ py: 3, px: "40px !important" }}>
                         <Browse
                           profiles={profiles}
-                          start={t.start}
+                          start={tab.start}
                           active={shown}
                           startTransfer={transfers.start}
-                          onPlace={(at) => setTabs((old) => old.map((tab) => (tab.id === t.id ? { ...tab, at } : tab)))}
+                          onPlace={(at) => setTabs((old) => old.map((other) => (other.id === tab.id ? { ...other, at } : other)))}
                           remember={remember}
                           recents={known}
                           onRecent={goTo}
@@ -250,7 +274,7 @@ export default function App() {
             <Box sx={{ position: "absolute", inset: 0, overflow: "auto" }}>
               <Container maxWidth="lg" sx={{ py: 4, px: "40px !important" }}>
                 <ErrorAlert error={error} />
-                <Connections profiles={profiles ?? []} onChanged={reload} />
+                <Connections profiles={profiles ?? []} onChanged={reload} scale={scale} onScale={zoomTo} />
               </Container>
             </Box>
           )}
@@ -270,15 +294,15 @@ export default function App() {
           action={
             updateToast === "new" && (
               <Button color="inherit" size="small" onClick={openRelease}>
-                Mở trang tải về
+                {t("app.update.open")}
               </Button>
             )
           }
           sx={{ wordBreak: "break-all" }}
         >
           {updateToast === "no-browser"
-            ? `Không mở được trình duyệt. Trang tải về: ${update?.url}`
-            : `Có bản mới ${update?.tag} (đang dùng ${update?.current}).`}
+            ? t("app.update.noBrowser", { url: update?.url ?? "" })
+            : t("app.update.toast", { tag: update?.tag ?? "", current: update?.current ?? "" })}
         </Alert>
       </Snackbar>
     </ThemeProvider>

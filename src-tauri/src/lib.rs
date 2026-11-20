@@ -26,7 +26,9 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
-// Errors cross the IPC boundary as display strings; the UI shows them verbatim.
+// Errors cross the IPC boundary as English display strings with a stable beginning (an RGW or
+// S3 error code, or a fixed phrase). The UI turns that into a sentence in its language
+// (src/errors.ts) and keeps this text as the technical detail.
 
 pub(crate) struct AppState {
     pub(crate) profiles: ProfileStore,
@@ -161,6 +163,40 @@ fn network_set(state: St<'_>, proxy: Proxy) -> Cmd<'_, Proxy> {
     let saved = state.settings.change(|s| s.proxy = proxy)?;
     state.forget_sessions();
     Ok(saved.proxy)
+}
+
+/// Size of the interface in percent (one of `settings::UI_SCALES`).
+#[tauri::command(async)]
+fn get_ui_scale(state: St<'_>) -> Cmd<'_, u16> {
+    Ok(state.settings.get()?.scale())
+}
+
+/// Shows the window at the size, snapped to the nearest step, and saves it; returns the step.
+#[tauri::command(async)]
+fn set_ui_scale(window: tauri::WebviewWindow, state: St<'_>, percent: u16) -> Cmd<'_, u16> {
+    let step = settings::nearest_scale(percent)?;
+    apply_ui_scale(&window, step)?;
+    Ok(state.settings.change(|s| s.ui_scale = step)?.ui_scale)
+}
+
+/// Language of the UI chosen by the user: "en", "vi", or "" while it follows the system's.
+#[tauri::command(async)]
+fn get_lang(state: St<'_>) -> Cmd<'_, String> {
+    Ok(state.settings.get()?.lang())
+}
+
+#[tauri::command(async)]
+fn set_lang(state: St<'_>, lang: String) -> Cmd<'_, String> {
+    let lang = settings::valid_lang(&lang)?;
+    Ok(state.settings.change(|s| s.lang = lang)?.lang)
+}
+
+/// The one zoom mechanism: the webview's own zoom level, the same thing a browser's Ctrl+= changes.
+/// Page, dialogs, menus and tooltips scale together, and the viewport shrinks in CSS pixels.
+fn apply_ui_scale(window: &tauri::WebviewWindow, percent: u16) -> Result<(), String> {
+    window
+        .set_zoom(f64::from(percent) / 100.0)
+        .map_err(|e| e.to_string())
 }
 
 /// The release to tell the user about, if the latest one is not this build. Never an error.
@@ -567,6 +603,11 @@ pub fn run() {
                 browse: browse::Sessions::default(),
                 transfers: browse::Transfers::default(),
             });
+            // Before the first paint: the window never shows at another size than the saved one.
+            if let Some(window) = app.get_webview_window("main") {
+                let saved = app.state::<AppState>().settings.get();
+                let _ = apply_ui_scale(&window, saved.map(|s| s.scale()).unwrap_or(100));
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -578,6 +619,10 @@ pub fn run() {
             profile_set_proxy,
             network_get,
             network_set,
+            get_ui_scale,
+            set_ui_scale,
+            get_lang,
+            set_lang,
             endpoint_kind,
             test_s3,
             update_check,

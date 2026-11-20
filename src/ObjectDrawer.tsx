@@ -1,8 +1,9 @@
 import { type ComponentType, useEffect, useState } from "react";
 import { Alert, Box, Button, Divider, Drawer, Stack, Tab, Tabs, TextField, Typography } from "@mui/material";
 import { AclTab } from "./AclEditor";
-import { invoke, keyOwner, type ObjectEntry } from "./api";
+import { invoke, type ObjectEntry } from "./api";
 import { formatBytes, TZ, vnTime } from "./format";
+import { t, type Key } from "./i18n";
 import { HeadersTab, TagsTab, type Inspected } from "./InspectTabs";
 import PreviewTab from "./preview/Preview";
 import { MAX_PRESIGN_SECS, presignSeconds, type PresignUnit } from "./presign";
@@ -18,14 +19,9 @@ export type Versioning = { supported: boolean; status: string; reason: string | 
 export const canUndelete = (v: Versioning) => v.supported && v.status === "Enabled";
 /** Why a delete in this bucket is final; shown in red before the delete is confirmed. */
 export const finalDeleteWarning = (v: Versioning) =>
-  `${
-    !v.supported
-      ? "Không đọc được trạng thái versioning của bucket"
-      : v.status === "Suspended"
-        ? "Versioning của bucket đang tạm dừng"
-        : "Bucket chưa bật versioning"
-  }: object bị xoá là mất vĩnh viễn, KHÔNG THỂ HOÀN TÁC.`;
-export const UNDELETE_HINT = "Bucket đang bật versioning: object chỉ bị đánh dấu xoá, khôi phục được từ tab Phiên bản.";
+  t(!v.supported ? "object.finalUnknown" : v.status === "Suspended" ? "object.finalSuspended" : "object.finalOff");
+/** Shown instead of the warning when the delete can be undone. */
+export const undeleteHint = () => t("object.undeleteHint");
 export type ObjectTabProps = {
   at: ObjectAt;
   object: ObjectEntry;
@@ -43,12 +39,12 @@ const fileName = (key: string) => key.slice(key.lastIndexOf("/") + 1);
 /** Asks where to save, then downloads there with progress (resuming an interrupted attempt). */
 export async function download(at: ObjectAt, startTransfer: StartTransfer) {
   const suggested = at.version ? `${at.version.slice(0, 8)}-${fileName(at.key)}` : fileName(at.key);
-  const dest = await invoke<string | null>("browse_pick_save", { name: suggested });
+  const dest = await invoke<string | null>("browse_pick_save", { name: suggested, title: t("object.saveTitle") });
   if (!dest) return;
   await startTransfer(
     `↓ ${at.bucket}/${at.key}`,
     (transferId) => invoke<{ path: string; resumed_from: number }>("browse_download", { at, dest, transferId }),
-    (r) => `Đã lưu vào ${r.path}${r.resumed_from > 0 ? ` (tải tiếp từ ${formatBytes(r.resumed_from)} đã có)` : ""}`,
+    (r) => (r.resumed_from > 0 ? t("object.savedResumed", { path: r.path, from: formatBytes(r.resumed_from) }) : t("object.saved", { path: r.path })),
   );
 }
 
@@ -68,13 +64,14 @@ function DetailsTab({ at, object, startTransfer, versioning, onDeleted, onClose 
   const [unit, setUnit] = useState<PresignUnit>("m");
   const [url, setUrl] = useState("");
   const [confirming, setConfirming] = useState(false);
-  const [contentType, setContentType] = useState("…");
+  // undefined while the HEAD is under way, null when it failed, "" when the object has none.
+  const [contentType, setContentType] = useState<string | null>();
   const { busy, error, run, setError } = useAction();
   useEffect(() => {
     // The listing does not carry the content type; a HEAD does.
     invoke<Inspected>("browse_inspect", { at }).then(
-      (i) => setContentType(i.head.content_type || "(không có)"),
-      () => setContentType("(không đọc được)"),
+      (i) => setContentType(i.head.content_type),
+      () => setContentType(null),
     );
   }, []);
 
@@ -95,16 +92,16 @@ function DetailsTab({ at, object, startTransfer, versioning, onDeleted, onClose 
   return (
     <Stack spacing={3}>
       <Stack spacing={1}>
-        {row("Key", object.key)}
-        {row("Kích thước", `${formatBytes(object.size)} (${object.size} byte)`)}
-        {row(`Sửa lần cuối (${TZ})`, vnTime(object.last_modified, true))}
-        {row("ETag", object.etag)}
-        {row("Content-Type", contentType)}
-        {object.storage_class && row("Storage class", object.storage_class)}
-        {object.owner && row("Chủ sở hữu", object.owner)}
+        {row(t("object.key"), object.key)}
+        {row(t("object.size"), t("object.sizeValue", { size: formatBytes(object.size), bytes: object.size }))}
+        {row(t("object.modified", { tz: TZ }), vnTime(object.last_modified, true))}
+        {row(t("object.etag"), object.etag)}
+        {row(t("object.contentType"), contentType === undefined ? "…" : contentType === null ? t("object.contentTypeUnreadable") : contentType || t("object.contentTypeNone"))}
+        {object.storage_class && row(t("object.storageClass"), object.storage_class)}
+        {object.owner && row(t("object.owner"), object.owner)}
         <Box>
           <Button variant="contained" onClick={() => download(at, startTransfer)}>
-            Tải xuống
+            {t("common.download")}
           </Button>
         </Box>
       </Stack>
@@ -112,49 +109,49 @@ function DetailsTab({ at, object, startTransfer, versioning, onDeleted, onClose 
 
       <Stack spacing={1}>
         <Typography variant="subtitle1" component="h3">
-          Presigned URL
+          {t("object.presignedUrl")}
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Ai có URL này đều tải được object cho đến khi hết hạn, không cần key. URL ký bằng key của {keyOwner(at.uid)}.
+          {at.uid ? t("object.presignHintUser", { uid: at.uid }) : t("object.presignHintMine")}
         </Typography>
         <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
           <TextField
-            label="Hết hạn sau"
+            label={t("object.expiresIn")}
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             size="small"
             sx={{ width: 140 }}
             error={seconds === null}
-            helperText={seconds === null ? "Từ 1 giây đến 7 ngày" : `${seconds} giây`}
+            helperText={seconds === null ? t("object.expiryRange") : t("object.seconds", { n: seconds })}
             slotProps={{ htmlInput: { inputMode: "numeric" } }}
           />
           <TextField
             select
-            label="Đơn vị"
+            label={t("object.unit")}
             value={unit}
             onChange={(e) => setUnit(e.target.value as PresignUnit)}
             size="small"
             sx={{ width: 120 }}
             slotProps={{ select: { native: true } }}
           >
-            <option value="s">giây</option>
-            <option value="m">phút</option>
-            <option value="h">giờ</option>
+            <option value="s">{t("object.unitS")}</option>
+            <option value="m">{t("object.unitM")}</option>
+            <option value="h">{t("object.unitH")}</option>
           </TextField>
           <Button variant="outlined" onClick={presign} disabled={busy || seconds === null || seconds > MAX_PRESIGN_SECS}>
-            Tạo URL
+            {t("object.createUrl")}
           </Button>
         </Stack>
         {url && (
           <Stack direction="row" spacing={1}>
             <TextField
-              label="Presigned URL"
+              label={t("object.presignedUrl")}
               value={url}
               size="small"
               fullWidth
-              slotProps={{ input: { readOnly: true, sx: { fontFamily: "monospace", fontSize: 12 } } }}
+              slotProps={{ input: { readOnly: true, sx: { fontFamily: "monospace", fontSize: 13 } } }}
             />
-            <CopyButton value={url} label="Copy presigned URL" />
+            <CopyButton value={url} label={t("object.copyUrl")} />
           </Stack>
         )}
       </Stack>
@@ -162,15 +159,15 @@ function DetailsTab({ at, object, startTransfer, versioning, onDeleted, onClose 
 
       <Box>
         <Button color="error" variant="outlined" onClick={() => setConfirming(true)}>
-          Xoá object
+          {t("object.delete")}
         </Button>
       </Box>
       {!confirming && <ErrorAlert error={error} />}
       <ConfirmDialog
         open={confirming}
-        title="Xoá object?"
-        text={`Xoá ${at.bucket}/${at.key}.`}
-        confirmLabel="Xoá object"
+        title={t("object.deleteTitle")}
+        text={t("object.deleteText", { path: `${at.bucket}/${at.key}` })}
+        confirmLabel={t("object.delete")}
         busy={busy}
         error={error}
         onConfirm={remove}
@@ -179,19 +176,19 @@ function DetailsTab({ at, object, startTransfer, versioning, onDeleted, onClose 
           setError(null);
         }}
       >
-        {canUndelete(versioning) ? <Alert severity="info">{UNDELETE_HINT}</Alert> : <Alert severity="error">{finalDeleteWarning(versioning)}</Alert>}
+        {canUndelete(versioning) ? <Alert severity="info">{undeleteHint()}</Alert> : <Alert severity="error">{finalDeleteWarning(versioning)}</Alert>}
       </ConfirmDialog>
     </Stack>
   );
 }
 
-const allTabs: { label: string; Panel: ComponentType<ObjectTabProps> }[] = [
-  { label: "Xem trước", Panel: PreviewTab },
-  { label: "Thuộc tính", Panel: DetailsTab },
-  { label: "Header", Panel: HeadersTab },
-  { label: "Tag", Panel: TagsTab },
-  { label: "Phiên bản", Panel: VersionsTab },
-  { label: "ACL", Panel: AclTab },
+const allTabs: { id: string; label: Key; Panel: ComponentType<ObjectTabProps> }[] = [
+  { id: "preview", label: "object.tab.preview", Panel: PreviewTab },
+  { id: "details", label: "object.tab.details", Panel: DetailsTab },
+  { id: "headers", label: "object.tab.headers", Panel: HeadersTab },
+  { id: "tags", label: "object.tab.tags", Panel: TagsTab },
+  { id: "versions", label: "object.tab.versions", Panel: VersionsTab },
+  { id: "acl", label: "object.tab.acl", Panel: AclTab },
 ];
 
 type Props = Omit<ObjectTabProps, "at" | "object"> & {
@@ -199,7 +196,7 @@ type Props = Omit<ObjectTabProps, "at" | "object"> & {
   uid: string;
   bucket: string;
   object: ObjectEntry | null;
-  /** Label of the tab to open on (the context menu's "ACL" and "Phiên bản"); the first tab otherwise. */
+  /** Id of the tab to open on (the context menu asks for "acl" and "versions"; the tab's label on screen works too); the first tab otherwise. */
   startTab?: string;
 };
 
@@ -207,8 +204,8 @@ type Props = Omit<ObjectTabProps, "at" | "object"> & {
 export default function ObjectDrawer({ clusterId, uid, bucket, object, startTab, ...rest }: Props) {
   const [tab, setTab] = useState(0);
   // A deleted key has nothing but its versions; without versioning there is no such tab.
-  const tabs = allTabs.filter((t) => (object?.deleted ? t.Panel === VersionsTab : rest.versioning.supported || t.Panel !== VersionsTab));
-  useEffect(() => setTab(Math.max(0, tabs.findIndex((t) => t.label === startTab))), [object?.key, startTab]);
+  const tabs = allTabs.filter((entry) => (object?.deleted ? entry.Panel === VersionsTab : rest.versioning.supported || entry.Panel !== VersionsTab));
+  useEffect(() => setTab(Math.max(0, tabs.findIndex((entry) => entry.id === startTab))), [object?.key, startTab]);
   const Panel = (tabs[tab] ?? tabs[0]).Panel;
   return (
     <Drawer
@@ -223,15 +220,15 @@ export default function ObjectDrawer({ clusterId, uid, bucket, object, startTab,
     >
       {object && (
         <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
-          <Box sx={{ position: "relative", px: 3.5, pt: 2.5, pb: 2, borderBottom: 1, borderColor: "divider" }}>
+          <Box sx={{ position: "relative", px: 4, pt: 3, pb: 2.5, borderBottom: 1, borderColor: "divider" }}>
             <Typography variant="overline" color="primary" component="p">
-              Object · {bucket}
+              {t("object.eyebrow", { bucket })}
             </Typography>
-            <Typography variant="h4" component="h2" sx={{ pr: 10, fontSize: 28, wordBreak: "break-all" }}>
+            <Typography variant="h4" component="h2" sx={{ pr: 10, fontSize: 29, wordBreak: "break-all" }}>
               {fileName(object.key)}
             </Typography>
-            <Button onClick={rest.onClose} sx={{ position: "absolute", top: 18, right: 18 }}>
-              Đóng
+            <Button onClick={rest.onClose} sx={{ position: "absolute", top: 22, right: 22 }}>
+              {t("common.close")}
             </Button>
           </Box>
           <Box sx={{ display: "flex", flexGrow: 1, minHeight: 0 }}>
@@ -239,15 +236,15 @@ export default function ObjectDrawer({ clusterId, uid, bucket, object, startTab,
               orientation="vertical"
               value={tab}
               onChange={(_, value) => setTab(value)}
-              aria-label="Chi tiết object"
+              aria-label={t("object.tabsLabel")}
               textColor="inherit"
-              sx={{ flexShrink: 0, width: 148, pt: 1, borderRight: 1, borderColor: "divider", "& .MuiTab-root": { alignItems: "flex-start", pl: 3.5 } }}
+              sx={{ flexShrink: 0, width: 156, pt: 1, borderRight: 1, borderColor: "divider", "& .MuiTab-root": { alignItems: "flex-start", pl: 4 } }}
             >
-              {tabs.map((t, i) => (
-                <Tab key={t.label} value={i} label={t.label} />
+              {tabs.map((entry, i) => (
+                <Tab key={entry.id} value={i} label={t(entry.label)} />
               ))}
             </Tabs>
-            <Box sx={{ flexGrow: 1, minWidth: 0, overflow: "auto", p: 3 }}>
+            <Box sx={{ flexGrow: 1, minWidth: 0, overflow: "auto", p: 3.5 }}>
               <Panel key={object.key + tab} at={{ clusterId, uid, bucket, key: object.key }} object={object} {...rest} />
             </Box>
           </Box>

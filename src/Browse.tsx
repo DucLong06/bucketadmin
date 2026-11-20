@@ -22,19 +22,21 @@ import {
   Stack,
   TextField,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
-import { invoke, keyOwner, maskKey, type BrowseBucket, type Listing, type Marker, type ObjectEntry, type Profile } from "./api";
+import { invoke, maskKey, type BrowseBucket, type Listing, type Marker, type ObjectEntry, type Profile } from "./api";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { formatBytes, TZ, vnTime } from "./format";
 import AclEditor from "./AclEditor";
 import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import { accessLevel, type Access } from "./caps";
 import MyInfo from "./MyInfo";
-import ObjectDrawer, { canUndelete, download, finalDeleteWarning, UNDELETE_HINT, type Versioning } from "./ObjectDrawer";
+import ObjectDrawer, { canUndelete, download, finalDeleteWarning, undeleteHint, type Versioning } from "./ObjectDrawer";
 import { placeLabel, type Place } from "./tabs";
 import { eyebrow, tokens } from "./theme";
 import type { StartTransfer } from "./transfers";
 import { explain } from "./errors";
+import { t, type Key } from "./i18n";
 import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
 
@@ -58,19 +60,15 @@ const RECENT_IN_SIDEBAR = 6;
 type Session = { uid: string; access_key: string; buckets: BrowseBucket[] };
 type Row = { folder: string } | { object: ObjectEntry };
 type DeleteReport = { objects: number; deleted: number; failed: { key: string; error: string }[]; markers: Marker[] };
-/** `undo`: delete markers a "Hoàn tác" button in the toast removes again. */
+/** `undo`: delete markers the toast's undo button removes again. */
 type Notice = { severity: "success" | "error" | "info"; text: string; undo?: Marker[] };
 type Deleted = { prefixes: string[]; objects: ObjectEntry[]; truncated: boolean };
-const VERSIONING_LABEL: Record<string, string> = { Enabled: "Bật", Suspended: "Tạm dừng", "": "Chưa bật" };
+const VERSIONING_LABEL: Record<string, Key> = { Enabled: "browse.versioning.on", Suspended: "browse.versioning.suspended", "": "browse.versioning.off" };
 type Found = { matches: ObjectEntry[]; scanned: number; stopped: "done" | "results" | "time" };
 // Limits of one search; the backend enforces its own caps on top.
 const SEARCH_RESULTS = 500;
 const SEARCH_SECONDS = 20;
-const STOPPED: Record<Found["stopped"], string> = {
-  done: "đã quét hết",
-  results: `dừng vì đủ ${SEARCH_RESULTS} kết quả`,
-  time: `dừng vì hết ${SEARCH_SECONDS} giây`,
-};
+const FOUND: Record<Found["stopped"], Key> = { done: "browse.found.done", results: "browse.found.results", time: "browse.found.time" };
 // Expiry of a URL made by the Copy URL button (the Properties tab offers other expiries).
 const COPY_URL_SECS = 900;
 const NO_VERSIONING: Versioning = { supported: false, status: "", reason: null };
@@ -97,6 +95,8 @@ const baseName = (key: string, prefix: string) => key.slice(prefix.length);
 
 export default function Browse({ profiles, start, active, startTransfer, onPlace, remember, recents, onRecent }: Props) {
   const [clusterId, setClusterId] = useState(start.clusterId);
+  // Wide enough for every column of the object list (CSS px: the zoom setting narrows the page).
+  const roomy = useMediaQuery("(min-width:1150px)");
   useEffect(() => {
     // The tab's connection was removed (or there was none yet): fall back to the first one.
     if (!profiles.some((p) => p.id === clusterId)) setClusterId(profiles[0]?.id ?? "");
@@ -104,7 +104,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   // Where to go once the first session is open; used up by that.
   const first = useRef<Place | null>(start);
   // What this connection's key may read on the Admin API, asked once per connection. It only
-  // decides two extras: the "Thông tin của tôi" box, and browsing with another user's key.
+  // decides two extras: the "my info" box, and browsing with another user's key.
   const [access, setAccess] = useState<Access | null>(null);
   useEffect(() => {
     setAccess(null);
@@ -130,7 +130,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const request = useRef(0);
   const opening = useRef(0);
   const [selected, setSelected] = useState<ObjectEntry | null>(null);
-  // The tab the object sheet opens on, when the context menu asked for one.
+  // The tab (its id in ObjectDrawer) the object sheet opens on, when the context menu asked for one.
   const [startTab, setStartTab] = useState<string | undefined>();
   const openObject = (object: ObjectEntry, tab?: string) => {
     setStartTab(tab);
@@ -149,7 +149,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [plan, setPlan] = useState<{ objects: number; keys: string[]; prefixes: string[] } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
-  // Deleted but restorable keys of the open folder, while "Hiện object đã xoá" is on.
+  // Deleted but restorable keys of the open folder, while "show deleted objects" is on.
   const [showDeleted, setShowDeleted] = useState(false);
   const [gone, setGone] = useState<Deleted | null>(null);
   // The versioning state the user asked to switch to, while its confirmation is open.
@@ -170,7 +170,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
     const url = await run(() => invoke<string>("browse_presign", { at, expiresSecs: COPY_URL_SECS }));
     if (!url) return;
     await copyText(url);
-    setNotice({ severity: "success", text: `Đã copy presigned URL của ${key}. URL hết hạn sau ${COPY_URL_SECS / 60} phút; ai có URL đều tải được object.` });
+    setNotice({ severity: "success", text: t("browse.urlCopied", { key, minutes: COPY_URL_SECS / 60 }) });
   }
 
   // First a dry run: the confirmation states how many objects the selection really stands for.
@@ -193,7 +193,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
       first
         ? {
             severity: "error",
-            text: `Đã xoá ${report.deleted}/${report.objects} object; ${report.failed.length} object không xoá được. Lỗi đầu tiên (${first.key}): ${explain(first.error).message}`,
+            text: t("browse.deletedSome", { deleted: report.deleted, objects: report.objects, failed: report.failed.length, key: first.key, error: explain(first.error).message }),
             undo,
           }
         : deletedNotice(report.deleted, undo),
@@ -202,8 +202,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   }
   const deletedNotice = (count: number, undo?: Marker[]): Notice =>
     undo
-      ? { severity: "success", text: `Đã đánh dấu xoá ${count} object — khôi phục được từ tab Phiên bản.`, undo }
-      : { severity: "success", text: `Đã xoá ${count} object.` };
+      ? { severity: "success", text: t("browse.deletedMarked", { n: count }), undo }
+      : { severity: "success", text: t("browse.deletedFinal", { n: count }) };
   // Removing the delete markers a delete just left makes the objects current again.
   async function undoDelete(markers: Marker[]) {
     if (!session) return;
@@ -214,8 +214,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
     const first = report.failed[0];
     setNotice(
       first
-        ? { severity: "error", text: `Khôi phục được ${report.deleted}/${report.objects} object. Lỗi đầu tiên (${first.key}): ${explain(first.error).message}` }
-        : { severity: "success", text: `Đã khôi phục ${report.deleted} object.` },
+        ? { severity: "error", text: t("browse.restoredSome", { restored: report.deleted, objects: report.objects, key: first.key, error: explain(first.error).message }) }
+        : { severity: "success", text: t("browse.restored", { n: report.deleted }) },
     );
     load(bucket, prefix, null);
   }
@@ -354,7 +354,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   // A folder made by an S3 tool has a zero-byte marker object named like the folder itself: not content.
   const objects = (listing?.objects ?? []).filter((o) => o.key !== prefix);
   // Search results replace the folder view until they are closed; keys stay relative to the open folder.
-  // With "Hiện object đã xoá": deleted keys, and folders that hold nothing but deleted keys.
+  // With "show deleted objects": deleted keys, and folders that hold nothing but deleted keys.
   const goneFolders = (gone?.prefixes ?? []).filter((p) => !listing?.prefixes.includes(p));
   const goneObjects = (gone?.objects ?? []).map((o) => ({ ...o, deleted: true }));
   const rows: Row[] = found
@@ -376,7 +376,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
           checked={allPicked}
           indeterminate={picked.size > 0 && !allPicked}
           onChange={(e) => setPicked(e.target.checked ? new Set(tickable.map(rowId)) : new Set())}
-          slotProps={{ input: { "aria-label": "Chọn tất cả các dòng đang hiện" } }}
+          slotProps={{ input: { "aria-label": t("browse.selectAll") } }}
         />
       ),
       width: "28px",
@@ -387,16 +387,16 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
             sx={{ p: 0 }}
             checked={picked.has(rowId(r))}
             onChange={() => toggle(rowId(r))}
-            slotProps={{ input: { "aria-label": `Chọn ${nameOf(r)}` } }}
+            slotProps={{ input: { "aria-label": t("browse.selectRow", { name: nameOf(r) }) } }}
           />
         ),
     },
     {
-      header: th("Tên"),
-      width: "minmax(240px, 4fr)",
+      header: th(t("browse.col.name")),
+      width: "minmax(160px, 4fr)",
       cell: (r) =>
         "folder" in r ? (
-          <Link component="button" onClick={() => load(bucket, r.folder, null)} aria-label={`Mở thư mục ${r.folder}`} sx={{ fontFamily: tokens.mono, fontSize: 14 }}>
+          <Link component="button" onClick={() => load(bucket, r.folder, null)} aria-label={t("browse.openFolder", { folder: r.folder })} sx={{ fontFamily: tokens.mono, fontSize: 15 }}>
             {baseName(r.folder, prefix)}
           </Link>
         ) : (
@@ -404,23 +404,24 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
             component="button"
             color="inherit"
             underline="hover"
-            sx={{ fontFamily: tokens.mono, fontSize: 14 }}
+            sx={{ fontFamily: tokens.mono, fontSize: 15 }}
             onClick={() => {
               openObject(r.object);
               // Reached through a search: the folder it lies in is worth finding again.
               if (found && session) remember({ clusterId, uid: session.uid, bucket, prefix: r.object.key.slice(0, r.object.key.lastIndexOf("/") + 1) });
             }}
-            aria-label={`Mở object ${r.object.key}`}
+            aria-label={t("browse.openObject", { key: r.object.key })}
           >
             {baseName(r.object.key, prefix)}
-            {r.object.deleted && <Chip size="small" color="warning" variant="outlined" label="Đã xoá" sx={{ ml: 1 }} />}
+            {r.object.deleted && <Chip size="small" color="warning" variant="outlined" label={t("browse.deletedChip")} sx={{ ml: 1 }} />}
           </Link>
         ),
     },
-    { header: th("Kích thước"), width: "110px", align: "right", cell: (r) => ("object" in r && !r.object.deleted ? formatBytes(r.object.size) : "—") },
-    { header: th(`Sửa lần cuối (${TZ})`), width: "190px", cell: (r) => ("object" in r ? vnTime(r.object.last_modified) : "") },
-    // The owner is in the object's Thuộc tính; the concept's table stops at the storage class.
-    { header: th("Storage class"), width: "140px", cell: (r) => ("object" in r ? r.object.storage_class : "") },
+    { header: th(t("browse.col.size")), width: "110px", align: "right", cell: (r) => ("object" in r && !r.object.deleted ? formatBytes(r.object.size) : "—") },
+    { header: th(t("browse.col.modified", { tz: TZ })), width: "190px", cell: (r) => ("object" in r ? vnTime(r.object.last_modified) : "") },
+    // The owner is in the object's properties; the concept's table stops at the storage class.
+    // A narrow page (a 1100 px window, or 125 % zoom) drops that column rather than scroll sideways; the properties keep it.
+    ...(roomy ? [{ header: th(t("browse.col.storageClass")), width: "140px", cell: (r: Row) => ("object" in r ? r.object.storage_class : "") }] : []),
   ];
 
   // Breadcrumb: bucket, then one link per folder level of the prefix.
@@ -433,7 +434,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   }
 
   if (profiles.length === 0) {
-    return <Alert severity="info">Chưa có kết nối nào. Hãy thêm một kết nối ở mục Kết nối trước.</Alert>;
+    return <Alert severity="info">{t("browse.noConnection")}</Alert>;
   }
   const label = profiles.find((p) => p.id === clusterId)?.label ?? "";
   const card = { borderRadius: "16px" };
@@ -448,7 +449,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   return (
     <CallerContext.Provider value={access?.uid ?? ""}>
       <Box sx={{ display: "grid", gridTemplateColumns: "264px minmax(0, 1fr)", gap: 3, alignItems: "start" }}>
-        <Stack component="aside" spacing={2} aria-label="Kết nối, bucket và vị trí gần đây">
+        <Stack component="aside" spacing={2} aria-label={t("browse.sidebar")}>
           <ClusterSelect profiles={profiles} value={clusterId} onChange={setClusterId} />
           {canBrowseAs && (
             <Stack
@@ -461,19 +462,19 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                 open(uidInput.trim());
               }}
             >
-              <TextField label="Duyệt thay user (uid)" value={uidInput} onChange={(e) => setUidInput(e.target.value)} size="small" fullWidth />
+              <TextField label={t("browse.browseAs")} value={uidInput} onChange={(e) => setUidInput(e.target.value)} size="small" fullWidth />
               <Button type="submit" variant="outlined" disabled={busy || !uidInput.trim()}>
-                Mở
+                {t("common.open")}
               </Button>
             </Stack>
           )}
           {session && (
             <Typography variant="body2" color="text.secondary">
-              Đang dùng key{" "}
-              <Box component="span" sx={{ fontFamily: tokens.mono, fontSize: 13 }}>
+              {t("browse.usingKey")}{" "}
+              <Box component="span" sx={{ fontFamily: tokens.mono, fontSize: 14 }}>
                 {maskKey(session.access_key)}
               </Box>{" "}
-              {session.uid ? `của user ${session.uid}.` : "của bạn."}
+              {session.uid ? t("browse.usingKeyOfUser", { uid: session.uid }) : t("browse.usingKeyMine")}
               {session.uid && (
                 <Link
                   component="button"
@@ -483,7 +484,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                     open("");
                   }}
                 >
-                  Về key của tôi
+                  {t("browse.backToMyKey")}
                 </Link>
               )}
             </Typography>
@@ -491,35 +492,35 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
           {session && (
             <Paper variant="outlined" sx={card}>
               <Typography component="h2" sx={{ ...eyebrow, color: "text.secondary", px: 2, pt: 2 }}>
-                Bucket của {keyOwner(session.uid)}
+                {session.uid ? t("browse.bucketsOfUser", { uid: session.uid }) : t("browse.bucketsMine")}
               </Typography>
-              <List dense aria-label="Danh sách bucket">
+              <List dense aria-label={t("browse.bucketList")}>
                 {session.buckets.map((b) => (
                   <ListItemButton key={b.name} selected={b.name === bucket} onClick={() => load(b.name, "", null)}>
-                    <ListItemText primary={b.name} slotProps={{ primary: { sx: { fontFamily: tokens.mono, fontSize: 14 } } }} />
+                    <ListItemText primary={b.name} slotProps={{ primary: { sx: { fontFamily: tokens.mono, fontSize: 15 } } }} />
                   </ListItemButton>
                 ))}
               </List>
               {session.buckets.length === 0 && (
                 <Typography variant="body2" color="text.secondary" sx={{ px: 2, pb: 1 }}>
-                  User không sở hữu bucket nào.
+                  {t("browse.noBuckets")}
                 </Typography>
               )}
               <Box sx={{ px: 2, pb: 2 }}>
                 <Button size="small" variant="outlined" fullWidth onClick={() => setCreating("bucket")}>
-                  Tạo bucket
+                  {t("browse.createBucket")}
                 </Button>
               </Box>
               <Stack component="form" onSubmit={openByName} spacing={1} sx={{ p: 2, borderTop: 1, borderColor: "divider" }}>
                 <TextField
-                  label="Mở bucket theo tên"
+                  label={t("browse.openByName")}
                   value={bucketInput}
                   onChange={(e) => setBucketInput(e.target.value)}
                   size="small"
-                  helperText="Cho bucket được chia sẻ, S3 không liệt kê"
+                  helperText={t("browse.openByNameHelp")}
                 />
                 <Button type="submit" size="small" variant="outlined" disabled={!bucketInput.trim()}>
-                  Mở bucket
+                  {t("browse.openBucket")}
                 </Button>
               </Stack>
             </Paper>
@@ -527,12 +528,12 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
           {recents.length > 0 && (
             <Paper variant="outlined" sx={card}>
               <Typography component="h2" sx={{ ...eyebrow, color: "text.secondary", px: 2, pt: 2 }}>
-                Gần đây
+                {t("browse.recent")}
               </Typography>
-              <List dense aria-label="Vị trí mở gần đây">
+              <List dense aria-label={t("browse.recentList")}>
                 {recents.slice(0, RECENT_IN_SIDEBAR).map((place) => (
                   <ListItemButton key={JSON.stringify(place)} onClick={() => onRecent(place)}>
-                    <ListItemText primary={placeLabel(place, profiles)} slotProps={{ primary: { sx: { fontSize: 13, wordBreak: "break-all" } } }} />
+                    <ListItemText primary={placeLabel(place, profiles)} slotProps={{ primary: { sx: { fontSize: 14, wordBreak: "break-all" } } }} />
                   </ListItemButton>
                 ))}
               </List>
@@ -541,22 +542,20 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
         </Stack>
 
         <Stack spacing={2} sx={{ minWidth: 0 }}>
-          {busy && <LinearProgress aria-label="Đang tải" />}
+          {busy && <LinearProgress aria-label={t("browse.loading")} />}
           {plan === null && switching === null && <ErrorAlert error={error} />}
           {session && !bucket && (
             <Box>
               <Typography variant="overline" color="primary" component="p">
-                Browse · {label}
+                {t("browse.eyebrow", { label })}
               </Typography>
               <Typography variant="h4" component="h1">
-                Chọn một bucket
+                {t("browse.chooseBucket")}
               </Typography>
               <Typography color="text.secondary" sx={{ mt: 0.5, mb: 2.5 }}>
-                {session.buckets.length > 0
-                  ? "Các bucket mà key đang dùng sở hữu. Bucket được chia sẻ thì mở theo tên ở cột bên trái."
-                  : "Key đang dùng không sở hữu bucket nào. Tạo bucket mới, hoặc mở theo tên một bucket được chia sẻ, ở cột bên trái."}
+                {t(session.buckets.length > 0 ? "browse.chooseBucketHint" : "browse.chooseBucketNone")}
               </Typography>
-              <Box component="ul" aria-label="Bucket" sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 1.75, listStyle: "none", p: 0, m: 0 }}>
+              <Box component="ul" aria-label={t("browse.bucketCards")} sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 1.75, listStyle: "none", p: 0, m: 0 }}>
                 {session.buckets.map((b) => (
                   <li key={b.name}>
                     <Paper
@@ -565,11 +564,11 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                       onClick={() => load(b.name, "", null)}
                       sx={{ ...card, display: "block", width: "100%", p: "14px 18px", textAlign: "left", color: "inherit", cursor: "pointer", "&:hover": { borderColor: "text.secondary" } }}
                     >
-                      <Box component="strong" sx={{ display: "block", fontFamily: tokens.mono, fontSize: 15 }}>
+                      <Box component="strong" sx={{ display: "block", fontFamily: tokens.mono, fontSize: 16 }}>
                         {b.name}
                       </Box>
                       <Typography variant="body2" color="text.secondary">
-                        {b.created ? `Tạo ${vnTime(b.created).slice(0, 10)}` : "Vừa tạo"}
+                        {b.created ? t("browse.bucketCreated", { date: vnTime(b.created).slice(0, 10) }) : t("browse.bucketJustCreated")}
                       </Typography>
                     </Paper>
                   </li>
@@ -582,9 +581,9 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               <Stack direction="row" sx={{ alignItems: "flex-end", justifyContent: "space-between", gap: 3, flexWrap: "wrap" }}>
                 <Box sx={{ minWidth: 0 }}>
                   <Typography variant="overline" color="primary" component="p">
-                    Browse · {label}
+                    {t("browse.eyebrow", { label })}
                   </Typography>
-                  <Breadcrumbs aria-label="Đường dẫn" separator="/" sx={{ fontFamily: tokens.serif, fontSize: 28, fontWeight: 600, lineHeight: 1.25, "& .MuiBreadcrumbs-separator": { color: "divider" } }}>
+                  <Breadcrumbs aria-label={t("browse.path")} separator="/" sx={{ fontFamily: tokens.serif, fontSize: 29, fontWeight: 600, lineHeight: 1.25, "& .MuiBreadcrumbs-separator": { color: "divider" } }}>
                     <Link component="button" underline="none" color={crumbs.length ? "text.secondary" : "text.primary"} onClick={() => load(bucket, "", null)} sx={{ font: "inherit" }}>
                       {bucket}
                     </Link>
@@ -603,22 +602,22 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                   </Breadcrumbs>
                 </Box>
                 <Stack direction="row" spacing={1}>
-                  <Button variant="contained" onClick={async () => upload(await invoke<string[]>("browse_pick_upload"))}>
-                    Upload
+                  <Button variant="contained" onClick={async () => upload(await invoke<string[]>("browse_pick_upload", { title: t("browse.pickUploadTitle") }))}>
+                    {t("common.upload")}
                   </Button>
                   <Button variant="outlined" onClick={() => setCreating("folder")}>
-                    Tạo thư mục
+                    {t("browse.createFolder")}
                   </Button>
                   <Button
                     variant="outlined"
                     disabled={busy || picked.size !== 1 || pickedOf("o").length !== 1}
                     onClick={() => copyUrl(pickedOf("o")[0])}
-                    title="Chọn đúng một object để copy presigned URL của nó"
+                    title={t("browse.copyUrlHint")}
                   >
-                    Copy URL
+                    {t("browse.copyUrl")}
                   </Button>
                   <Button variant="outlined" color="error" disabled={busy || picked.size === 0} onClick={() => planDelete(pickedOf("o"), pickedOf("f"))}>
-                    Xoá ({picked.size})
+                    {t("browse.deleteCount", { n: picked.size })}
                   </Button>
                 </Stack>
               </Stack>
@@ -628,38 +627,38 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                     <Chip
                       variant="outlined"
                       color={versioning.status === "Enabled" ? "success" : versioning.status === "Suspended" ? "warning" : "default"}
-                      label={`Versioning: ${VERSIONING_LABEL[versioning.status] ?? versioning.status}`}
+                      label={t("browse.versioningChip", { status: VERSIONING_LABEL[versioning.status] ? t(VERSIONING_LABEL[versioning.status]) : versioning.status })}
                     />
                     <Button size="small" disabled={busy} onClick={() => setSwitching(versioning.status !== "Enabled")}>
-                      {versioning.status === "Enabled" ? "Tắt versioning" : "Bật versioning"}
+                      {t(versioning.status === "Enabled" ? "browse.versioningOff" : "browse.versioningOn")}
                     </Button>
                   </>
                 )}
                 <Button size="small" onClick={() => setAclOf("")}>
-                  ACL của bucket
+                  {t("browse.bucketAcl")}
                 </Button>
                 {prefix && (
-                  <Button size="small" onClick={() => setAclOf(prefix)} title="Đặt một ACL cho mọi object trong thư mục đang mở">
-                    ACL thư mục
+                  <Button size="small" onClick={() => setAclOf(prefix)} title={t("browse.folderAclHint")}>
+                    {t("browse.folderAcl")}
                   </Button>
                 )}
                 <Button size="small" onClick={() => load(bucket, prefix, null)} disabled={busy}>
-                  Làm mới
+                  {t("browse.refresh")}
                 </Button>
                 <Box sx={{ flexGrow: 1 }} />
                 <Stack component="form" onSubmit={search} direction="row" spacing={1} sx={{ alignItems: "center" }}>
                   <TextField
-                    label="Tìm trong thư mục này và các thư mục con"
+                    label={t("browse.searchLabel")}
                     placeholder="*.parquet"
                     value={pattern}
                     onChange={(e) => setPattern(e.target.value)}
                     size="small"
                     sx={{ width: 340 }}
-                    title={`* = chuỗi bất kỳ, ? = một ký tự. Mẫu không có / so với tên file, có / so với đường dẫn; một từ thường thì tìm trong cả đường dẫn. Tối đa ${SEARCH_RESULTS} kết quả hoặc ${SEARCH_SECONDS} giây.`}
+                    title={t("browse.searchHint", { results: SEARCH_RESULTS, seconds: SEARCH_SECONDS })}
                     slotProps={{ inputLabel: { shrink: true } }}
                   />
                   <Button type="submit" variant="outlined" disabled={busy || !pattern.trim()}>
-                    Tìm
+                    {t("browse.search")}
                   </Button>
                 </Stack>
               </Stack>
@@ -668,12 +667,11 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                   severity={found.stopped === "done" ? "success" : "warning"}
                   action={
                     <Button color="inherit" size="small" onClick={() => setFound(null)}>
-                      Đóng kết quả
+                      {t("browse.closeResults")}
                     </Button>
                   }
                 >
-                  {found.matches.length} object khớp · đã quét {found.scanned} key · {STOPPED[found.stopped]}
-                  {found.stopped === "done" ? "." : " — có thể còn object khớp chưa được quét tới."}
+                  {t(FOUND[found.stopped], { n: found.matches.length, scanned: found.scanned, results: SEARCH_RESULTS, seconds: SEARCH_SECONDS })}
                 </Alert>
               )}
               <VirtualTable
@@ -681,22 +679,21 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                 rows={rows}
                 height={tableHeight}
                 rowHeight={44}
-                label="Danh sách object"
+                label={t("browse.objectList")}
                 onRowMenu={(row, e) => {
                   e.preventDefault();
                   setMenu({ row, x: e.clientX, y: e.clientY });
                 }}
-                empty={<Typography color="text.secondary">{found ? "Không có object nào khớp." : listing ? "Thư mục trống." : ""}</Typography>}
+                empty={<Typography color="text.secondary">{found ? t("browse.noMatch") : listing ? t("browse.emptyFolder") : ""}</Typography>}
               />
               {listing && !found && (
                 <Stack direction="row" spacing={2} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
                   <Typography variant="body2" color="text.secondary">
-                    {listing.prefixes.length} thư mục, {objects.length} object đã tải
-                    {listing.next_token ? " — còn nữa." : "."} Kéo thả file vào cửa sổ để upload vào thư mục đang mở; chuột phải vào một dòng để mở menu.
+                    {t(listing.next_token ? "browse.loadedMore" : "browse.loaded", { folders: listing.prefixes.length, objects: objects.length })} {t("browse.dropHint")}
                   </Typography>
                   {listing.next_token && (
                     <Button size="small" variant="outlined" disabled={busy} onClick={() => load(bucket, prefix, listing.next_token)}>
-                      Tải thêm
+                      {t("common.loadMore")}
                     </Button>
                   )}
                   {versioning.supported && versioning.status !== "" && (
@@ -708,12 +705,12 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                         if (!showDeleted) loadGone(bucket, prefix, request.current);
                       }}
                     >
-                      {showDeleted ? "Ẩn object đã xoá" : "Hiện object đã xoá"}
+                      {t(showDeleted ? "browse.hideDeleted" : "browse.showDeleted")}
                     </Button>
                   )}
                   {gone && (
                     <Typography variant="body2" color="text.secondary">
-                      {gone.objects.length} object đã xoá còn khôi phục được{gone.truncated ? " (thư mục có quá nhiều version, danh sách chưa đủ)" : ""}.
+                      {t(gone.truncated ? "browse.goneTruncated" : "browse.gone", { n: gone.objects.length })}
                     </Typography>
                   )}
                 </Stack>
@@ -731,42 +728,46 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
         onClose={() => setMenu(null)}
         anchorReference="anchorPosition"
         anchorPosition={menu ? { top: menu.y, left: menu.x } : undefined}
-        slotProps={{ list: { "aria-label": "Thao tác với dòng đã chọn" } }}
+        slotProps={{ list: { "aria-label": t("browse.rowMenu") } }}
       >
         {menuObject && !menuObject.deleted && session && (
-          <MenuItem onClick={pick(() => download({ clusterId, uid: session.uid, bucket, key: menuObject.key }, startTransfer))}>Tải xuống</MenuItem>
+          <MenuItem onClick={pick(() => download({ clusterId, uid: session.uid, bucket, key: menuObject.key }, startTransfer))}>{t("common.download")}</MenuItem>
         )}
-        {menuObject && !menuObject.deleted && <MenuItem onClick={pick(() => copyUrl(menuObject.key))}>Copy URL</MenuItem>}
-        {menuObject && !menuObject.deleted && <MenuItem onClick={pick(() => openObject(menuObject, "ACL"))}>ACL</MenuItem>}
+        {menuObject && !menuObject.deleted && <MenuItem onClick={pick(() => copyUrl(menuObject.key))}>{t("browse.copyUrl")}</MenuItem>}
+        {menuObject && !menuObject.deleted && <MenuItem onClick={pick(() => openObject(menuObject, "acl"))}>{t("browse.acl")}</MenuItem>}
         {menuObject && (
-          <MenuItem disabled={!versioning.supported} onClick={pick(() => openObject(menuObject, "Phiên bản"))}>
-            Phiên bản
+          <MenuItem disabled={!versioning.supported} onClick={pick(() => openObject(menuObject, "versions"))}>
+            {t("browse.versions")}
           </MenuItem>
         )}
         {menuObject && !menuObject.deleted && (
           <MenuItem onClick={pick(() => planDelete([menuObject.key], []))} sx={{ color: "error.main" }}>
-            Xoá
+            {t("common.delete")}
           </MenuItem>
         )}
-        {menuFolder && <MenuItem onClick={pick(() => load(bucket, menuFolder, null))}>Mở</MenuItem>}
-        {menuFolder && <MenuItem onClick={pick(() => setAclOf(menuFolder))}>ACL</MenuItem>}
+        {menuFolder && <MenuItem onClick={pick(() => load(bucket, menuFolder, null))}>{t("common.open")}</MenuItem>}
+        {menuFolder && <MenuItem onClick={pick(() => setAclOf(menuFolder))}>{t("browse.acl")}</MenuItem>}
         {menuFolder && (
           <MenuItem onClick={pick(() => planDelete([], [menuFolder]))} sx={{ color: "error.main" }}>
-            Xoá
+            {t("common.delete")}
           </MenuItem>
         )}
       </Menu>
       <ConfirmDialog
         open={plan !== null}
-        title="Xoá các mục đã chọn?"
+        title={t("browse.deleteTitle")}
         text={
           plan
-            ? `Xoá ${plan.objects} object trong bucket ${bucket}: ${plan.keys.length} object được chọn${
-                plan.prefixes.length ? ` và toàn bộ nội dung của ${plan.prefixes.length} thư mục (${plan.prefixes.join(", ")})` : ""
-              }.`
+            ? t(plan.prefixes.length ? "browse.deletePlanFolders" : "browse.deletePlan", {
+                objects: plan.objects,
+                bucket,
+                keys: plan.keys.length,
+                folders: plan.prefixes.length,
+                list: plan.prefixes.join(", "),
+              })
             : ""
         }
-        confirmLabel={`Xoá ${plan?.objects ?? 0} object`}
+        confirmLabel={t("browse.deleteConfirm", { n: plan?.objects ?? 0 })}
         busy={busy}
         error={error}
         onConfirm={deletePicked}
@@ -775,17 +776,13 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
           setError(null);
         }}
       >
-        {canUndelete(versioning) ? <Alert severity="info">{UNDELETE_HINT}</Alert> : <Alert severity="error">{finalDeleteWarning(versioning)}</Alert>}
+        {canUndelete(versioning) ? <Alert severity="info">{undeleteHint()}</Alert> : <Alert severity="error">{finalDeleteWarning(versioning)}</Alert>}
       </ConfirmDialog>
       <ConfirmDialog
         open={switching !== null}
-        title={switching ? "Bật versioning?" : "Tắt versioning?"}
-        text={
-          switching
-            ? `Bật versioning cho bucket ${bucket}: từ giờ mỗi lần ghi đè hoặc xoá đều giữ lại version cũ, nên khôi phục được (và tốn thêm dung lượng).`
-            : `Tạm dừng versioning của bucket ${bucket}: các version cũ vẫn được giữ, nhưng từ giờ ghi đè và xoá không còn khôi phục được. S3 không có trạng thái "tắt hẳn" sau khi đã bật.`
-        }
-        confirmLabel={switching ? "Bật versioning" : "Tắt versioning"}
+        title={t(switching ? "browse.versioningOnTitle" : "browse.versioningOffTitle")}
+        text={t(switching ? "browse.versioningOnText" : "browse.versioningOffText", { bucket })}
+        confirmLabel={t(switching ? "browse.versioningOn" : "browse.versioningOff")}
         busy={busy}
         error={error}
         onConfirm={switchVersioning}
@@ -803,7 +800,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
           action={
             notice?.undo && (
               <Button color="inherit" size="small" onClick={() => undoDelete(notice.undo ?? [])}>
-                Hoàn tác
+                {t("browse.undo")}
               </Button>
             )
           }
@@ -828,12 +825,12 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
         onCreated={() => load(bucket, prefix, null)}
       />
       <Dialog open={aclOf !== null} onClose={() => setAclOf(null)} maxWidth="md" fullWidth aria-labelledby="bucket-acl-title">
-        <DialogTitle id="bucket-acl-title">{aclOf ? `ACL cho object trong thư mục ${aclOf}` : `ACL của bucket ${bucket}`}</DialogTitle>
+        <DialogTitle id="bucket-acl-title">{aclOf ? t("browse.aclOfFolder", { folder: aclOf }) : t("browse.aclOfBucket", { bucket })}</DialogTitle>
         <DialogContent>
           {aclOf !== null && <AclEditor key={aclOf} at={{ clusterId, uid: session?.uid ?? "", bucket, key: aclOf }} recursive />}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setAclOf(null)}>Đóng</Button>
+          <Button onClick={() => setAclOf(null)}>{t("common.close")}</Button>
         </DialogActions>
       </Dialog>
       <ObjectDrawer

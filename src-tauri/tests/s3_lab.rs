@@ -752,7 +752,7 @@ async fn m4_parquet_ranged_preview() {
     );
     let payload = row["payload"].as_str().unwrap();
     assert!(
-        payload[..2000].bytes().all(|b| b.is_ascii_hexdigit()) && payload.ends_with("(+48 ký tự)"),
+        payload[..2000].bytes().all(|b| b.is_ascii_hexdigit()) && payload.ends_with("… (+48)"),
         "binary cells are shown as hex, cut for display: {}",
         &payload[1990..]
     );

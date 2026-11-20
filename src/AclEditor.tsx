@@ -18,6 +18,7 @@ import {
 } from "@mui/material";
 import { invoke } from "./api";
 import { explain } from "./errors";
+import { t, type Key } from "./i18n";
 import type { ObjectAt, ObjectTabProps } from "./ObjectDrawer";
 import { percent } from "./transfers";
 import { ErrorAlert, useAction } from "./ui";
@@ -28,13 +29,12 @@ type AclReport = { objects: number; applied: number; unverified: number; failed:
 
 export const PERMISSIONS = ["FULL_CONTROL", "READ", "WRITE", "READ_ACP", "WRITE_ACP"];
 const native = { select: { native: true } };
-const PUBLIC = "Mọi người (public)";
 
 /** The three fixed rows of the quick-share table; every other grant is a per-user row below it. */
 export const fixedRows = (ownerId: string): { label: string; kind: Grant["kind"]; grantee: string }[] => [
-  { label: "Chủ sở hữu", kind: "user", grantee: ownerId },
-  { label: "Mọi user đã xác thực (auth)", kind: "group", grantee: "AuthenticatedUsers" },
-  { label: PUBLIC, kind: "group", grantee: "AllUsers" },
+  { label: t("acl.owner"), kind: "user", grantee: ownerId },
+  { label: t("acl.authenticated"), kind: "group", grantee: "AuthenticatedUsers" },
+  { label: t("acl.public"), kind: "group", grantee: "AllUsers" },
 ];
 
 const same = (g: Grant, kind: string, grantee: string, permission: string) =>
@@ -47,10 +47,10 @@ export function toggleGrant(grants: Grant[], kind: Grant["kind"], grantee: strin
 }
 
 export type Preset = "private" | "public-read" | "authenticated-read";
-export const PRESETS: { value: Preset; label: string }[] = [
-  { value: "private", label: "Riêng tư" },
-  { value: "public-read", label: "Công khai đọc (public-read)" },
-  { value: "authenticated-read", label: "User đã xác thực đọc (authenticated-read)" },
+export const PRESETS: { value: Preset; label: Key }[] = [
+  { value: "private", label: "acl.preset.private" },
+  { value: "public-read", label: "acl.preset.publicRead" },
+  { value: "authenticated-read", label: "acl.preset.authenticatedRead" },
 ];
 
 /** The grants S3's canned ACL of that name stands for. */
@@ -68,16 +68,13 @@ export function aclWarnings(ownerId: string, grants: Grant[]): string[] {
   const open = grants.filter((g) => g.kind === "group" && g.grantee === "AllUsers").map((g) => g.permission);
   if (open.length > 0) {
     const writes = open.some((p) => p !== "READ" && p !== "READ_ACP");
-    warnings.push(
-      `Đang cấp ${open.join(", ")} cho "${PUBLIC}": bất kỳ ai trên mạng tới được endpoint đều dùng được quyền này mà không cần key` +
-        (writes ? " — kể cả ghi, xoá hoặc đổi ACL." : "."),
-    );
+    warnings.push(t(writes ? "acl.warn.publicWrite" : "acl.warn.public", { perms: open.join(", "), who: t("acl.public") }));
   }
   if (!grants.some((g) => same(g, "user", ownerId, "FULL_CONTROL"))) {
-    warnings.push(`Owner ${ownerId} không còn FULL_CONTROL trong danh sách.`);
+    warnings.push(t("acl.warn.owner", { owner: ownerId }));
   }
   if (grants.some((g) => g.kind === "user" && !g.grantee.trim())) {
-    warnings.push("Có grant chưa điền uid.");
+    warnings.push(t("acl.warn.noUid"));
   }
   return warnings;
 }
@@ -169,37 +166,37 @@ export default function AclEditor({ at, recursive = false }: { at: ObjectAt; rec
   const inTable = (g: Grant) => rows.some((r) => r.kind === g.kind && r.grantee === g.grantee) && PERMISSIONS.includes(g.permission);
   const dirty = acl !== null && JSON.stringify(acl.grants) !== JSON.stringify(grants);
   const count = keys?.length ?? 0;
-  const where = at.key ? `thư mục ${at.key}` : `bucket ${at.bucket}`;
+  const where = at.key ? t("acl.where.folder", { key: at.key }) : t("acl.where.bucket", { bucket: at.bucket });
   // A folder has nothing but its objects to apply to; a bucket or object can be applied on its own.
   const canApply = !busy && !grants.some((g) => !g.grantee) && (deep ? count > 0 : !folder && dirty);
   const firstFailure = report?.failed[0];
 
   return (
     <Stack spacing={2}>
-      {busy && !progress && <LinearProgress aria-label="Đang tải ACL" />}
+      {busy && !progress && <LinearProgress aria-label={t("acl.loading")} />}
       <ErrorAlert error={error} />
-      {folder && keys?.length === 0 && <Alert severity="info">Thư mục này không có object nào để đặt ACL.</Alert>}
+      {folder && keys?.length === 0 && <Alert severity="info">{t("acl.emptyFolder")}</Alert>}
       {acl && (
         <>
           <Typography variant="body2">
-            Owner: <Box component="span" sx={{ fontWeight: 600 }}>{acl.owner_id}</Box>
+            {t("acl.ownerLabel")} <Box component="span" sx={{ fontWeight: 600 }}>{acl.owner_id}</Box>
             {acl.owner_name && ` (${acl.owner_name})`}
-            {folder && keys && ` · ACL đang hiện là của object đầu tiên trong thư mục (${keys[0]}).`}
+            {folder && keys && ` · ${t("acl.shownFrom", { key: keys[0] })}`}
           </Typography>
           <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
             <Typography variant="body2" color="text.secondary">
-              Đặt nhanh:
+              {t("acl.quickSet")}
             </Typography>
             {PRESETS.map((p) => (
               <Button key={p.value} size="small" variant="outlined" onClick={() => edit(presetGrants(acl.owner_id, p.value))}>
-                {p.label}
+                {t(p.label)}
               </Button>
             ))}
           </Stack>
-          <Table size="small" aria-label="Bảng chia sẻ nhanh">
+          <Table size="small" aria-label={t("acl.table")}>
             <TableHead>
               <TableRow>
-                <TableCell>Đối tượng</TableCell>
+                <TableCell>{t("acl.grantee")}</TableCell>
                 {PERMISSIONS.map((p) => (
                   <TableCell key={p} align="center">
                     {p}
@@ -225,35 +222,35 @@ export default function AclEditor({ at, recursive = false }: { at: ObjectAt; rec
               ))}
             </TableBody>
           </Table>
-          <Stack spacing={1} component="ul" sx={{ listStyle: "none", p: 0, m: 0 }} aria-label="Grant cho từng user">
+          <Stack spacing={1} component="ul" sx={{ listStyle: "none", p: 0, m: 0 }} aria-label={t("acl.perUser")}>
             {grants.map((g, i) =>
               inTable(g) ? null : (
                 <Stack key={i} component="li" direction="row" spacing={1} sx={{ alignItems: "center" }}>
                   <TextField
-                    label={g.kind === "user" ? "uid" : "group"}
+                    label={g.kind === "user" ? t("acl.uid") : t("acl.group")}
                     value={g.grantee}
                     disabled={g.kind !== "user"}
                     onChange={(e) => edit((list) => list.map((old, n) => (n === i ? { ...old, grantee: e.target.value.trim(), display_name: "" } : old)))}
                     size="small"
                     sx={{ flexGrow: 1 }}
                     helperText={g.display_name || undefined}
-                    slotProps={{ htmlInput: { "aria-label": `uid của grant ${i + 1}` } }}
+                    slotProps={{ htmlInput: { "aria-label": t("acl.grantUid", { n: i + 1 }) } }}
                   />
                   <TextField
                     select
-                    label="Quyền"
+                    label={t("acl.permission")}
                     value={g.permission}
                     onChange={(e) => edit((list) => list.map((old, n) => (n === i ? { ...old, permission: e.target.value } : old)))}
                     size="small"
                     sx={{ width: 200 }}
-                    slotProps={{ ...native, htmlInput: { "aria-label": `Quyền của grant ${i + 1}` } }}
+                    slotProps={{ ...native, htmlInput: { "aria-label": t("acl.grantPermission", { n: i + 1 }) } }}
                   >
                     {PERMISSIONS.map((p) => (
                       <option key={p}>{p}</option>
                     ))}
                   </TextField>
-                  <Button size="small" color="error" onClick={() => edit((list) => list.filter((_, n) => n !== i))} aria-label={`Bỏ grant ${i + 1}`}>
-                    Bỏ
+                  <Button size="small" color="error" onClick={() => edit((list) => list.filter((_, n) => n !== i))} aria-label={t("acl.removeGrant", { n: i + 1 })}>
+                    {t("acl.remove")}
                   </Button>
                 </Stack>
               ),
@@ -267,54 +264,51 @@ export default function AclEditor({ at, recursive = false }: { at: ObjectAt; rec
           {recursive && (
             <FormControlLabel
               control={<Checkbox checked={deep} disabled={busy} onChange={(e) => setRecursive(e.target.checked)} />}
-              label={
-                deep && keys
-                  ? `Áp dụng đệ quy cho ${count} object trong ${where}`
-                  : `Áp dụng đệ quy cho mọi object trong ${where} (tick để đếm số object)`
-              }
+              label={deep && keys ? t("acl.recursive.count", { n: count, where }) : t("acl.recursive.all", { where })}
             />
           )}
           {folder && !deep && (
             <Typography variant="body2" color="text.secondary">
-              Thư mục không có ACL riêng: tick ô trên để đặt ACL này cho từng object bên trong.
+              {t("acl.folderHint")}
             </Typography>
           )}
           <Stack direction="row" spacing={1}>
             <Button variant="outlined" disabled={busy} onClick={() => edit((list) => [...list, { kind: "user", grantee: "", display_name: "", permission: "READ" }])}>
-              Thêm user
+              {t("acl.addUser")}
             </Button>
             <Button variant="contained" color={isPublic ? "error" : "primary"} onClick={apply} disabled={!canApply}>
-              {deep ? `Áp dụng ACL cho ${count + (folder ? 0 : 1)} mục` : "Áp dụng ACL"}
+              {deep ? t("acl.applyMany", { n: count + (folder ? 0 : 1) }) : t("acl.apply")}
             </Button>
             <Button onClick={load} disabled={busy}>
-              Đọc lại từ cluster
+              {t("acl.reload")}
             </Button>
           </Stack>
           {progress && (
             <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
               <Box sx={{ flexGrow: 1 }}>
-                <LinearProgress variant="determinate" value={percent(progress.done, progress.total)} aria-label="Tiến độ đặt ACL" />
+                <LinearProgress variant="determinate" value={percent(progress.done, progress.total)} aria-label={t("acl.progressLabel")} />
               </Box>
               <Typography variant="body2" sx={{ whiteSpace: "nowrap" }}>
-                {progress.done}/{progress.total} object
+                {t("acl.progress", { done: progress.done, total: progress.total })}
               </Typography>
               <Button size="small" color="error" onClick={() => invoke("browse_cancel", { transferId: progress.id })}>
-                Dừng
+                {t("acl.stop")}
               </Button>
             </Stack>
           )}
-          {verified === true && <Alert severity="success">Đã áp dụng. ACL đọc lại từ cluster khớp với ACL vừa gửi.</Alert>}
-          {verified === false && (
-            <Alert severity="warning">
-              Đã gửi ACL, nhưng ACL đọc lại từ cluster KHÔNG khớp với ACL vừa gửi{deep ? "" : ". Danh sách trên là ACL đang có hiệu lực"}.
-            </Alert>
-          )}
+          {verified === true && <Alert severity="success">{t("acl.verified")}</Alert>}
+          {verified === false && <Alert severity="warning">{t(deep ? "acl.mismatch" : "acl.mismatchShown")}</Alert>}
           {report && (
             <Alert severity={firstFailure || report.cancelled ? "warning" : "success"}>
-              Đã đặt ACL cho {report.applied}/{report.objects} object
-              {report.unverified > 0 && `; ${report.unverified} object đọc lại không khớp`}
-              {report.cancelled && "; đã dừng theo yêu cầu, các object còn lại giữ ACL cũ"}
-              {firstFailure && `; ${report.failed.length} object lỗi. Lỗi đầu tiên (${firstFailure.key}): ${explain(firstFailure.error).message}`}.
+              {[
+                t("acl.report.applied", { applied: report.applied, objects: report.objects }),
+                report.unverified > 0 && t("acl.report.unverified", { n: report.unverified }),
+                report.cancelled && t("acl.report.cancelled"),
+                firstFailure && t("acl.report.failed", { n: report.failed.length, key: firstFailure.key, message: explain(firstFailure.error).message }),
+              ]
+                .filter(Boolean)
+                .join("; ")}
+              .
             </Alert>
           )}
         </>

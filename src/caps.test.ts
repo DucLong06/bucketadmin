@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { accessLevel, capsCommand, hasCap, missingCaps, missingForFull, TAB_CAPS, withNeededCaps, type Access } from "./caps";
+import { accessLevel, capsCommand, hasCap, LEVEL_LABEL, missingCaps, missingForFull, TAB_CAPS, withNeededCaps, type Access } from "./caps";
+import { applyLang, t } from "./i18n";
 
 const none: Access = { uid: "me", caps: [], info: false, users: false, metadata: false, buckets: false, usage: false };
 const full: Access = {
@@ -23,6 +24,15 @@ test("level follows what RGW let through", () => {
   expect(accessLevel({ ...none, buckets: true })).toBe("partial");
   // Reads everything, may change nothing.
   expect(accessLevel({ ...full, caps: [] })).toBe("partial");
+});
+
+test("a level is named in the current language", () => {
+  applyLang("vi");
+  expect(t(LEVEL_LABEL[accessLevel(none)])).toBe("Chỉ duyệt");
+  expect(t(LEVEL_LABEL[accessLevel(full)])).toBe("Admin đầy đủ");
+  applyLang("en");
+  expect(t(LEVEL_LABEL[accessLevel(none)])).toBe("Browse only");
+  expect(t(LEVEL_LABEL[accessLevel(full)])).toBe("Full admin");
 });
 
 test("write caps come from the caps listed on the user", () => {

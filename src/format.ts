@@ -1,6 +1,8 @@
+import { getLang } from "./i18n";
+
 const UNITS = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
 
-/** 1536 -> "1.5 KiB". Binary units, because RGW quotas are set in KiB. */
+/** 1536 -> "1.50 KiB" ("1,50 KiB" in Vietnamese: the decimal mark follows the language). Binary units, because RGW quotas are set in KiB. */
 export function formatBytes(bytes: number): string {
   let value = bytes;
   let unit = 0;
@@ -8,7 +10,8 @@ export function formatBytes(bytes: number): string {
     value /= 1024;
     unit += 1;
   }
-  return `${unit === 0 ? value : value.toFixed(value < 10 ? 2 : 1)} ${UNITS[unit]}`;
+  const number = unit === 0 ? String(value) : value.toFixed(value < 10 ? 2 : 1);
+  return `${getLang() === "vi" ? number.replace(".", ",") : number} ${UNITS[unit]}`;
 }
 
 /** Re-indents JSON text for display; text that is not JSON is returned unchanged. */

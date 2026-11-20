@@ -13,7 +13,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { invoke, keyOwner } from "./api";
+import { invoke } from "./api";
+import { t } from "./i18n";
 import type { ObjectTabProps } from "./ObjectDrawer";
 import { ErrorAlert, useAction } from "./ui";
 
@@ -41,20 +42,20 @@ export function HeadersTab({ at }: ObjectTabProps) {
     <Stack spacing={2}>
       <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
         <Typography variant="body2" color="text.secondary" sx={{ flexGrow: 1 }}>
-          Header trả về từ một request HEAD thật tới RGW, ký bằng key của {keyOwner(at.uid)}.
+          {at.uid ? t("inspect.headHintUser", { uid: at.uid }) : t("inspect.headHintMine")}
         </Typography>
         <Button size="small" onClick={load} disabled={busy}>
-          Gửi lại HEAD
+          {t("inspect.resend")}
         </Button>
       </Stack>
-      {busy && <LinearProgress aria-label="Đang gửi HEAD" />}
+      {busy && <LinearProgress aria-label={t("inspect.sending")} />}
       <ErrorAlert error={error} />
       {inspected && (
-        <Table size="small" aria-label="Header của HEAD">
+        <Table size="small" aria-label={t("inspect.headers")}>
           <TableHead>
             <TableRow>
-              <TableCell>Header</TableCell>
-              <TableCell>Giá trị</TableCell>
+              <TableCell>{t("inspect.header")}</TableCell>
+              <TableCell>{t("inspect.value")}</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -73,11 +74,11 @@ export function HeadersTab({ at }: ObjectTabProps) {
 
 /** Why the tag list cannot be saved, or null. The backend checks the same rules. */
 export function tagsError(tags: Tag[]): string | null {
-  if (tags.length > MAX_TAGS) return `Mỗi object có tối đa ${MAX_TAGS} tag.`;
-  const keys = tags.map((t) => t.key.trim());
-  if (keys.some((k) => !k)) return "Có tag chưa có key.";
-  if (new Set(keys).size !== keys.length) return "Có key bị trùng.";
-  if (tags.some((t) => t.key.length > 128 || t.value.length > 256)) return "Key tối đa 128 ký tự, value tối đa 256 ký tự.";
+  if (tags.length > MAX_TAGS) return t("inspect.tooMany", { max: MAX_TAGS });
+  const keys = tags.map((tag) => tag.key.trim());
+  if (keys.some((k) => !k)) return t("inspect.noKey");
+  if (new Set(keys).size !== keys.length) return t("inspect.dupKey");
+  if (tags.some((tag) => tag.key.length > 128 || tag.value.length > 256)) return t("inspect.tooLong");
   return null;
 }
 
@@ -102,7 +103,7 @@ export function TagsTab({ at }: ObjectTabProps) {
 
   const change = (i: number, patch: Partial<Tag>) => {
     setSaved(false);
-    setTags((list) => list.map((t, n) => (n === i ? { ...t, ...patch } : t)));
+    setTags((list) => list.map((tag, n) => (n === i ? { ...tag, ...patch } : tag)));
   };
   async function save() {
     const done = await run(() => invoke("browse_tags_put", { at, tags }).then(() => true));
@@ -116,29 +117,29 @@ export function TagsTab({ at }: ObjectTabProps) {
   const dirty = stored !== null && JSON.stringify(stored) !== JSON.stringify(tags);
   return (
     <Stack spacing={2}>
-      {busy && <LinearProgress aria-label="Đang tải tag" />}
+      {busy && <LinearProgress aria-label={t("inspect.loadingTags")} />}
       <ErrorAlert error={error} />
       {stored && (
         <>
-          {tags.length === 0 && <Typography color="text.secondary">Object chưa có tag nào.</Typography>}
-          <Stack spacing={1} component="ul" sx={{ listStyle: "none", p: 0, m: 0 }} aria-label="Danh sách tag">
+          {tags.length === 0 && <Typography color="text.secondary">{t("inspect.noTags")}</Typography>}
+          <Stack spacing={1} component="ul" sx={{ listStyle: "none", p: 0, m: 0 }} aria-label={t("inspect.tagList")}>
             {tags.map((tag, i) => (
               <Stack key={i} component="li" direction="row" spacing={1} sx={{ alignItems: "center" }}>
                 <TextField
-                  label="Key"
+                  label={t("inspect.tagKey")}
                   value={tag.key}
                   onChange={(e) => change(i, { key: e.target.value })}
                   size="small"
                   sx={{ width: 260 }}
-                  slotProps={{ htmlInput: { "aria-label": `Key của tag ${i + 1}` } }}
+                  slotProps={{ htmlInput: { "aria-label": t("inspect.tagKeyOf", { n: i + 1 }) } }}
                 />
                 <TextField
-                  label="Value"
+                  label={t("inspect.tagValue")}
                   value={tag.value}
                   onChange={(e) => change(i, { value: e.target.value })}
                   size="small"
                   sx={{ flexGrow: 1 }}
-                  slotProps={{ htmlInput: { "aria-label": `Value của tag ${i + 1}` } }}
+                  slotProps={{ htmlInput: { "aria-label": t("inspect.tagValueOf", { n: i + 1 }) } }}
                 />
                 <Button
                   size="small"
@@ -147,9 +148,9 @@ export function TagsTab({ at }: ObjectTabProps) {
                     setSaved(false);
                     setTags((list) => list.filter((_, n) => n !== i));
                   }}
-                  aria-label={`Bỏ tag ${i + 1}`}
+                  aria-label={t("inspect.removeTagOf", { n: i + 1 })}
                 >
-                  Bỏ
+                  {t("inspect.remove")}
                 </Button>
               </Stack>
             ))}
@@ -165,17 +166,17 @@ export function TagsTab({ at }: ObjectTabProps) {
                   setTags((list) => [...list, { key: "", value: "" }]);
                 }}
               >
-                Thêm tag
+                {t("inspect.addTag")}
               </Button>
               <Button variant="contained" onClick={save} disabled={busy || !dirty || !!problem}>
-                Lưu tag
+                {t("inspect.saveTags")}
               </Button>
               <Button onClick={load} disabled={busy}>
-                Đọc lại
+                {t("inspect.reload")}
               </Button>
             </Stack>
           </Box>
-          {saved && <Alert severity="success">Đã lưu. Danh sách trên là tag đang có trên object.</Alert>}
+          {saved && <Alert severity="success">{t("inspect.saved")}</Alert>}
         </>
       )}
     </Stack>

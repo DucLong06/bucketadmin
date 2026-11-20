@@ -1,4 +1,5 @@
 import type { Profile } from "./api";
+import { t } from "./i18n";
 
 /** A place that can be browsed: a prefix of a bucket on a connection. `uid` is empty for the
  *  connection's own key; `bucket` is empty while no bucket is open. */
@@ -12,17 +13,17 @@ export const samePlace = (a: Place, b: Place) =>
 /** "logs/2026/11/" as a path the user reads: bucket and prefix, without the trailing slash. */
 export const placePath = (p: Place) => (p.bucket ? `${p.bucket}/${p.prefix}`.replace(/\/$/, "") : "");
 
-/** Short tab title: the open folder's name, else the bucket, else "Tab mới". */
+/** Short tab title: the open folder's name, else the bucket, else "New tab". */
 export function tabTitle(at: Place): string {
-  if (!at.bucket) return "Tab mới";
+  if (!at.bucket) return t("tabs.new");
   const folders = at.prefix.split("/").filter(Boolean);
   return folders.length > 0 ? folders[folders.length - 1] : at.bucket;
 }
 
 /** Full description for tooltips and the recent list: "lab · logs/2026/11". */
 export function placeLabel(at: Place, profiles: Profile[]): string {
-  const connection = profiles.find((p) => p.id === at.clusterId)?.label ?? "kết nối đã xoá";
-  return [connection, at.uid && `user ${at.uid}`, placePath(at)].filter(Boolean).join(" · ");
+  const connection = profiles.find((p) => p.id === at.clusterId)?.label ?? t("tabs.goneConnection");
+  return [connection, at.uid && t("common.userNamed", { uid: at.uid }), placePath(at)].filter(Boolean).join(" · ");
 }
 
 /** Closes a tab. The tab to its right (else to its left) becomes active when the active one

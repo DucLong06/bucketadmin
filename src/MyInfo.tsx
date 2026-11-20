@@ -3,6 +3,7 @@ import { Accordion, AccordionDetails, AccordionSummary, Chip, LinearProgress, St
 import { invoke, maskKey, type Quota, type Usage, type UserInfo } from "./api";
 import type { Access } from "./caps";
 import { formatBytes } from "./format";
+import { t } from "./i18n";
 import { ErrorAlert, useAction } from "./ui";
 import { dayStartUtc, daysAgo, usageRows, usageTotals } from "./usage";
 
@@ -11,8 +12,11 @@ const USAGE_DAYS = 30;
 
 const quotaText = (q: Quota) =>
   q.enabled
-    ? `tối đa ${q.max_size < 0 ? "không giới hạn dung lượng" : formatBytes(q.max_size)}, ${q.max_objects < 0 ? "không giới hạn số object" : `${q.max_objects} object`}`
-    : "không bật";
+    ? t("myinfo.quota", {
+        size: q.max_size < 0 ? t("myinfo.quota.anySize") : formatBytes(q.max_size),
+        objects: q.max_objects < 0 ? t("myinfo.quota.anyObjects") : t("myinfo.quota.objects", { n: q.max_objects }),
+      })
+    : t("myinfo.quota.off");
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -59,44 +63,44 @@ export default function MyInfo({ clusterId, access, defaultOpen }: { clusterId: 
     <Accordion expanded={open} onChange={(_, now) => setOpen(now)} variant="outlined" disableGutters sx={{ mb: 2 }}>
       <AccordionSummary aria-controls="my-info-content" id="my-info-header">
         <Typography component="h2" variant="subtitle1">
-          Thông tin của tôi · {uid}
+          {t("myinfo.title", { uid })}
         </Typography>
       </AccordionSummary>
       <AccordionDetails>
-        {busy && <LinearProgress aria-label="Đang tải thông tin của tôi" />}
+        {busy && <LinearProgress aria-label={t("myinfo.loading")} />}
         <ErrorAlert error={error} sx={{ mb: 1 }} />
         <Stack spacing={0.75}>
           <Typography variant="body2" color="text.secondary">
-            Chỉ xem. Đây là thông tin của chính user đang kết nối; app không liệt kê user khác ở đây.
+            {t("myinfo.readOnly")}
           </Typography>
-          {!access.users && <Row label="Thông tin, quota">Cần cap users=read để xem.</Row>}
+          {!access.users && <Row label={t("myinfo.infoQuota")}>{t("myinfo.needCap", { cap: "users=read" })}</Row>}
           {user && (
             <>
-              <Row label="uid">{uid}</Row>
-              <Row label="Tên hiển thị">{user.display_name || "—"}</Row>
-              <Row label="Email">{user.email || "—"}</Row>
-              <Row label="Trạng thái">{user.suspended ? "Bị khoá (suspended)" : "Đang hoạt động"}</Row>
-              <Row label="Số bucket tối đa">{user.max_buckets ?? "—"}</Row>
-              <Row label="Access key">{user.keys.map((k) => maskKey(k.access_key)).join(", ") || "—"}</Row>
-              <Row label="Caps">
+              <Row label={t("myinfo.uid")}>{uid}</Row>
+              <Row label={t("myinfo.displayName")}>{user.display_name || "—"}</Row>
+              <Row label={t("myinfo.email")}>{user.email || "—"}</Row>
+              <Row label={t("myinfo.status")}>{user.suspended ? t("myinfo.suspended") : t("myinfo.active")}</Row>
+              <Row label={t("myinfo.maxBuckets")}>{user.max_buckets ?? "—"}</Row>
+              <Row label={t("myinfo.accessKey")}>{user.keys.map((k) => maskKey(k.access_key)).join(", ") || "—"}</Row>
+              <Row label={t("myinfo.caps")}>
                 {user.caps.length === 0
-                  ? "không có"
+                  ? t("myinfo.none")
                   : user.caps.map((c) => <Chip key={c.type} size="small" variant="outlined" label={`${c.type}=${c.perm}`} sx={{ mr: 0.5 }} />)}
               </Row>
             </>
           )}
           {quotas && (
             <>
-              <Row label="Quota của user">{quotaText(quotas.user)}</Row>
-              <Row label="Quota mỗi bucket">{quotaText(quotas.bucket)}</Row>
+              <Row label={t("myinfo.userQuota")}>{quotaText(quotas.user)}</Row>
+              <Row label={t("myinfo.bucketQuota")}>{quotaText(quotas.bucket)}</Row>
             </>
           )}
-          {!access.usage && <Row label={`Usage ${USAGE_DAYS} ngày`}>Cần cap usage=read để xem.</Row>}
+          {!access.usage && <Row label={t("myinfo.usage", { days: USAGE_DAYS })}>{t("myinfo.needCap", { cap: "usage=read" })}</Row>}
           {totals && (
-            <Row label={`Usage ${USAGE_DAYS} ngày`}>
+            <Row label={t("myinfo.usage", { days: USAGE_DAYS })}>
               {totals.ops === 0
-                ? "Chưa có dữ liệu (không có request nào, hoặc usage log của cluster đang tắt)."
-                : `${totals.ops} request (${totals.successful_ops} thành công) · gửi đi ${formatBytes(totals.bytes_sent)} · nhận về ${formatBytes(totals.bytes_received)}`}
+                ? t("myinfo.usage.none")
+                : t("myinfo.usage.totals", { ops: totals.ops, ok: totals.successful_ops, sent: formatBytes(totals.bytes_sent), received: formatBytes(totals.bytes_received) })}
             </Row>
           )}
         </Stack>
