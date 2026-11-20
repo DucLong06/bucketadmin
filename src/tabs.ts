@@ -13,11 +13,25 @@ export const samePlace = (a: Place, b: Place) =>
 /** "logs/2026/11/" as a path the user reads: bucket and prefix, without the trailing slash. */
 export const placePath = (p: Place) => (p.bucket ? `${p.bucket}/${p.prefix}`.replace(/\/$/, "") : "");
 
-/** Short tab title: the open folder's name, else the bucket, else "New tab". */
-export function tabTitle(at: Place): string {
+/** Tab title: "connection · bucket", then the open folder's name ("lab · logs/…/11"); "New tab"
+ *  while no bucket is open. With many connections a bucket name alone does not say where a tab is. */
+export function tabTitle(at: Place, profiles: Profile[] = []): string {
   if (!at.bucket) return t("tabs.new");
   const folders = at.prefix.split("/").filter(Boolean);
-  return folders.length > 0 ? folders[folders.length - 1] : at.bucket;
+  const where = [at.bucket, ...(folders.length > 1 ? ["…"] : []), ...folders.slice(-1)].join("/");
+  const connection = profiles.find((p) => p.id === at.clusterId)?.label;
+  return connection ? `${connection} · ${where}` : where;
+}
+
+/** A mixed list of recent places is collapsed to this connection's own above this many entries. */
+export const RECENT_COLLAPSE_ABOVE = 15;
+
+/** Recent places grouped like the pins: this connection's first, the others after (each newest first).
+ *  `collapsed`: the others start folded away, because the whole list is long. */
+export function groupRecents(recents: Place[], clusterId: string) {
+  const here = recents.filter((place) => place.clusterId === clusterId);
+  const elsewhere = recents.filter((place) => place.clusterId !== clusterId);
+  return { here, elsewhere, collapsed: elsewhere.length > 0 && recents.length > RECENT_COLLAPSE_ABOVE };
 }
 
 /** Full description for tooltips and the recent list: "lab · logs/2026/11". */

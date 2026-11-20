@@ -3,11 +3,18 @@ import { Alert, Box, Button, InputAdornment, List, ListItemButton, ListItemText,
 import type { BrowseBucket } from "./api";
 import { t } from "./i18n";
 import { eyebrow, thinScroll, tokens } from "./theme";
+import { visibleRange } from "./virtual";
 
 /** The filter field is only worth its row above this many buckets. */
 export const FILTER_ABOVE = 8;
 /** The list never grows past this: about 38 % of the window, and never under five rows. */
 export const LIST_MAX_HEIGHT = "max(200px, 38vh)";
+
+/** Above this many rows the list only mounts the rows in view (and a few around them). */
+export const WINDOW_ABOVE = 100;
+/** Height of a bucket row (the theme's floor for dense rows), and the list's own padding above the first. */
+const ROW = 40;
+const LIST_PAD = 8;
 
 /** Buckets whose name contains `text`, whatever the case. */
 export const filterBuckets = <B extends { name: string }>(buckets: B[], text: string): B[] => {
@@ -63,10 +70,23 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
   const filterable = buckets.length > FILTER_ABOVE;
   const shown = filterable ? filterBuckets(buckets, filter) : buckets;
   const list = useRef<HTMLUListElement | null>(null);
-  const rowAt = (i: number) => list.current?.querySelectorAll<HTMLElement>("[role=button]")[i];
+  // A long list is windowed: rows of a known height, placed by two spacers, so 5000 buckets cost what 30 do.
+  const windowed = shown.length > WINDOW_ABOVE;
+  const [scrollTop, setScrollTop] = useState(0);
+  const viewport = Math.max(200, 0.38 * (globalThis.innerHeight ?? 800));
+  const [from, to] = windowed ? visibleRange(scrollTop, viewport, ROW, shown.length) : [0, shown.length];
+  /** Scrolls the list just far enough to show row `i`; in a windowed list the row need not be mounted. */
+  function revealAt(i: number) {
+    const el = list.current;
+    if (!el || i < 0) return;
+    if (!windowed) return reveal(el, el.querySelectorAll<HTMLElement>("[role=button]")[i]);
+    const top = LIST_PAD + i * ROW;
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (top + ROW > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW - el.clientHeight;
+  }
   // A tab that is shown again, or that went to another bucket: its bucket is in view.
   useEffect(() => {
-    if (active) reveal(list.current, list.current?.querySelector<HTMLElement>(".Mui-selected"));
+    if (active) revealAt(shown.findIndex((b) => b.name === current));
   }, [active, current, shown.length]);
 
   function onFilterKey(e: KeyboardEvent) {
@@ -77,7 +97,7 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
       const next = moveHighlight(cursor.current, e.key, shown.length);
       setHighlight(next);
       // The highlighted row stays in view while the arrow keys walk the list.
-      reveal(list.current, rowAt(next));
+      revealAt(next);
     } else if (e.key === "Enter") {
       const picked = shown[moveHighlight(cursor.current, "", shown.length)];
       if (picked) onOpen(picked.name, "");
@@ -97,6 +117,9 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
             onChange={(e) => {
               setFilter(e.target.value);
               setHighlight(0);
+              // Another list: from its top.
+              if (list.current) list.current.scrollTop = 0;
+              setScrollTop(0);
             }}
             onKeyDown={onFilterKey}
             onFocus={() => setFiltering(true)}
@@ -120,11 +143,21 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
         </Box>
       )}
       {/* The height limit is on the element itself (not in a class): it is what keeps the rest of the sidebar in reach. */}
-      <List dense aria-label={t("browse.bucketList")} ref={list} style={{ maxHeight: LIST_MAX_HEIGHT }} sx={{ ...thinScroll, mb: filterable ? 1 : 0 }}>
-        {shown.map((b, i) => (
+      <List
+        dense
+        aria-label={t("browse.bucketList")}
+        ref={list}
+        onScroll={windowed ? (e) => setScrollTop(e.currentTarget.scrollTop) : undefined}
+        style={{ maxHeight: LIST_MAX_HEIGHT }}
+        sx={{ ...thinScroll, mb: filterable ? 1 : 0 }}
+      >
+        {from > 0 && <li aria-hidden style={{ height: from * ROW }} />}
+        {shown.slice(from, to).map((b, n) => [b, from + n] as const).map(([b, i]) => (
           <ListItemButton
             key={b.name}
             selected={b.name === current}
+            aria-setsize={windowed ? shown.length : undefined}
+            aria-posinset={windowed ? i + 1 : undefined}
             // The row the filter field's arrow keys are on looks like the focused one.
             className={filtering && i === highlight ? "Mui-focusVisible" : undefined}
             onClick={() => onOpen(b.name, "")}
@@ -133,6 +166,7 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
             <ListItemText primary={b.name} slotProps={{ primary: { sx: { fontFamily: tokens.mono, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: b.name } }} />
           </ListItemButton>
         ))}
+        {to < shown.length && <li aria-hidden style={{ height: (shown.length - to) * ROW }} />}
       </List>
       {bucketsError ? (
         <Alert severity="info" sx={{ mx: 1.5, mb: 1.5 }}>

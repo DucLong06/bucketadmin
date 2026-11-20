@@ -620,6 +620,15 @@ export const en = {
   "theme.dark": "Dark",
   "theme.light": "Light",
   "settings.lightTheme": "Light theme",
+
+  // Many connections (M10.3): search, count, duplicate labels, grouped recent places
+  "conn.search": "Search connections…",
+  "conn.searchHint": "Type a part of a label, an endpoint or an access key",
+  "conn.noMatch": "No connection matches.",
+  "conn.countAria": "Saved connections: {n}",
+  "conn.duplicateLabel": "Another connection has this label. Tell them apart by their endpoint.",
+  "conn.duplicateNew": "A saved connection already has this label. You can still save.",
+  "recent.others": "Other connections ({n})",
 };
 
 export const vi: Record<keyof typeof en, string> = {
@@ -1223,4 +1232,13 @@ export const vi: Record<keyof typeof en, string> = {
   "theme.dark": "Tối",
   "theme.light": "Sáng",
   "settings.lightTheme": "Giao diện sáng",
+
+  // Many connections (M10.3): search, count, duplicate labels, grouped recent places
+  "conn.search": "Tìm kết nối…",
+  "conn.searchHint": "Gõ một phần của tên, endpoint hoặc access key",
+  "conn.noMatch": "Không có kết nối nào khớp.",
+  "conn.countAria": "Số kết nối đã lưu: {n}",
+  "conn.duplicateLabel": "Một kết nối khác cũng mang tên này. Hãy phân biệt chúng bằng endpoint.",
+  "conn.duplicateNew": "Đã có một kết nối mang tên này. Bạn vẫn lưu được.",
+  "recent.others": "Kết nối khác ({n})",
 };

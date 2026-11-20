@@ -1,12 +1,12 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Alert, Box, Button, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import { Alert, Box, Button, Chip, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { invoke, isInternal, maskKey, type EndpointKind, type Opened, type Profile, type Proxy } from "./api";
 import { endpointError } from "./endpoint";
 import { t, type Key } from "./i18n";
 import { PathPicker } from "./PathPicker";
 import { startPath } from "./paths";
 import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
-import { ErrorAlert, LangToggle, ThemeSwitch } from "./ui";
+import { duplicateLabels, ErrorAlert, filterProfiles, LangToggle, SEARCH_ABOVE, ThemeSwitch } from "./ui";
 import { stepScale, UI_SCALES } from "./zoom";
 
 // Kept as data, not as text: what is on screen follows a change of language.
@@ -210,6 +210,13 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
   }
 
   const keySx = { htmlInput: { style: { fontFamily: "monospace" } } };
+  // Many connections: the list is searched; the search is not saved.
+  const [search, setSearch] = useState("");
+  const searchable = profiles.length > SEARCH_ABOVE;
+  const listed = searchable ? filterProfiles(profiles, search) : profiles;
+  const repeated = duplicateLabels(profiles);
+  const isRepeated = (label: string) => repeated.has(label.trim().toLowerCase());
+  const labelTaken = !!form.label.trim() && profiles.some((p) => p.label.trim().toLowerCase() === form.label.trim().toLowerCase());
   return (
     <>
       {/* The first screen a new user sees: the language can be chosen right here. */}
@@ -233,7 +240,8 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
           {t("conn.add")}
         </Typography>
         <Stack spacing={2}>
-          {field("label", t("conn.label"), { required: true })}
+          {/* Allowed, but said: the lists of the app show connections by label. */}
+          {field("label", t("conn.label"), { required: true, color: labelTaken ? "warning" : undefined, focused: labelTaken || undefined, helperText: labelTaken ? t("conn.duplicateNew") : undefined })}
           {field("endpoint", t("conn.endpoint"), {
             required: true,
             placeholder: "http://host:7480",
@@ -289,16 +297,45 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
         </Stack>
       </Paper>
 
-      <Typography variant="h6" component="h2" gutterBottom>
-        {t("conn.savedList")}
-      </Typography>
+      <Stack direction="row" sx={{ alignItems: "center", gap: 1.5, mb: 1.5, flexWrap: "wrap" }}>
+        <Typography variant="h6" component="h2">
+          {t("conn.savedList")}
+        </Typography>
+        {profiles.length > 0 && (
+          <Chip
+            size="small"
+            variant="outlined"
+            aria-label={t("conn.countAria", { n: profiles.length })}
+            label={searchable && search.trim() ? t("browse.filterCount", { n: listed.length, m: profiles.length }) : profiles.length}
+            sx={{ fontVariantNumeric: "tabular-nums" }}
+          />
+        )}
+        {searchable && (
+          <TextField
+            placeholder={t("conn.search")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setSearch("")}
+            size="small"
+            title={t("conn.searchHint")}
+            slotProps={{ htmlInput: { "aria-label": t("conn.search"), spellCheck: false, type: "search" } }}
+            sx={{ ml: "auto", width: 320, maxWidth: "100%" }}
+          />
+        )}
+      </Stack>
       {profiles.length === 0 && <Typography color="text.secondary">{t("conn.none")}</Typography>}
+      {profiles.length > 0 && listed.length === 0 && <Typography color="text.secondary">{t("conn.noMatch")}</Typography>}
       <Stack spacing={1.5} component="ul" sx={{ listStyle: "none", p: 0, m: 0 }}>
-        {profiles.map((p) => (
+        {listed.map((p) => (
           <Paper key={p.id} component="li" variant="outlined" sx={{ p: 2.5 }}>
             <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
               <Stack sx={{ flexGrow: 1, minWidth: 0 }}>
                 <Typography sx={{ fontWeight: 600 }}>{p.label}</Typography>
+                {isRepeated(p.label) && (
+                  <Typography variant="caption" color="warning.main" role="note">
+                    {t("conn.duplicateLabel")}
+                  </Typography>
+                )}
                 <Typography variant="body2" color="text.secondary" noWrap>
                   <Mono>{p.endpoint}</Mono> · {t("conn.myKey")} <Mono>{maskKey(p.browse_access_key ?? p.access_key)}</Mono>
                   {p.browse_access_key && p.browse_access_key !== p.access_key && (

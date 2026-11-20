@@ -6,6 +6,7 @@ import {
   Chip,
   Container,
   CssBaseline,
+  Divider,
   IconButton,
   Menu,
   MenuItem,
@@ -23,7 +24,7 @@ import { isPinned, movePin, pinLabel, togglePin, type Pin, type PinOps } from ".
 import Browse from "./Browse";
 import Connections from "./Connections";
 import { t, useLang } from "./i18n";
-import { closeTab, cycleTab, placeLabel, placePath, restoreTabs, samePlace, saveTabs, tabShortcut, tabTitle, type BrowseTab, type Place, type SavedTabs } from "./tabs";
+import { closeTab, cycleTab, groupRecents, placeLabel, placePath, restoreTabs, samePlace, saveTabs, tabShortcut, tabTitle, type BrowseTab, type Place, type SavedTabs } from "./tabs";
 import { eyebrow, setMode, themes, tokens, useMode } from "./theme";
 import { TaskPanel, useTransfers } from "./transfers";
 import { ErrorAlert, PinToggle } from "./ui";
@@ -52,6 +53,13 @@ export default function App() {
   const [active, setActive] = useState("");
   const [recents, setRecents] = useState<Place[]>([]);
   const [recentMenu, setRecentMenu] = useState<HTMLElement | null>(null);
+  // The other connections' recent places are folded away while the list is long.
+  const [recentOthers, setRecentOthers] = useState(false);
+  const tabBar = useRef<HTMLDivElement | null>(null);
+  // With many tabs the bar scrolls: the tab on screen is always in view.
+  useEffect(() => {
+    tabBar.current?.querySelector('[role=tab][aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [active, tabs.length]);
   // Pinned places, shared by every tab. A change shows at once; the saved list then replaces
   // the guess, and a refusal (the list is full) puts back what is really saved.
   const [pins, setPins] = useState<Pin[]>([]);
@@ -199,6 +207,14 @@ export default function App() {
   const browsing = page === "browse";
   const known = recents.filter((r) => profiles?.some((p) => p.id === r.clusterId));
   const knownPins = pins.filter((pin) => profiles?.some((p) => p.id === pin.place.clusterId));
+  // The Recent menu, grouped like the pins: the connection of the tab on screen first.
+  const recentGroups = groupRecents(known, activeCluster());
+  const recentItem = (place: Place) => (
+    <MenuItem key={JSON.stringify(place)} onClick={() => goTo(place)} sx={{ justifyContent: "space-between", gap: 2 }}>
+      {placeLabel(place, profiles ?? [])}
+      <PinToggle pinned={isPinned(pins, place)} label={t(isPinned(pins, place) ? "browse.unpinThis" : "browse.pinThis", { path: placePath(place) })} onToggle={() => pinOps.toggle(place)} />
+    </MenuItem>
+  );
   return (
     <ThemeProvider theme={themes[mode]}>
       <CssBaseline />
@@ -248,12 +264,16 @@ export default function App() {
         <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
           {/* The browse layer stays mounted (and keeps every tab's state) while the connections screen is shown. */}
           <Box sx={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", visibility: browsing ? "visible" : "hidden" }}>
-            <Stack
-              direction="row"
-              role="tablist"
-              aria-label={t("app.tabs")}
-              sx={{ alignItems: "flex-end", gap: 0.75, px: 5, pt: 1.25, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}
-            >
+            <Stack direction="row" sx={{ alignItems: "flex-end", gap: 0.75, px: 5, pt: 1.25, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
+              {/* Tabs keep a readable width; when they do not fit, this strip scrolls (wheel, keyboard, or by itself to the active tab). */}
+              <Stack
+                direction="row"
+                role="tablist"
+                aria-label={t("app.tabs")}
+                ref={tabBar}
+                onWheel={(e) => (e.currentTarget.scrollLeft += e.deltaY)}
+                sx={{ alignItems: "flex-end", gap: 0.75, minWidth: 0, overflowX: "auto", "&::-webkit-scrollbar": { display: "none" }, scrollbarWidth: "none" }}
+              >
               {tabs.map((tab) => (
                 <Box
                   key={tab.id}
@@ -271,6 +291,7 @@ export default function App() {
                     pr: 0.75,
                     height: 42,
                     maxWidth: 256,
+                    flexShrink: 0,
                     cursor: "pointer",
                     border: 1,
                     borderBottom: 0,
@@ -282,11 +303,11 @@ export default function App() {
                   }}
                 >
                   <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 15 }}>
-                    {tabTitle(tab.at)}
+                    {tabTitle(tab.at, profiles ?? [])}
                   </Box>
                   <IconButton
                     size="small"
-                    aria-label={t("app.tab.close", { title: tabTitle(tab.at) })}
+                    aria-label={t("app.tab.close", { title: tabTitle(tab.at, profiles ?? []) })}
                     title={t("app.tab.closeTip")}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -299,11 +320,12 @@ export default function App() {
                   </IconButton>
                 </Box>
               ))}
-              <IconButton size="small" aria-label={t("tabs.new")} title={t("app.tab.newTip")} onClick={openEmptyTab} sx={{ width: 40, height: 40, mb: 0.125 }}>
+              </Stack>
+              <IconButton size="small" aria-label={t("tabs.new")} title={t("app.tab.newTip")} onClick={openEmptyTab} sx={{ width: 40, height: 40, mb: 0.125, flexShrink: 0 }}>
                 +
               </IconButton>
               <Box sx={{ flexGrow: 1 }} />
-              <Button size="small" aria-haspopup="menu" onClick={(e) => setPinMenu(e.currentTarget)} sx={{ mb: 0.5 }}>
+              <Button size="small" aria-haspopup="menu" onClick={(e) => setPinMenu(e.currentTarget)} sx={{ mb: 0.5, flexShrink: 0 }}>
                 {t("app.pinned")}
               </Button>
               <Menu anchorEl={pinMenu} open={pinMenu !== null} onClose={() => setPinMenu(null)} slotProps={{ list: { "aria-label": t("app.pinned.list") } }}>
@@ -328,17 +350,31 @@ export default function App() {
                   </MenuItem>
                 ))}
               </Menu>
-              <Button size="small" aria-haspopup="menu" onClick={(e) => setRecentMenu(e.currentTarget)} sx={{ mb: 0.5 }}>
+              <Button
+                size="small"
+                aria-haspopup="menu"
+                onClick={(e) => {
+                  setRecentOthers(false);
+                  setRecentMenu(e.currentTarget);
+                }}
+                sx={{ mb: 0.5, flexShrink: 0 }}
+              >
                 {t("app.recent")}
               </Button>
               <Menu anchorEl={recentMenu} open={recentMenu !== null} onClose={() => setRecentMenu(null)} slotProps={{ list: { "aria-label": t("app.recent.list") } }}>
                 {known.length === 0 && <MenuItem disabled>{t("app.recent.none")}</MenuItem>}
-                {known.map((place) => (
-                  <MenuItem key={JSON.stringify(place)} onClick={() => goTo(place)} sx={{ justifyContent: "space-between", gap: 2 }}>
-                    {placeLabel(place, profiles ?? [])}
-                    <PinToggle pinned={isPinned(pins, place)} label={t(isPinned(pins, place) ? "browse.unpinThis" : "browse.pinThis", { path: placePath(place) })} onToggle={() => pinOps.toggle(place)} />
-                  </MenuItem>
-                ))}
+                {recentGroups.here.map(recentItem)}
+                {recentGroups.elsewhere.length > 0 &&
+                  (recentGroups.collapsed && !recentOthers ? (
+                    <MenuItem aria-expanded={false} onClick={() => setRecentOthers(true)} sx={{ color: "text.secondary" }}>
+                      {t("recent.others", { n: recentGroups.elsewhere.length })}
+                    </MenuItem>
+                  ) : (
+                    <Divider component="li" textAlign="left" sx={{ my: 0.5, fontSize: 12.5, color: "text.secondary" }}>
+                      {t("browse.pinsElsewhere")}
+                    </Divider>
+                  ))}
+                {(!recentGroups.collapsed || recentOthers) && recentGroups.elsewhere.map(recentItem)}
               </Menu>
             </Stack>
             <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>

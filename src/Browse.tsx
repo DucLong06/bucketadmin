@@ -7,6 +7,7 @@ import {
   Checkbox,
   Chip,
   Dialog,
+  Divider,
   DialogActions,
   DialogContent,
   DialogTitle,
@@ -38,7 +39,7 @@ import PinnedPanel from "./PinnedPanel";
 import { isPinned, type Pin, type PinOps } from "./pins";
 import ObjectDrawer, { canUndelete, download, finalDeleteWarning, undeleteHint, type Versioning } from "./ObjectDrawer";
 import { splitPath } from "./paths";
-import { placeLabel, placePath, type Place } from "./tabs";
+import { groupRecents, placeLabel, placePath, type Place } from "./tabs";
 import { eyebrow, tokens } from "./theme";
 import type { StartTransfer } from "./transfers";
 import { explain } from "./errors";
@@ -140,6 +141,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   // The path picker. For a key that may not list buckets it is the page itself (typed here);
   // otherwise it is a dialog.
   const [picking, setPicking] = useState(false);
+  const [recentOthers, setRecentOthers] = useState(false);
   const [typedPath, setTypedPath] = useState("");
   const inlinePath = useRef<HTMLInputElement | null>(null);
   // The last listing was refused by S3 (AccessDenied): the error gains the way out.
@@ -475,6 +477,10 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const pickPath = () => (pickerIsThePage ? inlinePath.current?.focus() : setPicking(true));
   const typed = splitPath(typedPath);
   const label = profiles.find((p) => p.id === clusterId)?.label ?? "";
+  // The sidebar's recent places: this connection's first; the others follow, folded away while the whole list is long.
+  const recentGroups = groupRecents(recents, clusterId);
+  const recentFolded = recentGroups.collapsed && !recentOthers;
+  const recentRows = [...recentGroups.here, ...(recentFolded ? [] : recentGroups.elsewhere)].slice(0, RECENT_IN_SIDEBAR);
   const card = { borderRadius: "16px" };
   // What the context menu offers for the row under the pointer.
   const menuRow = menu?.row;
@@ -550,7 +556,13 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                 {t("browse.recent")}
               </Typography>
               <List dense aria-label={t("browse.recentList")}>
-                {recents.slice(0, RECENT_IN_SIDEBAR).map((place) => (
+                {recentRows.map((place, i) => [
+                  // Grouped like the pins: this connection's places, then the others under a divider.
+                  i === recentGroups.here.length && i < recentRows.length && (
+                    <Divider key="others" component="li" textAlign="left" sx={{ my: 0.5, fontSize: 12.5, color: "text.secondary" }}>
+                      {t("browse.pinsElsewhere")}
+                    </Divider>
+                  ),
                   <ListItem
                     key={JSON.stringify(place)}
                     disablePadding
@@ -559,11 +571,16 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                     }
                     sx={{ "& .MuiListItemSecondaryAction-root": { right: 6 } }}
                   >
-                    <ListItemButton onClick={() => onRecent(place)} sx={{ pr: "44px !important" }}>
+                    <ListItemButton onClick={() => onRecent(place)} sx={{ pr: "44px !important", color: place.clusterId === clusterId ? "text.primary" : "text.secondary" }}>
                       <ListItemText primary={placeLabel(place, profiles)} slotProps={{ primary: { sx: { fontSize: 14, wordBreak: "break-all" } } }} />
                     </ListItemButton>
-                  </ListItem>
-                ))}
+                  </ListItem>,
+                ])}
+                {recentFolded && (
+                  <ListItemButton aria-expanded={false} onClick={() => setRecentOthers(true)} sx={{ color: "text.secondary" }}>
+                    <ListItemText primary={t("recent.others", { n: recentGroups.elsewhere.length })} slotProps={{ primary: { sx: { fontSize: 14 } } }} />
+                  </ListItemButton>
+                )}
               </List>
             </Paper>
           )}

@@ -60,12 +60,24 @@
     };
     const rowOf = async (key) => (await waitFor(() => objectLink(key), `row of ${key}`)).closest('[role="row"]');
     // The sidebar of the tab on screen: its connection, its bucket rows, its pinned rows.
-    const connectionShown = () => first(all("aside select"))?.selectedOptions[0]?.textContent;
+    // The connection of the tab on screen: a plain select up to 8 connections, a searchable box above that.
+    const connectionField = () => first(all("aside select, aside input[role=combobox]"));
+    const connectionShown = () => {
+      const f = connectionField();
+      return f?.tagName === "SELECT" ? f.selectedOptions[0]?.textContent : f?.value;
+    };
     const useConnection = async (label) => {
-      const select = await field(T("common.connection"));
-      // A connection saved a moment ago reaches the tab's list with the next reload of the profiles.
-      const option = await waitFor(() => [...select.options].find((o) => o.textContent === label), `connection ${label} in the tab's list`);
-      setValue(select, option.value);
+      const f = await waitFor(connectionField, "the connection field of the tab");
+      if (f.tagName === "SELECT") {
+        // A connection saved a moment ago reaches the tab's list with the next reload of the profiles.
+        const option = await waitFor(() => [...f.options].find((o) => o.textContent === label), `connection ${label} in the tab's list`);
+        return setValue(f, option.value);
+      }
+      // Type-ahead: the label is typed, the matching choice (label, endpoint under it) is clicked.
+      f.focus();
+      setValue(f, label);
+      (await waitFor(() => all("[role=option]").find((o) => o.textContent.trim().startsWith(label)), `connection ${label} among the choices`)).click();
+      await waitFor(() => connectionShown() === label && all("[role=option]").length === 0, `connection ${label} chosen`);
     };
     const bucketRow = (name) => all(bucketButtons).find((row) => row.textContent.trim() === name);
     const pinnedButtons = () => all(`${sel("browse.pinnedList")} [role=button]`);
@@ -89,10 +101,37 @@
 
     // ---- no connection yet: the app opens where one can be added. The update check (its
     // answer is canned for this run) shows a toast once and a badge that stays.
-    await waitFor(() => hasText(T("conn.none")) && hasText(T("conn.add")), "connections screen", 30000);
+    // ---- M10.3 the app starts with 20 saved connections (seeded by the shell: fake endpoints, no keys;
+    // two of them share a label). The update check (its answer is canned for this run) shows a toast
+    // once and a badge that stays.
+    await waitFor(() => button(T("app.connections")), "the app", 30000);
     await waitFor(() => seen("app.update.toast", { tag: "v9.9.9" }) && button(T("app.update.open")), "update toast");
     check(all(".MuiChip-root").some((c) => c.textContent === T("app.update.badge", { tag: "v9.9.9" })), "update badge in the masthead");
     check(!button("Users") && !button("Buckets") && !button("Audit"), "no admin screens");
+    await click(T("app.connections"));
+    const savedRows = () => all(starts("conn.remove")).length;
+    await waitFor(() => all(sel("conn.countAria", { n: 20 })).length === 1 && savedRows() === 20 && hasText(T("conn.add")), "twenty saved connections, counted in a badge");
+    const search = await waitFor(() => last(all(`input${sel("conn.search")}`)), "the search field of the saved connections");
+    setValue(search, "s3-07.");
+    await waitFor(() => savedRows() === 1 && hasText(T("browse.filterCount", { n: 1, m: 20 })), "search by a part of the endpoint");
+    setValue(search, "site-01");
+    const flagged = () => all("[role=note]").filter((n) => n.textContent === T("conn.duplicateLabel")).length;
+    await waitFor(() => savedRows() === 2 && flagged() === 2, "two connections share a label: both are listed and flagged");
+    setValue(search, "SITE-1");
+    await waitFor(() => savedRows() === 10 && flagged() === 0 && hasText(T("browse.filterCount", { n: 10, m: 20 })), "search by label, whatever the case: 10 of 20");
+    check(all(starts("conn.remove")).every((b) => b.closest("li").getBoundingClientRect().height >= 40) && search.getBoundingClientRect().height >= 23 && search.closest(".MuiInputBase-root").getBoundingClientRect().height >= 40, "rows and the search field keep the size floor");
+    all("h2").find((h) => h.textContent === T("conn.savedList")).scrollIntoView({ block: "start" });
+    check(fits(), "Connections with many rows does not scroll sideways");
+    await shot("00-connections-many");
+    setValue(search, "");
+    await waitFor(() => savedRows() === 20, "the search cleared: all of them again");
+    // M10.2: the theme switch of General settings does what the app-bar menu does.
+    const themeSwitch = last(all(".MuiSwitch-input"));
+    themeSwitch.click();
+    await waitFor(() => document.documentElement.dataset.theme === "light" && themeSwitch.checked, "the settings switch turns the light theme on");
+    themeSwitch.click();
+    await waitFor(() => document.documentElement.dataset.theme === "dark" && !themeSwitch.checked, "and off again");
+    all(".MuiContainer-root").forEach((c) => (c.parentElement.scrollTop = 0));
     await type(T("conn.label"), "lab");
     await type(T("conn.endpoint"), CFG.ENDPOINT);
     await type(T("conn.accessKey"), MINE.ak);
@@ -101,10 +140,10 @@
     await waitFor(() => hasText(T("conn.internalHint")), "no-proxy suggestion for a private endpoint");
     await click(T("conn.noProxy.pick"));
     await waitFor(() => proxyOf(T("proxy.name.new")).value === "none", "suggestion taken");
-    await click(T("conn.test"));
+    await testForm();
     await waitFor(() => hasText(T("error.s3.SignatureDoesNotMatch")), "a wrong secret is named as such");
     await type(T("conn.secretKey"), MINE.sk);
-    await click(T("conn.test"));
+    await testForm();
     await waitFor(() => hasText(T("conn.ok", { n: 1 })), "connection test over S3, no admin caps needed");
     check(fits(), "Connections does not scroll sideways");
     await shot("01-connection");
@@ -113,6 +152,9 @@
 
     // ---- Browse: the key's buckets as cards, then one bucket
     await click(T("app.browse"));
+    // The first tab is on the first saved connection (one of the seeded ones): the tab's connection is searched for.
+    check(connectionField().getAttribute("role") === "combobox", "with more than 8 connections the tab's connection is a searchable box");
+    await useConnection("lab");
     await waitFor(() => hasText(T("browse.chooseBucket")) && hasText(T("browse.usingKeyMine")) && hasText(BUCKET), "bucket cards of the key's user", 20000);
     check(all("label").every((l) => !l.textContent.startsWith(T("browse.browseAs"))) && !hasText(piece("myinfo.title")), "a key without caps: no admin extras");
     check(fits(), "the bucket cards do not scroll sideways");
@@ -120,7 +162,7 @@
     await clickSel(bucketButtons);
     await waitFor(() => hasText(loaded(4, 0)), "bucket root");
     await waitFor(() => hasText(versioningIs("on")), "versioning chip");
-    check(tabs().length === 1 && tabs()[0].textContent.startsWith(BUCKET), "the tab is named after the bucket");
+    check(tabs().length === 1 && tabs()[0].textContent === `lab · ${BUCKET}×`, `the tab is named after connection and bucket: ${tabs()[0].textContent}`);
     check(fits() && listFits(), "Browse does not scroll sideways, nor does its object list");
     await shot("03-bucket-root");
 
@@ -373,11 +415,11 @@
     (await waitFor(() => last(all(tick("readme.txt"))), "checkbox of readme.txt")).click();
     await waitFor(() => button(T("browse.deleteCount", { n: 1 })), "one row ticked in the first tab");
     press("t");
-    await waitFor(() => tabs().length === 2 && hasText(T("browse.chooseBucket")) && tabs()[1].textContent.startsWith(T("tabs.new")), "Ctrl+T: a new tab on the bucket cards");
+    await waitFor(() => tabs().length === 2 && hasText(T("browse.chooseBucket")) && tabs()[1].textContent.includes(T("tabs.new")), "Ctrl+T: a new tab on the bucket cards");
     await clickSel(bucketButtons);
     await waitFor(() => hasText(loaded(4, 0)), "bucket root in the second tab");
     await clickSel(folder("media/"));
-    await waitFor(() => objectLink("media/icon.png") && tabs()[1].textContent.startsWith("media"), "the second tab is in media/ and its title says so");
+    await waitFor(() => objectLink("media/icon.png") && tabs()[1].textContent === `lab · ${BUCKET}/media×`, "the second tab is in media/ and its title says so");
     check(!objectLink("notes/readme.txt"), "the first tab's rows are not on screen");
     await shot("24-two-tabs");
     // ---- M10.2 the light theme, chosen in the app-bar menu: shown at once, saved, and back again
@@ -414,7 +456,7 @@
     await waitFor(() => objectLink("media/icon.png") && tabs().length === 2 && menuItems().length === 0, "a place already open is shown in its tab, not opened twice");
     await click(T("app.recent"));
     (await waitFor(() => all("[role=menuitem]").find((m) => m.textContent.trim() === `lab · ${BUCKET}/data`), "data/ in the recent menu")).click();
-    await waitFor(() => tabs().length === 3 && objectLink("data/people.csv") && tabs()[2].textContent.startsWith("data"), "another recent place opens as a new tab");
+    await waitFor(() => tabs().length === 3 && objectLink("data/people.csv") && tabs()[2].textContent.includes("data"), "another recent place opens as a new tab");
     await menusGone(); // the shortcuts are off while a menu, dialog or sheet is open
     press("w");
     await waitFor(() => tabs().length === 2 && objectLink("media/icon.png"), "Ctrl+W closes the tab; its neighbour takes over");
@@ -537,8 +579,7 @@
     await menusGone();
     press("t");
     await waitFor(() => tabs().length === 2 && hasText(T("browse.chooseBucket")), "a new tab");
-    const connection = await field(T("common.connection"));
-    setValue(connection, [...connection.options].find((o) => o.textContent === "chi-doc").value);
+    await useConnection("chi-doc");
     await waitFor(() => hasText(T("browse.noBuckets")) && hasText(T("myinfo.title", { uid: READ_ONLY })), "read-only session; my info, read with the admin key", 20000);
     await clickSel("#my-info-header");
     await waitFor(() => hasText(T("myinfo.readOnly")) && hasText(T("myinfo.userQuota")) && hasText("M4 browse test"), "my own record, quota and usage", 20000);
@@ -621,7 +662,7 @@
     first(pinnedButtons()).click();
     await waitFor(() => objectLink("notes/readme.txt") && tabs().length === 2, "a pin opens in the tab on screen");
     pinnedButtons()[1].dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }));
-    await waitFor(() => tabs().length === 3 && objectLink("media/icon.png") && tabs()[2].textContent.startsWith("media"), "Ctrl+click opens the pin in a new tab");
+    await waitFor(() => tabs().length === 3 && objectLink("media/icon.png") && tabs()[2].textContent.includes("media"), "Ctrl+click opens the pin in a new tab");
     press("w");
     await waitFor(() => tabs().length === 2, "that tab closed again");
     press("Tab");
@@ -680,7 +721,7 @@
     press("t");
     await waitFor(() => tabs().length === 3 && hasText(T("browse.chooseBucket")), "a new tab");
     await useConnection("du-an");
-    await waitFor(() => objectLink("notes/readme.txt") && hasText(loaded(0, 3)) && tabs()[2].textContent.startsWith("notes"), "the connection lands at its start path", 20000);
+    await waitFor(() => objectLink("notes/readme.txt") && hasText(loaded(0, 3)) && tabs()[2].textContent.includes("notes"), "the connection lands at its start path", 20000);
     check(pinnedRows().length === 3 && all(`${sel("browse.pinnedList")} [role=separator]`).length === 1, "another connection's pins are listed under a divider");
     // Above the granted folder S3 refuses; the error says what to do and leads to the field.
     await click(BUCKET);
@@ -755,14 +796,14 @@
     await waitFor(() => all(bucketButtons)[2].classList.contains("Mui-focusVisible"), "the arrow keys move a highlight down the list");
     await shot("43-buckets-filter");
     key("Enter");
-    await waitFor(() => hasText(T("browse.emptyFolder")) && tabs()[2].textContent.startsWith(manyBucket(12)), "Enter opens the highlighted bucket", 20000);
+    await waitFor(() => hasText(T("browse.emptyFolder")) && tabs()[2].textContent.includes(manyBucket(12)), "Enter opens the highlighted bucket", 20000);
     key("Escape");
     await waitFor(() => filter.value === "" && all(bucketButtons).length === MANY, "Esc clears the filter");
     // The open bucket is in view, and again when its tab is shown again.
     const selected = bucketRow(manyBucket(12));
     await waitFor(() => selected.classList.contains("Mui-selected") && selected.offsetTop >= list.scrollTop && selected.offsetTop + selected.offsetHeight <= list.scrollTop + list.clientHeight, "the open bucket is scrolled into view");
     bucketRow(manyBucket(30)).click();
-    await waitFor(() => tabs()[2].textContent.startsWith(manyBucket(30)), "a bucket far down the list", 20000);
+    await waitFor(() => tabs()[2].textContent.includes(manyBucket(30)), "a bucket far down the list", 20000);
     list.scrollTop = 0;
     const open30 = () => bucketRow(manyBucket(30));
     check(open30().offsetTop > list.clientHeight, "it is out of view after scrolling the list back up");
@@ -774,7 +815,23 @@
     await sleep(700);
     const kept = await invoke("tabs_get");
     check(kept.tabs.length === 3 && kept.tabs[2].at.bucket === manyBucket(30) && kept.active === kept.tabs[2].id, `open tabs saved: ${JSON.stringify(kept)}`);
-    await shot("-"); // a slot of its own for the steps above; the removals below get the next one
+    await shot("-"); // a slot of its own for the steps above
+
+    // ---- M10.3 many tabs: the bar scrolls, the tab on screen is in view, a change of connection closes none
+    const bar = document.querySelector(sel("app.tabs"));
+    const inBar = (tab) => tab.getBoundingClientRect().left >= bar.getBoundingClientRect().left - 1 && tab.getBoundingClientRect().right <= bar.getBoundingClientRect().right + 1;
+    for (let count = 4; count <= 12; count++) {
+      press("t");
+      await waitFor(() => tabs().length === count && last(tabs()).getAttribute("aria-selected") === "true", `tab ${count}`);
+    }
+    await waitFor(() => bar.scrollWidth > bar.clientWidth && inBar(last(tabs())) && !inBar(tabs()[0]), "twelve tabs: the bar scrolls and the new tab is in view");
+    check(tabs().every((tab) => tab.getBoundingClientRect().width >= 100) && fits(), "tabs keep a readable width; the page does not scroll sideways");
+    tabs()[0].click();
+    await waitFor(() => inBar(tabs()[0]) && connectionShown() === "lab", "a tab chosen at the other end scrolls into view");
+    await useConnection("many");
+    await waitFor(() => all(bucketButtons).length === MANY && tabs().length === 12, "another connection in this tab: every tab is still there", 20000);
+    notes.push(`12 tabs: bar ${bar.clientWidth} of ${bar.scrollWidth} px`);
+    await shot("-"); // the removals below get the next slot
 
     // ---- remove every connection: their tabs and pins have nothing left to show
     await click(T("app.connections"));
@@ -782,7 +839,7 @@
       await clickSel(sel("conn.remove", { label }));
       await waitFor(() => !document.querySelector(sel("conn.remove", { label })), `connection ${label} removed`);
     }
-    await waitFor(() => hasText(T("conn.none")), "connections removed");
+    await waitFor(() => all(sel("conn.countAria", { n: 20 })).length === 1 && savedRows() === 20, "the flow's connections are removed; the seeded ones are left");
     check((await invoke("pin_list")).length === 0, "the pins of removed connections are gone");
     banner(`SMOKE DONE: ${n + 1} slots, late: [${late.join(", ")}] | ${notes.join(" | ")}`, late.length ? "#fc6" : "#8f8");
     await shot("44-done");

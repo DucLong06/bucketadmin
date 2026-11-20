@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { beforeEach, expect, test } from "vitest";
-import BucketPanel, { filterBuckets, LIST_MAX_HEIGHT, moveHighlight } from "./BucketPanel";
+import BucketPanel, { filterBuckets, LIST_MAX_HEIGHT, moveHighlight, WINDOW_ABOVE } from "./BucketPanel";
 import { applyLang, t } from "./i18n";
 
 const nothing = () => {};
@@ -42,8 +42,8 @@ test("a key that lists nothing keeps the empty-list text, and one with buckets s
 const many = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `team-${String(i + 1).padStart(3, "0")}-Data`, created: "" }));
 const listTag = (html: string) => /<ul[^>]*aria-label="Bucket list"[^>]*>/.exec(html)?.[0] ?? "";
 
-test("150 buckets: the list has a height limit of its own and scrolls inside the card; header, filter and controls are outside it", () => {
-  const html = panel({ buckets: many(150), current: "team-120-Data" });
+test("100 buckets: the list has a height limit of its own and scrolls inside the card; header, filter and controls are outside it", () => {
+  const html = panel({ buckets: many(100), current: "team-080-Data" });
   expect(LIST_MAX_HEIGHT).toBe("max(200px, 38vh)");
   expect(listTag(html)).toContain(`style="max-height:${LIST_MAX_HEIGHT}"`);
   // The scrolling itself and the thin themed bar come from the list's class.
@@ -55,15 +55,37 @@ test("150 buckets: the list has a height limit of its own and scrolls inside the
   expect(css).toContain(`.${cls}::-webkit-scrollbar{width:8px;}`);
   expect(css).toContain(`.${cls}::-webkit-scrollbar-thumb{background:var(--ba-line);border-radius:8px;}`);
   expect(css).toContain(`@supports not selector(::-webkit-scrollbar){.${cls}{scrollbar-width:thin;scrollbar-color:var(--ba-line) transparent;}}`);
-  // All 150 rows are in the list; everything else of the card is not.
+  // All 100 rows are in the list (it is windowed above that); everything else of the card is not.
+  expect(WINDOW_ABOVE).toBe(100);
   const inside = html.slice(html.indexOf(listTag(html)), html.indexOf("</ul>"));
-  expect(inside.match(/role="button"/g)).toHaveLength(150);
+  expect(inside.match(/role="button"/g)).toHaveLength(100);
   const outside = text(html.replace(inside, ""));
-  expect(outside).toContain("Your buckets · 150");
+  expect(outside).toContain("Your buckets · 100");
   expect(outside).toContain("Create bucket");
   expect(outside).toContain("Open path");
   expect(html.replace(inside, "")).toContain('placeholder="Filter buckets…"');
   expect(text(inside)).not.toContain("Create bucket");
+});
+
+test("500 buckets: only the rows in view are mounted, the rest is two spacers; height limit, count and filter as before", () => {
+  const html = panel({ buckets: many(500) });
+  const inside = html.slice(html.indexOf(listTag(html)), html.indexOf("</ul>"));
+  const rows = inside.match(/role="button"/g)?.length ?? 0;
+  expect(rows).toBeGreaterThan(5);
+  expect(rows).toBeLessThan(40);
+  // The first rows, each saying where it is in the whole list; the space of the others is kept below them.
+  expect(text(inside)).toContain("team-001-Data");
+  expect(text(inside)).not.toContain("team-400-Data");
+  expect(inside).toContain('aria-setsize="500" aria-posinset="1"');
+  expect(inside).toContain(`<li aria-hidden="true" style="height:${(500 - rows) * 40}px"></li>`);
+  expect(listTag(html)).toContain(`style="max-height:${LIST_MAX_HEIGHT}"`);
+  expect(text(html)).toContain("Your buckets · 500");
+  expect(html).toContain('placeholder="Filter buckets…"');
+  // Filtering 500 names is instant, and exact.
+  const before = performance.now();
+  const hits = filterBuckets(many(500), "TEAM-49");
+  expect(performance.now() - before).toBeLessThan(50);
+  expect(hits.map((b) => b.name)).toEqual(Array.from({ length: 10 }, (_, i) => `team-49${i}-Data`));
 });
 
 test("the filter field appears above 8 buckets only; the header counts the buckets", () => {
