@@ -2,14 +2,16 @@ import { type FormEvent, useEffect, useState } from "react";
 import { Alert, Box, Button, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { invoke, isInternal, maskKey, type EndpointKind, type Profile, type Proxy } from "./api";
 import { endpointError } from "./endpoint";
+import { t, type Key } from "./i18n";
 import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
-import { ErrorAlert } from "./ui";
+import { ErrorAlert, LangToggle } from "./ui";
 import { stepScale, UI_SCALES } from "./zoom";
 
-type Outcome = { severity: "success" | "warning" | "error"; text: string };
+// Kept as data, not as text: what is on screen follows a change of language.
+type Outcome = { severity: "error"; text: string } | { severity: "success"; key: Key; vars?: Record<string, string | number> };
 
 const outcomeAlert = (o: Outcome, sx?: object) =>
-  o.severity === "error" ? <ErrorAlert error={o.text} sx={sx} /> : <Alert severity={o.severity} sx={sx}>{o.text}</Alert>;
+  o.severity === "error" ? <ErrorAlert error={o.text} sx={sx} /> : <Alert severity={o.severity} sx={sx}>{t(o.key, o.vars)}</Alert>;
 
 const emptyForm = { label: "", endpoint: "", accessKey: "", secretKey: "", adminAccessKey: "", adminSecretKey: "" };
 /** Keys and paths are the one place the UI uses a monospace face. */
@@ -19,8 +21,6 @@ const Mono = ({ children }: { children: string }) => (
   </Box>
 );
 const NO_PROXY: Proxy = { mode: "none" };
-const INTERNAL_HINT =
-  'Endpoint này nằm trong mạng nội bộ (địa chỉ private hoặc tên chỉ DNS nội bộ biết): proxy thường không tới được. Nên chọn "Không dùng proxy".';
 
 /** Asks the backend what the endpoint looks like; null while unknown, invalid or not asked. */
 function useEndpointKind(endpoint: string, wanted: boolean): EndpointKind | null {
@@ -55,31 +55,28 @@ function ProfileProxy({ profile, onChanged, fail }: { profile: Profile; onChange
   return (
     <Stack spacing={1} sx={{ mt: 1 }}>
       <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
-        <ProxyPicker value={draft} onChange={setDraft} inherit name={`của ${profile.label}`} />
-        <Button onClick={() => save(draft)} disabled={sameProxy(draft, saved) || !proxyReady(draft)} aria-label={`Lưu proxy của ${profile.label}`}>
-          Lưu proxy
+        <ProxyPicker value={draft} onChange={setDraft} inherit name={t("proxy.name.of", { label: profile.label })} />
+        <Button onClick={() => save(draft)} disabled={sameProxy(draft, saved) || !proxyReady(draft)} aria-label={t("conn.saveProxyFor", { label: profile.label })}>
+          {t("conn.saveProxy")}
         </Button>
       </Stack>
       {isInternal(kind) && (
         <Alert
           severity="info"
           action={
-            <Button color="inherit" size="small" onClick={() => save(NO_PROXY)} aria-label={`Chọn Không dùng proxy cho ${profile.label}`}>
-              Chọn Không dùng proxy
+            <Button color="inherit" size="small" onClick={() => save(NO_PROXY)} aria-label={t("conn.noProxy.pickFor", { label: profile.label })}>
+              {t("conn.noProxy.pick")}
             </Button>
           }
         >
-          {INTERNAL_HINT}
+          {t("conn.internalHint")}
         </Alert>
       )}
     </Stack>
   );
 }
 type Opened = { access_key: string; buckets: unknown[] };
-const connected = (buckets: number): Outcome => ({
-  severity: "success",
-  text: `Kết nối thành công: key hợp lệ, user của key sở hữu ${buckets} bucket.`,
-});
+const connected = (buckets: number): Outcome => ({ severity: "success", key: "conn.ok", vars: { n: buckets } });
 
 /** The connections screen: the S3 endpoints the app browses, each with the user's own key
  *  (secret in the OS keychain), an optional admin key, and its proxy choice. */
@@ -113,7 +110,7 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
       const saved = await invoke<Proxy>("network_set", { proxy: networkDraft });
       setNetwork(saved);
       setNetworkDraft(saved);
-      setNetworkOutcome({ severity: "success", text: "Đã lưu. Áp dụng cho mọi kết nối không có lựa chọn proxy riêng, và cho việc kiểm tra bản mới." });
+      setNetworkOutcome({ severity: "success", key: "settings.networkSaved" });
     } catch (e) {
       setNetworkOutcome({ severity: "error", text: String(e) });
     }
@@ -171,10 +168,7 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
       } finally {
         onChanged();
       }
-      setFormOutcome({
-        severity: "success",
-        text: `Đã lưu "${saved.label}". Secret key được cất trong keychain của hệ thống.`,
-      });
+      setFormOutcome({ severity: "success", key: "conn.saved", vars: { label: saved.label } });
     } catch (err) {
       fail(err);
     }
@@ -194,71 +188,75 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
   const keySx = { htmlInput: { style: { fontFamily: "monospace" } } };
   return (
     <>
-      <Typography variant="overline" color="primary" component="p">
-        Kết nối
-      </Typography>
-      <Typography variant="h4" component="h1" gutterBottom>
-        Kết nối
-      </Typography>
+      {/* The first screen a new user sees: the language can be chosen right here. */}
+      <Stack direction="row" sx={{ alignItems: "flex-start", justifyContent: "space-between" }}>
+        <Box>
+          <Typography variant="overline" color="primary" component="p">
+            {t("conn.title")}
+          </Typography>
+          <Typography variant="h4" component="h1" gutterBottom>
+            {t("conn.title")}
+          </Typography>
+        </Box>
+        <LangToggle />
+      </Stack>
       <Typography color="text.secondary" sx={{ mb: 3, maxWidth: 720 }}>
-        Mỗi kết nối là một endpoint S3 (Ceph RGW) cùng key của bạn. App duyệt bucket bằng đúng key đó: bạn thấy và làm được
-        những gì key được phép.
+        {t("conn.intro")}
       </Typography>
 
       <Paper component="form" onSubmit={save} variant="outlined" sx={{ p: 3, mb: 4 }}>
         <Typography variant="h6" component="h2" gutterBottom>
-          Thêm kết nối
+          {t("conn.add")}
         </Typography>
         <Stack spacing={2}>
-          {field("label", "Tên hiển thị", { required: true })}
-          {field("endpoint", "Endpoint", {
+          {field("label", t("conn.label"), { required: true })}
+          {field("endpoint", t("conn.endpoint"), {
             required: true,
             placeholder: "http://host:7480",
             error: !!urlError,
-            helperText: urlError ?? "Địa chỉ S3 của RGW, ví dụ http://host:7480",
+            helperText: urlError ?? t("conn.endpointHelp"),
           })}
-          {field("accessKey", "Access key của tôi", { required: true, autoComplete: "off", slotProps: keySx })}
-          {field("secretKey", "Secret key của tôi", {
+          {field("accessKey", t("conn.accessKey"), { required: true, autoComplete: "off", slotProps: keySx })}
+          {field("secretKey", t("conn.secretKey"), {
             required: true,
             type: "password",
             autoComplete: "off",
-            helperText: "Giống key bạn dùng với rclone, s3cmd… Secret nằm trong keychain của hệ thống, không ghi ra file.",
+            helperText: t("conn.secretHelp"),
           })}
           <details>
-            <summary>Key admin (không bắt buộc)</summary>
+            <summary>{t("conn.adminKey")}</summary>
             <Stack spacing={2} sx={{ mt: 2 }}>
               <Typography variant="body2" color="text.secondary">
-                Chỉ cần khi key của bạn không có caps mà bạn muốn xem "Thông tin của tôi" (quota, usage), hoặc duyệt thay một
-                user khác. Key admin không bao giờ được dùng để ký request S3.
+                {t("conn.adminHelp")}
               </Typography>
-              {field("adminAccessKey", "Access key admin", { autoComplete: "off", slotProps: keySx })}
-              {field("adminSecretKey", "Secret key admin", {
+              {field("adminAccessKey", t("conn.adminAccessKey"), { autoComplete: "off", slotProps: keySx })}
+              {field("adminSecretKey", t("conn.adminSecretKey"), {
                 type: "password",
                 autoComplete: "off",
                 error: !adminReady,
-                helperText: adminReady ? undefined : "Nhập đủ cả access key và secret key admin, hoặc để trống cả hai.",
+                helperText: adminReady ? undefined : t("conn.adminHalf"),
               })}
             </Stack>
           </details>
-          <ProxyPicker value={formProxy} onChange={setFormProxy} inherit name="của kết nối mới" />
+          <ProxyPicker value={formProxy} onChange={setFormProxy} inherit name={t("proxy.name.new")} />
           {isInternal(formKind) && (
             <Alert
               severity="info"
               action={
                 <Button color="inherit" size="small" onClick={() => setFormProxy(NO_PROXY)}>
-                  Chọn Không dùng proxy
+                  {t("conn.noProxy.pick")}
                 </Button>
               }
             >
-              {INTERNAL_HINT}
+              {t("conn.internalHint")}
             </Alert>
           )}
           <Stack direction="row" spacing={1}>
             <Button variant="outlined" onClick={testForm} disabled={!canTest}>
-              Kiểm tra kết nối
+              {t("conn.test")}
             </Button>
             <Button type="submit" variant="contained" disabled={!canTest || !adminReady || !form.label.trim()}>
-              Lưu
+              {t("common.save")}
             </Button>
           </Stack>
           {formOutcome && outcomeAlert(formOutcome)}
@@ -266,9 +264,9 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
       </Paper>
 
       <Typography variant="h6" component="h2" gutterBottom>
-        Kết nối đã lưu
+        {t("conn.savedList")}
       </Typography>
-      {profiles.length === 0 && <Typography color="text.secondary">Chưa có kết nối nào.</Typography>}
+      {profiles.length === 0 && <Typography color="text.secondary">{t("conn.none")}</Typography>}
       <Stack spacing={1.5} component="ul" sx={{ listStyle: "none", p: 0, m: 0 }}>
         {profiles.map((p) => (
           <Paper key={p.id} component="li" variant="outlined" sx={{ p: 2.5 }}>
@@ -276,24 +274,24 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
               <Stack sx={{ flexGrow: 1, minWidth: 0 }}>
                 <Typography sx={{ fontWeight: 600 }}>{p.label}</Typography>
                 <Typography variant="body2" color="text.secondary" noWrap>
-                  <Mono>{p.endpoint}</Mono> · key của tôi <Mono>{maskKey(p.browse_access_key ?? p.access_key)}</Mono>
+                  <Mono>{p.endpoint}</Mono> · {t("conn.myKey")} <Mono>{maskKey(p.browse_access_key ?? p.access_key)}</Mono>
                   {p.browse_access_key && p.browse_access_key !== p.access_key && (
                     <>
                       {" "}
-                      · key admin <Mono>{maskKey(p.access_key)}</Mono>
+                      · {t("conn.adminKeyShort")} <Mono>{maskKey(p.access_key)}</Mono>
                     </>
                   )}
                 </Typography>
               </Stack>
-              <Button onClick={() => testSaved(p.id)} aria-label={`Kiểm tra kết nối tới ${p.label}`}>
-                Kiểm tra kết nối
+              <Button onClick={() => testSaved(p.id)} aria-label={t("conn.testFor", { label: p.label })}>
+                {t("conn.test")}
               </Button>
               <Button
                 color="error"
                 onClick={() => invoke("remove_profile", { id: p.id }).then(onChanged).catch(fail)}
-                aria-label={`Xoá kết nối ${p.label}`}
+                aria-label={t("conn.remove", { label: p.label })}
               >
-                Xoá
+                {t("common.delete")}
               </Button>
             </Stack>
             <ProfileProxy profile={p} onChanged={onChanged} fail={fail} />
@@ -304,17 +302,16 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
 
       <Paper variant="outlined" sx={{ p: 3, mt: 4 }}>
         <Typography variant="h6" component="h2" gutterBottom>
-          Cài đặt chung — Mạng
+          {t("settings.network")}
         </Typography>
         <Stack spacing={2}>
           <Typography variant="body2" color="text.secondary">
-            Cách app đi ra mạng khi một kết nối không có lựa chọn riêng. "Tự động" dùng HTTP_PROXY / HTTPS_PROXY / NO_PROXY của
-            môi trường; "Không dùng proxy" luôn kết nối thẳng dù môi trường có đặt proxy; "Tùy chỉnh" luôn đi qua proxy bạn nhập.
+            {t("settings.networkHelp")}
           </Typography>
           <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
-            <ProxyPicker value={networkDraft} onChange={(next) => next && setNetworkDraft(next)} name="chung" />
+            <ProxyPicker value={networkDraft} onChange={(next) => next && setNetworkDraft(next)} name={t("proxy.name.general")} />
             <Button variant="contained" onClick={saveNetwork} disabled={sameProxy(networkDraft, network) || !proxyReady(networkDraft)}>
-              Lưu cài đặt mạng
+              {t("settings.networkSave")}
             </Button>
           </Stack>
           {networkOutcome && outcomeAlert(networkOutcome)}
@@ -323,25 +320,29 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
 
       <Paper variant="outlined" sx={{ p: 3, mt: 4 }}>
         <Typography variant="h6" component="h2" gutterBottom>
-          Cài đặt chung — Giao diện
+          {t("settings.display")}
         </Typography>
-        <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
+        <Stack direction="row" spacing={2} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
           <Typography variant="body2" color="text.secondary">
-            Cỡ chữ và giao diện
+            {t("settings.size")}
           </Typography>
-          <Tooltip title="Ctrl+= phóng to · Ctrl+- thu nhỏ · Ctrl+0 về 100%">
-            <Stack direction="row" spacing={0.5} role="group" aria-label="Cỡ giao diện" sx={{ alignItems: "center" }}>
-              <Button variant="outlined" aria-label="Thu nhỏ giao diện" disabled={scale <= UI_SCALES[0]} onClick={() => onScale(stepScale(scale, -1))}>
+          <Tooltip title={t("settings.sizeTip")}>
+            <Stack direction="row" spacing={0.5} role="group" aria-label={t("settings.size")} sx={{ alignItems: "center" }}>
+              <Button variant="outlined" aria-label={t("settings.smaller")} disabled={scale <= UI_SCALES[0]} onClick={() => onScale(stepScale(scale, -1))}>
                 A-
               </Button>
               <Typography aria-live="polite" sx={{ minWidth: 56, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>
                 {scale}%
               </Typography>
-              <Button variant="outlined" aria-label="Phóng to giao diện" disabled={scale >= UI_SCALES[UI_SCALES.length - 1]} onClick={() => onScale(stepScale(scale, 1))}>
+              <Button variant="outlined" aria-label={t("settings.bigger")} disabled={scale >= UI_SCALES[UI_SCALES.length - 1]} onClick={() => onScale(stepScale(scale, 1))}>
                 A+
               </Button>
             </Stack>
           </Tooltip>
+          <Typography variant="body2" color="text.secondary" sx={{ ml: 3 }}>
+            {t("settings.language")}
+          </Typography>
+          <LangToggle />
         </Stack>
       </Paper>
     </>

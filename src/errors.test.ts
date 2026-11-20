@@ -1,5 +1,9 @@
-import { expect, test } from "vitest";
+import { beforeEach, expect, test } from "vitest";
 import { explain } from "./errors";
+import { applyLang } from "./i18n";
+
+// Vietnamese unless a test says otherwise.
+beforeEach(() => applyLang("vi"));
 
 // The inputs are the exact strings the Rust side produces (RgwError's Display).
 test("named RGW errors get a Vietnamese message and keep code + original", () => {
@@ -43,9 +47,40 @@ test("network failures: timeout is told apart from connection errors", () => {
   expect(slow.message).toMatch(/^Hết thời gian chờ/);
 });
 
-test("unrecognised text is passed through unchanged", () => {
-  const e = explain("keychain: cannot read secret key: locked");
-  expect(e).toEqual({ message: e.detail, code: null, detail: "keychain: cannot read secret key: locked" });
+test("the app's own backend phrases are known by how they begin; anything else gets a plain sentence, never the backend's English", () => {
+  const locked = explain("keychain: cannot read secret key: locked");
+  expect(locked).toEqual({ message: locked.message, code: "keychain", detail: "keychain: cannot read secret key: locked" });
+  expect(locked.message).toMatch(/^Không dùng được keychain/);
+  expect(explain("cannot read this file as Parquet: Invalid Parquet file. Corrupt footer").message).toBe("Không đọc được file này như Parquet.");
+  expect(explain("cannot read /home/u/a.bin: Permission denied (os error 13)").message).toBe("Không đọc được file trên máy.");
+  expect(explain("cannot write /home/u/a.bin.part: No space left on device (os error 28)").message).toBe("Không ghi được file trên máy.");
+  expect(explain('invalid bucket name "Bad_Name": only lowercase letters').message).toBe("Tên bucket không hợp lệ.");
+  expect(explain('folder "reports/" already exists').message).toBe("Thư mục này đã tồn tại.");
+  expect(explain("a version id is required to restore").code).toBe("required");
+  expect(explain("no cluster profile with id 0123abcd").message).toBe("Kết nối này không còn tồn tại.");
+  const odd = explain("something nobody has seen before: os error 5");
+  expect(odd).toEqual({ message: "Thao tác không thành công.", code: null, detail: "something nobody has seen before: os error 5" });
+});
+
+test("the same errors in English: every sentence follows the language, the detail never changes", () => {
+  applyLang("en");
+  const gone = explain("NoSuchUser (404): user does not exist");
+  expect(gone).toEqual({ message: "The user does not exist (it may have been deleted).", code: "NoSuchUser", detail: "NoSuchUser (404): user does not exist" });
+  expect(explain("S3 AccessDenied (403): ").message).toMatch(/^This user's key is not allowed/);
+  expect(explain("S3 SlowDown (503): busy").message).toBe("S3 answered with HTTP 503 (SlowDown).");
+  expect(explain("RGW returned HTTP 502  ").message).toMatch(/^RGW answered with HTTP 502\. A proxy in between .*"No proxy"/);
+  expect(explain("cannot reach RGW: operation timed out").message).toMatch(/^RGW did not answer in time/);
+  expect(explain("AccessDenied (403): refused [needs users=read]").message).toBe("Not allowed: this cluster's key lacks the caps users=read.");
+  expect(explain("keychain: cannot read secret key: locked").message).toMatch(/^The system keychain/);
+  expect(explain("something nobody has seen before").message).toBe("The operation failed.");
+  // No sentence of one language in the other: every known code, both ways.
+  for (const raw of ["NoSuchBucket (404): x", "S3 NoSuchKey (404): x", "RGW returned HTTP 500  ", "cannot reach RGW: refused", "nonsense"]) {
+    applyLang("en");
+    const english = explain(raw).message;
+    applyLang("vi");
+    expect(explain(raw).message).not.toBe(english);
+    expect(explain(raw).message).not.toBe(raw);
+  }
 });
 
 test("S3 errors made with a user's own key get their own wording", () => {

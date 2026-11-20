@@ -6,9 +6,16 @@
 #   npx tauri build --debug --no-bundle
 #   xvfb-run -a -s "-screen 0 1280x900x24" scripts/ui-smoke/ui-smoke.sh "$PWD/src-tauri/target/debug/bucketadmin"
 # $1 = app binary (debug build: only those honour BUCKETADMIN_DEV_SCRIPT). Screenshots: /tmp/ba-smoke/*.png.
+# UI_LANG=vi|en (default vi): the language the app runs in. The same flow passes in both.
 HERE="$(dirname "$(readlink -f "$0")")"
 export TPL="$HERE/driver.tpl.js" FLOW_JS="$HERE/flow-browse.js"
 mkdir -p /tmp/ba-smoke
+export UI_LANG="${UI_LANG:-vi}"
+case "$UI_LANG" in vi|en) ;; *) echo "UI_LANG must be vi or en, not '$UI_LANG'"; exit 1 ;; esac
+# The flow names every text by its key in the app's string table, so the driver gets that
+# language's table. Node 23.6+ runs the .ts file as it is (built-in type stripping).
+node -e "import('$HERE/../../src/i18n/strings.ts').then((m) => process.stdout.write(JSON.stringify(m[process.env.UI_LANG])))" > /tmp/ba-smoke/strings.json \
+  || { echo "cannot read src/i18n/strings.ts with node (23.6 or newer is needed)"; exit 1; }
 # Run a private copy: the fixture below is a `cargo test`, and that rebuilds target/debug/bucketadmin
 # WITHOUT the embedded frontend (a dev-server build that only shows "Could not connect to localhost").
 BIN=/tmp/ba-smoke/bucketadmin-under-test
@@ -34,6 +41,9 @@ echo "== fixture: create"; fixture create
 # Profiles, settings and audit.db go to a throw-away XDG_DATA_HOME; the keychain entries are removed by the last step.
 export XDG_DATA_HOME=/tmp/ba-smoke/data
 rm -rf /tmp/ba-smoke/data
+# The app starts in the language under test (everything else in settings.json has a default).
+mkdir -p "$XDG_DATA_HOME/bucketadmin"
+echo "{\"lang\": \"$UI_LANG\"}" > "$XDG_DATA_HOME/bucketadmin/settings.json"
 rm -f /tmp/ba-smoke/*.png
 # Long enough for the slowest step even when the lab is slow.
 export STEP="${STEP:-10000}"
@@ -47,7 +57,8 @@ shot() {
 import json, os
 cfg = dict(START=int(os.environ["START"]), STEP=int(os.environ["STEP"]), NAMES=os.environ["NAMES"].split(),
            ENDPOINT="http://127.0.0.1:7480", AK=os.environ["RGW_ACCESS_KEY"], SK=os.environ["RGW_SECRET_KEY"],
-           FILES="/tmp/ba-smoke/files", MP4=bool(os.environ.get("BA_SMOKE_MP4")))
+           FILES="/tmp/ba-smoke/files", MP4=bool(os.environ.get("BA_SMOKE_MP4")),
+           LANG=os.environ["UI_LANG"], STR=json.load(open("/tmp/ba-smoke/strings.json")))
 flow = open(os.environ["FLOW_JS"]).read()
 print(open(os.environ["TPL"]).read().replace("    // __FLOW__", flow).replace("__CFG__", json.dumps(cfg)))
 PY
@@ -92,7 +103,7 @@ echo "== profiles.json and settings.json after the run"; cat /tmp/ba-smoke/data/
 python3 - <<'PY'
 import json
 s = json.load(open("/tmp/ba-smoke/data/bucketadmin/settings.json"))
-print("settings.json: proxy", s.get("proxy"), "| update tag", (s.get("update") or {}).get("tag"), "| recent places left", len(s.get("recent", [])))
+print("settings.json: lang", s.get("lang"), "| ui_scale", s.get("ui_scale"), "| proxy", s.get("proxy"), "| update tag", (s.get("update") or {}).get("tag"), "| recent places left", len(s.get("recent", [])))
 PY
 # A flow that fails before its last step leaves its connections behind; the profile file is
 # throw-away, but the secrets sit in the real keychain: remove exactly those entries.
@@ -128,9 +139,11 @@ echo "== app stdout/stderr (libEGL noise filtered)"; grep -v 'libEGL\|DRI3' /tmp
 # The driver ends with a banner in the bottom-left corner: green = every step passed in time,
 # orange = all steps passed but some finished after their screenshot was taken, red = a step failed.
 python3 - <<'PY'
-import sys
+import os, sys
 from PIL import Image
-r, g, b = Image.open("/tmp/ba-smoke/99-final.png").convert("RGB").getpixel((4, 794))
+# The banner sits at the bottom of the window: 800 px high unless WINDOW says otherwise.
+height = int((os.environ.get("WINDOW") or "x800").split("x")[1])
+r, g, b = Image.open("/tmp/ba-smoke/99-final.png").convert("RGB").getpixel((4, height - 6))
 missing = open("/tmp/ba-smoke/audit-missing.txt").read().strip()
 if g > 240 and r < 200:
     verdict, code = "DONE", 0

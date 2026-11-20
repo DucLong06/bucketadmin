@@ -11,7 +11,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { invoke, keyOwner, type Profile } from "./api";
+import { invoke, type Profile } from "./api";
+import { t } from "./i18n";
 import { bucketNameError, folderNameError } from "./names";
 import { ErrorAlert, useAction } from "./ui";
 
@@ -49,14 +50,14 @@ export function CreateBucketDialog({ clusterId, uid, open, onClose, onCreated }:
   return (
     <Dialog open={open} onClose={close} maxWidth="sm" fullWidth aria-labelledby="create-bucket-title">
       <form onSubmit={submit}>
-        <DialogTitle id="create-bucket-title">Tạo bucket</DialogTitle>
+        <DialogTitle id="create-bucket-title">{t("browse.createBucket")}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
             <Typography variant="body2" color="text.secondary">
-              Bucket mới thuộc về {keyOwner(uid)} và được tạo bằng key của chính {keyOwner(uid)}.
+              {uid ? t("dialogs.bucketOwnerUser", { uid }) : t("dialogs.bucketOwnerMine")}
             </Typography>
             <TextField
-              label="Tên bucket"
+              label={t("dialogs.bucketName")}
               value={name}
               onChange={(e) => setName(e.target.value.trim())}
               size="small"
@@ -64,20 +65,20 @@ export function CreateBucketDialog({ clusterId, uid, open, onClose, onCreated }:
               required
               autoFocus
               error={!!nameError}
-              helperText={nameError ?? "3–63 ký tự: chữ thường, số, dấu chấm, dấu gạch ngang"}
+              helperText={nameError ?? t("dialogs.bucketNameHelp")}
               slotProps={{ htmlInput: { style: { fontFamily: "monospace" } } }}
             />
             <FormControlLabel
               control={<Switch checked={versioning} onChange={(e) => setVersioning(e.target.checked)} />}
-              label="Bật versioning (mặc định tắt)"
+              label={t("dialogs.versioningSwitch")}
             />
             <ErrorAlert error={error} />
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={close}>Huỷ</Button>
+          <Button onClick={close}>{t("common.cancel")}</Button>
           <Button type="submit" variant="contained" disabled={busy || !name || !!nameError}>
-            Tạo bucket
+            {t("browse.createBucket")}
           </Button>
         </DialogActions>
       </form>
@@ -119,19 +120,19 @@ export function CreateFolderDialog({ clusterId, uid, bucket, prefix, open, onClo
   return (
     <Dialog open={open} onClose={close} maxWidth="sm" fullWidth aria-labelledby="create-folder-title">
       <form onSubmit={submit}>
-        <DialogTitle id="create-folder-title">Tạo thư mục</DialogTitle>
+        <DialogTitle id="create-folder-title">{t("browse.createFolder")}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
             <Typography variant="body2" color="text.secondary">
-              S3 không có thư mục thật: app tạo một object rỗng tên{" "}
+              {t("dialogs.folderExplain.before")}{" "}
               <code>
                 {prefix}
-                {name.trim() || "<tên>"}/
+                {name.trim() || t("dialogs.folderNamePlaceholder")}/
               </code>{" "}
-              trong bucket {bucket}, theo quy ước chung của các công cụ S3.
+              {t("dialogs.folderExplain.after", { bucket })}
             </Typography>
             <TextField
-              label="Tên thư mục"
+              label={t("dialogs.folderName")}
               value={name}
               onChange={(e) => setName(e.target.value)}
               size="small"
@@ -139,15 +140,15 @@ export function CreateFolderDialog({ clusterId, uid, bucket, prefix, open, onClo
               required
               autoFocus
               error={!!nameError}
-              helperText={nameError ?? "Không chứa dấu /"}
+              helperText={nameError ?? t("dialogs.folderNameHelp")}
             />
             <ErrorAlert error={error} />
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={close}>Huỷ</Button>
+          <Button onClick={close}>{t("common.cancel")}</Button>
           <Button type="submit" variant="contained" disabled={busy || !name.trim() || !!nameError}>
-            Tạo thư mục
+            {t("browse.createFolder")}
           </Button>
         </DialogActions>
       </form>

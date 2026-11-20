@@ -123,6 +123,17 @@ pub fn nearest_scale(percent: u16) -> Result<u16, String> {
     Ok(*nearest.unwrap_or(&100))
 }
 
+/// Languages the UI is written in.
+pub const LANGS: [&str; 2] = ["en", "vi"];
+
+/// A language the user may choose: one of [`LANGS`], or "" to follow the system's.
+pub fn valid_lang(lang: &str) -> Result<String, String> {
+    if lang.is_empty() || LANGS.contains(&lang) {
+        return Ok(lang.to_string());
+    }
+    Err(format!("invalid language {lang:?}: expected en or vi"))
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
@@ -130,6 +141,9 @@ pub struct Settings {
     /// Size of the interface in percent, one of [`UI_SCALES`].
     #[serde(default = "default_scale")]
     pub ui_scale: u16,
+    /// Language of the UI, one of [`LANGS`]; empty = follow the system's.
+    #[serde(default)]
+    pub lang: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update: Option<UpdateSeen>,
     /// Places opened last, newest first, at most [`MAX_RECENT`].
@@ -142,6 +156,7 @@ impl Default for Settings {
         Self {
             proxy: Proxy::default(),
             ui_scale: default_scale(),
+            lang: String::new(),
             update: None,
             recent: Vec::new(),
         }
@@ -152,6 +167,11 @@ impl Settings {
     /// The saved scale as a step the UI can show; a hand-edited value that is no step gives 100.
     pub fn scale(&self) -> u16 {
         nearest_scale(self.ui_scale).unwrap_or(default_scale())
+    }
+
+    /// The saved language; a hand-edited value that is no language counts as "follow the system".
+    pub fn lang(&self) -> String {
+        valid_lang(&self.lang).unwrap_or_default()
     }
 
     /// Puts `place` at the front of the recent places; a place already listed moves up.
@@ -390,6 +410,29 @@ mod tests {
         assert_eq!(store.get().unwrap().scale(), 125);
         std::fs::write(dir.join("settings.json"), r#"{"ui_scale":9}"#).unwrap();
         assert_eq!(store.get().unwrap().scale(), 100);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn lang_follows_the_system_until_chosen_and_survives_a_reload() {
+        let dir = temp_dir("lang");
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = SettingsStore::new(&dir);
+        // A settings.json written before the field existed: no choice yet.
+        std::fs::write(dir.join("settings.json"), r#"{"ui_scale":110}"#).unwrap();
+        assert_eq!(store.get().unwrap().lang(), "");
+        store.change(|s| s.lang = "vi".into()).unwrap();
+        let reloaded = SettingsStore::new(&dir).get().unwrap();
+        assert_eq!((reloaded.lang().as_str(), reloaded.ui_scale), ("vi", 110));
+        for ok in ["", "en", "vi"] {
+            assert_eq!(valid_lang(ok), Ok(ok.to_string()));
+        }
+        for refused in ["fr", "EN", "vi-VN", " "] {
+            assert!(valid_lang(refused).is_err(), "{refused:?}");
+        }
+        // A hand-edited file naming no language of the UI: back to the system's.
+        std::fs::write(dir.join("settings.json"), r#"{"lang":"fr"}"#).unwrap();
+        assert_eq!(store.get().unwrap().lang(), "");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

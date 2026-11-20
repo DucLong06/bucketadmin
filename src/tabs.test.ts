@@ -1,10 +1,12 @@
 import { expect, test } from "vitest";
+import { applyLang } from "./i18n";
 import { closeTab, cycleTab, placeLabel, placePath, samePlace, tabShortcut, tabTitle, type BrowseTab, type Place } from "./tabs";
 
 const place = (bucket = "", prefix = "", clusterId = "c1", uid = ""): Place => ({ clusterId, uid, bucket, prefix });
 const tab = (id: string, at = place()): BrowseTab => ({ id, start: at, at });
 
 test("titles and labels of a place", () => {
+  applyLang("vi");
   expect(tabTitle(place())).toBe("Tab mới");
   expect(tabTitle(place("logs"))).toBe("logs");
   expect(tabTitle(place("logs", "2026/11/"))).toBe("11");
@@ -14,6 +16,9 @@ test("titles and labels of a place", () => {
   expect(placeLabel(place("logs", "2026/"), profiles)).toBe("lab · logs/2026");
   expect(placeLabel(place("logs", "", "c1", "alice"), profiles)).toBe("lab · user alice · logs");
   expect(placeLabel(place("logs", "", "gone"), profiles)).toBe("kết nối đã xoá · logs");
+  applyLang("en");
+  expect(tabTitle(place())).toBe("New tab");
+  expect(placeLabel(place("logs", "", "gone", "alice"), profiles)).toBe("deleted connection · user alice · logs");
   expect(samePlace(place("a", "b/"), place("a", "b/"))).toBe(true);
   expect(samePlace(place("a", "b/"), place("a", "b/", "c1", "alice"))).toBe(false);
   expect(samePlace(place("a", "b/"), place("a", "b/", "c2"))).toBe(false);

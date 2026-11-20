@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Box, Button, LinearProgress, Stack, TextField, Typography } from "@mui/material";
 import { invoke } from "../api";
 import { formatBytes } from "../format";
+import { getLang, t } from "../i18n";
 import type { ObjectAt, ObjectTabProps } from "../ObjectDrawer";
 import { CopyButton, ErrorAlert, useAction } from "../ui";
 import { VirtualTable, type Column } from "../virtual";
@@ -50,8 +51,7 @@ function LoadMore({ loaded, size, label }: { loaded: Loaded; size: number; label
   return (
     <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
       <Typography variant="body2" color="text.secondary">
-        Đã tải {formatBytes(loaded.bytes.length)} / {formatBytes(size)}
-        {loaded.complete ? " — đã tải hết." : "."}
+        {t(loaded.complete ? "preview.loadedAll" : "preview.loaded", { done: formatBytes(loaded.bytes.length), total: formatBytes(size) })}
       </Typography>
       {!loaded.complete && !loaded.capped && (
         <Button size="small" variant="outlined" onClick={loaded.more} disabled={loaded.busy}>
@@ -60,7 +60,7 @@ function LoadMore({ loaded, size, label }: { loaded: Loaded; size: number; label
       )}
       {loaded.capped && (
         <Typography variant="body2" color="warning.main">
-          Đã tới giới hạn xem trước {formatBytes(PREVIEW_CAP)}. Tải file về để xem phần còn lại.
+          {t("preview.capped", { cap: formatBytes(PREVIEW_CAP) })}
         </Typography>
       )}
     </Stack>
@@ -98,7 +98,7 @@ function TextView({ at, size, kind }: { at: ObjectAt; size: number; kind: Previe
   const columns: Column<string>[] = [
     { header: "#", width: "56px", align: "right", cell: (_, i) => i + 1 },
     {
-      header: "Nội dung",
+      header: t("preview.content"),
       width: "1fr",
       cell: (line) => (
         <Box component="span" sx={{ fontFamily: "monospace", whiteSpace: "pre" }}>
@@ -120,7 +120,7 @@ function TextView({ at, size, kind }: { at: ObjectAt; size: number; kind: Previe
         }}
       >
         <TextField
-          label="Tìm trong file (Ctrl-F)"
+          label={t("preview.find")}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -131,16 +131,16 @@ function TextView({ at, size, kind }: { at: ObjectAt; size: number; kind: Previe
           sx={{ minWidth: 260 }}
         />
         <Typography variant="body2" aria-live="polite" sx={{ minWidth: 90 }}>
-          {query ? (hits.length ? `${(hit % hits.length) + 1}/${hits.length} dòng` : "Không thấy") : ""}
+          {query ? (hits.length ? t("preview.hits", { at: (hit % hits.length) + 1, total: hits.length }) : t("preview.noHit")) : ""}
         </Typography>
         <Button size="small" onClick={() => step(-1)} disabled={hits.length === 0}>
-          Trước
+          {t("preview.prev")}
         </Button>
         <Button size="small" type="submit" disabled={hits.length === 0}>
-          Sau
+          {t("preview.next")}
         </Button>
       </Stack>
-      {loaded.busy && <LinearProgress aria-label="Đang tải nội dung" />}
+      {loaded.busy && <LinearProgress aria-label={t("preview.loading")} />}
       <ErrorAlert error={loaded.error} />
       <VirtualTable
         columns={columns}
@@ -149,12 +149,12 @@ function TextView({ at, size, kind }: { at: ObjectAt; size: number; kind: Previe
         rowHeight={26}
         minWidth={Math.min(60000, 90 + widest * 9.1)}
         focusRow={current}
-        label="Nội dung file"
+        label={t("preview.fileContent")}
       />
-      <LoadMore loaded={loaded} size={size} label="Tải thêm 256 KiB" />
+      <LoadMore loaded={loaded} size={size} label={t("preview.more256")} />
       {!loaded.complete && (
         <Typography variant="body2" color="text.secondary">
-          Tìm kiếm chỉ xét phần đã tải{kind === "json" ? "; JSON được format khi đã tải hết file." : "."}
+          {t(kind === "json" ? "preview.findPartialJson" : "preview.findPartial")}
         </Typography>
       )}
     </Stack>
@@ -172,32 +172,32 @@ function CsvView({ at, size, delimiter }: { at: ObjectAt; size: number; delimite
   const columns: Column<string[]>[] = [
     { header: "#", width: "56px", align: "right", cell: (_, i) => i + 1 },
     ...header.map((name, c) => ({
-      header: name || `cột ${c + 1}`,
+      header: name || t("preview.column", { n: c + 1 }),
       width: "minmax(120px, 1fr)",
       cell: (row: string[]) => row[c] ?? "",
     })),
     {
-      header: "Copy",
+      header: t("common.copy"),
       width: "96px",
-      cell: (row, i) => <CopyButton value={row.join(delimiter)} label={`Copy dòng ${i + 1}`} />,
+      cell: (row, i) => <CopyButton value={row.join(delimiter)} label={t("preview.copyRow", { n: i + 1 })} />,
     },
   ];
   return (
     <Stack spacing={1}>
-      {loaded.busy && <LinearProgress aria-label="Đang tải nội dung" />}
+      {loaded.busy && <LinearProgress aria-label={t("preview.loading")} />}
       <ErrorAlert error={loaded.error} />
       <VirtualTable
         columns={columns}
         rows={data}
         height={440}
         minWidth={152 + header.length * 136}
-        label="Bảng dữ liệu"
-        empty={<Typography color="text.secondary">Chưa có dòng dữ liệu nào.</Typography>}
+        label={t("preview.table")}
+        empty={<Typography color="text.secondary">{t("preview.noRows")}</Typography>}
       />
       <Typography variant="body2" color="text.secondary">
-        {data.length} dòng dữ liệu, {header.length} cột.
+        {t("preview.csvCount", { rows: data.length, cols: header.length })}
       </Typography>
-      <LoadMore loaded={loaded} size={size} label="Tải thêm dòng" />
+      <LoadMore loaded={loaded} size={size} label={t("preview.moreRows")} />
     </Stack>
   );
 }
@@ -251,13 +251,13 @@ function ParquetView({ at }: { at: ObjectAt }) {
   };
   return (
     <Stack spacing={1}>
-      {busy && <LinearProgress aria-label="Đang đọc Parquet" />}
+      {busy && <LinearProgress aria-label={t("preview.readingParquet")} />}
       <ErrorAlert error={error} />
       {page && (
         <>
           <Stack component="form" onSubmit={jump} direction="row" spacing={1} sx={{ alignItems: "center" }}>
             <Button size="small" variant="outlined" disabled={busy || page.offset === 0} onClick={() => load(Math.max(0, page.offset - PARQUET_ROWS))}>
-              Trang trước
+              {t("preview.prevPage")}
             </Button>
             <Button
               size="small"
@@ -265,10 +265,10 @@ function ParquetView({ at }: { at: ObjectAt }) {
               disabled={busy || page.offset + page.rows.length >= page.total_rows}
               onClick={() => load(page.offset + PARQUET_ROWS)}
             >
-              Trang sau
+              {t("preview.nextPage")}
             </Button>
             <TextField
-              label="Tới dòng"
+              label={t("preview.goto")}
               value={goto}
               onChange={(e) => setGoto(e.target.value)}
               size="small"
@@ -276,7 +276,7 @@ function ParquetView({ at }: { at: ObjectAt }) {
               slotProps={{ htmlInput: { inputMode: "numeric" } }}
             />
             <Typography variant="body2" aria-live="polite">
-              Dòng {page.rows.length ? page.offset + 1 : 0}–{page.offset + page.rows.length} / {page.total_rows}
+              {t("preview.range", { from: page.rows.length ? page.offset + 1 : 0, to: page.offset + page.rows.length, total: page.total_rows })}
             </Typography>
           </Stack>
           <VirtualTable
@@ -284,15 +284,20 @@ function ParquetView({ at }: { at: ObjectAt }) {
             rows={page.rows}
             height={400}
             minWidth={72 + page.columns.length * 166}
-            label="Dữ liệu Parquet"
-            empty={<Typography color="text.secondary">Không có dòng nào ở vị trí này.</Typography>}
+            label={t("preview.parquetData")}
+            empty={<Typography color="text.secondary">{t("preview.noRowsHere")}</Typography>}
           />
           <Typography variant="body2" color="text.secondary">
-            {page.columns.length} cột, {page.row_groups} row group. Trang này tải {formatBytes(page.fetched_bytes)} qua{" "}
-            {page.requests} range request; file {formatBytes(page.file_size)} không bị tải cả về.
+            {t("preview.parquetStats", {
+              cols: page.columns.length,
+              groups: page.row_groups,
+              fetched: formatBytes(page.fetched_bytes),
+              requests: page.requests,
+              size: formatBytes(page.file_size),
+            })}
           </Typography>
           <details>
-            <summary>Schema ({page.columns.length} cột)</summary>
+            <summary>{t("preview.schema", { n: page.columns.length })}</summary>
             <Box component="ul" sx={{ m: 0, fontSize: 14 }}>
               {page.columns.map((c) => (
                 <li key={c.name}>
@@ -312,17 +317,17 @@ function HexView({ at, size }: { at: ObjectAt; size: number }) {
   const lines = useMemo(() => hexLines(loaded.bytes), [loaded.bytes]);
   return (
     <Stack spacing={1}>
-      {loaded.busy && <LinearProgress aria-label="Đang tải nội dung" />}
+      {loaded.busy && <LinearProgress aria-label={t("preview.loading")} />}
       <ErrorAlert error={loaded.error} />
       <Box
         component="pre"
-        aria-label="Hex dump"
+        aria-label={t("preview.hexDump")}
         tabIndex={0}
         sx={{ m: 0, p: 2, bgcolor: "background.default", borderRadius: 1, overflow: "auto", maxHeight: 440, fontSize: 14 }}
       >
         {lines.join("\n")}
       </Box>
-      <LoadMore loaded={loaded} size={size} label="Tải thêm 4 KiB" />
+      <LoadMore loaded={loaded} size={size} label={t("preview.more4k")} />
     </Stack>
   );
 }
@@ -347,32 +352,33 @@ function MediaView({ at, kind, name }: { at: ObjectAt; kind: PreviewKind; name: 
 
   return (
     <Stack spacing={1}>
-      {busy && <LinearProgress aria-label="Đang chuẩn bị" />}
+      {busy && <LinearProgress aria-label={t("preview.preparing")} />}
       <ErrorAlert error={error} />
       {url && kind === "image" && (
         <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-          <Button size="small" variant="outlined" onClick={() => zoomTo(Math.max(10, (zoom || 100) / 1.5))} aria-label="Thu nhỏ">
+          <Button size="small" variant="outlined" onClick={() => zoomTo(Math.max(10, (zoom || 100) / 1.5))} aria-label={t("preview.zoomOut")}>
             −
           </Button>
-          <Button size="small" variant="outlined" onClick={() => zoomTo(Math.min(1600, (zoom || 100) * 1.5))} aria-label="Phóng to">
+          <Button size="small" variant="outlined" onClick={() => zoomTo(Math.min(1600, (zoom || 100) * 1.5))} aria-label={t("preview.zoomIn")}>
             +
           </Button>
           <Button size="small" onClick={() => zoomTo(100)}>
             100%
           </Button>
           <Button size="small" onClick={() => zoomTo(0)}>
-            Vừa khung
+            {t("preview.fit")}
           </Button>
           <Typography variant="body2" aria-live="polite">
-            {zoom ? `${Math.round(zoom)}%` : "vừa khung"}
+            {zoom ? `${Math.round(zoom)}%` : t("preview.fitState")}
           </Typography>
         </Stack>
       )}
       {url && (
         <iframe
           ref={frame}
-          title={`Xem trước ${name}`}
-          src={`/preview.html#${new URLSearchParams({ kind, url, name })}`}
+          title={t("preview.frameTitle", { name })}
+          // The frame is outside the bundle: the one sentence it can show comes along in its language.
+          src={`/preview.html#${new URLSearchParams({ kind, url, name, lang: getLang(), fail: t("preview.unavailable") })}`}
           style={{ width: "100%", height: FRAME_HEIGHT[kind], border: 0, borderRadius: 4 }}
         />
       )}
@@ -380,18 +386,7 @@ function MediaView({ at, kind, name }: { at: ObjectAt; kind: PreviewKind; name: 
   );
 }
 
-const KIND_LABEL: Record<PreviewKind, string> = {
-  text: "văn bản",
-  json: "JSON",
-  csv: "CSV",
-  tsv: "TSV",
-  parquet: "Parquet",
-  image: "ảnh",
-  audio: "audio",
-  video: "video",
-  pdf: "PDF",
-  hex: "hex",
-};
+const kindLabel = (kind: PreviewKind) => t(`preview.kind.${kind}`);
 
 export default function PreviewTab({ at, object }: ObjectTabProps) {
   const kind = previewKind(object.key);
@@ -399,17 +394,17 @@ export default function PreviewTab({ at, object }: ObjectTabProps) {
   const [allowBig, setAllowBig] = useState(false);
   const shown = asHex ? "hex" : kind;
   const plan = previewPlan(shown, object.size);
-  if (object.size === 0) return <Alert severity="info">Object rỗng (0 byte), không có gì để xem.</Alert>;
+  if (object.size === 0) return <Alert severity="info">{t("preview.empty")}</Alert>;
   const name = object.key.slice(object.key.lastIndexOf("/") + 1);
   return (
     <Stack spacing={2}>
       <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
         <Typography variant="body2" color="text.secondary" sx={{ flexGrow: 1 }}>
-          Kiểu xem: {KIND_LABEL[shown]} · {formatBytes(object.size)}. Chỉ phần đang xem được tải về.
+          {t("preview.summary", { kind: kindLabel(shown), size: formatBytes(object.size) })}
         </Typography>
         {kind !== "hex" && (
           <Button size="small" onClick={() => setAsHex(!asHex)}>
-            {asHex ? `Xem dạng ${KIND_LABEL[kind]}` : "Xem dạng hex"}
+            {t("preview.viewAs", { kind: kindLabel(asHex ? kind : "hex") })}
           </Button>
         )}
       </Stack>
@@ -419,7 +414,7 @@ export default function PreviewTab({ at, object }: ObjectTabProps) {
       {shown === "hex" && <HexView key="hex" at={at} size={object.size} />}
       {plan === "prefix" && (
         <Alert severity="info">
-          File lớn ({formatBytes(object.size)}): chỉ phần đầu được tải. Bấm "Tải thêm" để xem tiếp, tối đa {formatBytes(PREVIEW_CAP)}.
+          {t("preview.big", { size: formatBytes(object.size), cap: formatBytes(PREVIEW_CAP) })}
         </Alert>
       )}
       {plan === "ask" && !allowBig && (
@@ -427,11 +422,11 @@ export default function PreviewTab({ at, object }: ObjectTabProps) {
           severity="warning"
           action={
             <Button color="inherit" size="small" onClick={() => setAllowBig(true)}>
-              Vẫn xem
+              {t("preview.viewAnyway")}
             </Button>
           }
         >
-          {KIND_LABEL[shown]} này nặng {formatBytes(object.size)} và sẽ được tải toàn bộ vào bộ nhớ để hiển thị.
+          {t("preview.heavy", { kind: kindLabel(shown), size: formatBytes(object.size) })}
         </Alert>
       )}
       {(shown === "audio" || shown === "video" || ((shown === "image" || shown === "pdf") && (plan !== "ask" || allowBig))) && (

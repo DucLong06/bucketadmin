@@ -1,6 +1,6 @@
 import { createTheme } from "@mui/material";
 
-// Design tokens of the chosen concept ("B — Giấy than", docs/mockups/concept-b.html): warm
+// Design tokens of the chosen concept ("B", docs/mockups/concept-b.html): warm
 // charcoal paper, one amber accent, serif headings, borders instead of shadows, 12–16 px corners.
 export const tokens = {
   bg: "#181512",

@@ -26,7 +26,9 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{Manager, State};
 
-// Errors cross the IPC boundary as display strings; the UI shows them verbatim.
+// Errors cross the IPC boundary as English display strings with a stable beginning (an RGW or
+// S3 error code, or a fixed phrase). The UI turns that into a sentence in its language
+// (src/errors.ts) and keeps this text as the technical detail.
 
 pub(crate) struct AppState {
     pub(crate) profiles: ProfileStore,
@@ -175,6 +177,18 @@ fn set_ui_scale(window: tauri::WebviewWindow, state: St<'_>, percent: u16) -> Cm
     let step = settings::nearest_scale(percent)?;
     apply_ui_scale(&window, step)?;
     Ok(state.settings.change(|s| s.ui_scale = step)?.ui_scale)
+}
+
+/// Language of the UI chosen by the user: "en", "vi", or "" while it follows the system's.
+#[tauri::command(async)]
+fn get_lang(state: St<'_>) -> Cmd<'_, String> {
+    Ok(state.settings.get()?.lang())
+}
+
+#[tauri::command(async)]
+fn set_lang(state: St<'_>, lang: String) -> Cmd<'_, String> {
+    let lang = settings::valid_lang(&lang)?;
+    Ok(state.settings.change(|s| s.lang = lang)?.lang)
 }
 
 /// The one zoom mechanism: the webview's own zoom level, the same thing a browser's Ctrl+= changes.
@@ -607,6 +621,8 @@ pub fn run() {
             network_set,
             get_ui_scale,
             set_ui_scale,
+            get_lang,
+            set_lang,
             endpoint_kind,
             test_s3,
             update_check,

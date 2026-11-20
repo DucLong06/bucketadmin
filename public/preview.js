@@ -10,6 +10,8 @@
   var kind = params.get("kind");
   var url = params.get("url") || "";
   var name = params.get("name") || "";
+  // The embedding page speaks the user's language; this one only repeats what it is handed.
+  document.documentElement.lang = params.get("lang") || "";
   var tags = { image: "img", audio: "audio", video: "video", pdf: "iframe" };
   var origin = null;
   try {
@@ -21,7 +23,7 @@
   document.body.style.margin = "0";
   document.body.style.background = "#121212";
   if (!origin || !tags[kind]) {
-    document.body.textContent = "Không xem trước được.";
+    document.body.textContent = params.get("fail") || "—";
     document.body.style.color = "#fff";
     return;
   }

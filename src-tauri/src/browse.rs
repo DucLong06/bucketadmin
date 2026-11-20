@@ -259,17 +259,13 @@ fn dev_answer(variable: &str) -> Option<String> {
     }
 }
 
-/// Native "open" dialog; the chosen paths (none when cancelled).
+/// Native "open" dialog; the chosen paths (none when cancelled). `title` comes from the UI, in its language.
 #[tauri::command(async)]
-pub fn browse_pick_upload(app: AppHandle) -> Vec<String> {
+pub fn browse_pick_upload(app: AppHandle, title: String) -> Vec<String> {
     if let Some(path) = dev_answer("BUCKETADMIN_DEV_PICK_UPLOAD") {
         return vec![path];
     }
-    let picked = app
-        .dialog()
-        .file()
-        .set_title("Chọn file để upload")
-        .blocking_pick_files();
+    let picked = app.dialog().file().set_title(title).blocking_pick_files();
     picked
         .unwrap_or_default()
         .into_iter()
@@ -278,16 +274,16 @@ pub fn browse_pick_upload(app: AppHandle) -> Vec<String> {
         .collect()
 }
 
-/// Native "save as" dialog; `None` when cancelled.
+/// Native "save as" dialog; `None` when cancelled. `title` comes from the UI, in its language.
 #[tauri::command(async)]
-pub fn browse_pick_save(app: AppHandle, name: String) -> Option<String> {
+pub fn browse_pick_save(app: AppHandle, name: String, title: String) -> Option<String> {
     if let Some(dir) = dev_answer("BUCKETADMIN_DEV_SAVE_DIR") {
         return Some(format!("{dir}/{name}"));
     }
     let picked = app
         .dialog()
         .file()
-        .set_title("Lưu file về máy")
+        .set_title(title)
         .set_file_name(name)
         .blocking_save_file();
     let path = picked.and_then(|f| f.into_path().ok())?;

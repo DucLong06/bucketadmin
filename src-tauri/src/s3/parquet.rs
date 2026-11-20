@@ -114,7 +114,8 @@ fn displayable(value: &mut Value) {
             if let Some((cut, _)) = s.char_indices().nth(MAX_CELL_CHARS) {
                 let rest = s[cut..].chars().count();
                 s.truncate(cut);
-                s.push_str(&format!("… (+{rest} ký tự)"));
+                // No word of any language: the UI shows this cell as it is.
+                s.push_str(&format!("… (+{rest})"));
             }
         }
         Value::Array(items) => items.iter_mut().for_each(displayable),
@@ -272,7 +273,7 @@ mod tests {
         assert_eq!(row["ratio"], 0.5);
         assert_eq!(row["nested"]["ids"], json!([1, "18446744073709551615"]));
         let cut = row["nested"]["text"].as_str().unwrap();
-        assert!(cut.ends_with("… (+5 ký tự)"), "{}", &cut[cut.len() - 30..]);
+        assert!(cut.ends_with("… (+5)"), "{}", &cut[cut.len() - 30..]);
         assert_eq!(cut.chars().filter(|c| *c == 'é').count(), MAX_CELL_CHARS);
     }
 }

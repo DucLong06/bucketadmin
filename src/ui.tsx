@@ -8,11 +8,14 @@ import {
   DialogTitle,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 import type { KeyPair, Profile } from "./api";
 import { capsCommand } from "./caps";
 import { explain } from "./errors";
+import { setLang, t, useLang } from "./i18n";
 
 /** uid the connected cluster key belongs to ("" while unknown); App provides it. */
 export const CallerContext = createContext("");
@@ -40,7 +43,7 @@ export function ClusterSelect(props: { profiles: Profile[]; value: string; onCha
   return (
     <TextField
       select
-      label="Kết nối"
+      label={t("common.connection")}
       value={props.value}
       onChange={(e) => props.onChange(e.target.value)}
       size="small"
@@ -56,7 +59,7 @@ export function ClusterSelect(props: { profiles: Profile[]; value: string; onCha
   );
 }
 
-/** Backend error in Vietnamese, with the error code and the original text one click away.
+/** Backend error in the current language, with the error code and the original text one click away.
  *  A refusal for missing admin caps also shows the command that grants them. */
 export function ErrorAlert({ error, sx }: { error: string | null | undefined; sx?: object }) {
   const callerUid = useContext(CallerContext);
@@ -68,21 +71,34 @@ export function ErrorAlert({ error, sx }: { error: string | null | undefined; sx
       {message}
       {command && (
         <>
-          <div style={{ marginTop: 4 }}>
-            Nhờ quản trị cluster chạy lệnh sau trên node Ceph{callerUid ? "" : " (thay <uid> bằng uid của bạn)"}, rồi kết nối lại:
-          </div>
+          <div style={{ marginTop: 4 }}>{t(callerUid ? "ui.capsAsk" : "ui.capsAskUid")}</div>
           {/* One line, scrolled when narrow: a wrapped command reads as two when retyped by hand. */}
           <code style={{ display: "block", whiteSpace: "nowrap", overflowX: "auto" }}>{command}</code>
-          <CopyButton value={command} label="Copy lệnh cấp caps" />
+          <CopyButton value={command} label={t("ui.capsCopy")} />
         </>
       )}
       {message !== detail && (
         <details style={{ marginTop: 4 }}>
-          <summary>Chi tiết kỹ thuật{code ? ` (${code})` : ""}</summary>
+          <summary>{code ? t("ui.detailsCode", { code }) : t("ui.details")}</summary>
           <code style={{ wordBreak: "break-word" }}>{detail}</code>
         </details>
       )}
     </Alert>
+  );
+}
+
+/** VI | EN: switches the language of the whole app at once and saves the choice. */
+export function LangToggle() {
+  const lang = useLang();
+  return (
+    <ToggleButtonGroup size="small" exclusive value={lang} onChange={(_, next) => next && setLang(next)} aria-label={t("settings.language")}>
+      <ToggleButton value="vi" aria-label={t("lang.vi")} sx={{ px: 1.5 }}>
+        VI
+      </ToggleButton>
+      <ToggleButton value="en" aria-label={t("lang.en")} sx={{ px: 1.5 }}>
+        EN
+      </ToggleButton>
+    </ToggleButtonGroup>
   );
 }
 
@@ -110,7 +126,7 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
   }
   return (
     <Button size="small" onClick={copy} aria-label={label} sx={{ whiteSpace: "nowrap", minWidth: 88 }}>
-      {copied ? "Đã copy" : "Copy"}
+      {copied ? t("common.copied") : t("common.copy")}
     </Button>
   );
 }
@@ -146,7 +162,7 @@ export function ConfirmDialog(props: ConfirmProps) {
           {props.children}
           {props.requireText !== undefined && (
             <TextField
-              label={`Gõ "${props.requireText}" để xác nhận`}
+              label={t("ui.typeToConfirm", { text: props.requireText })}
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
               size="small"
@@ -158,7 +174,7 @@ export function ConfirmDialog(props: ConfirmProps) {
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={close}>Huỷ</Button>
+        <Button onClick={close}>{t("common.cancel")}</Button>
         <Button
           color="error"
           variant="contained"
