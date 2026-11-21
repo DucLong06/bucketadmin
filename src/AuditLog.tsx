@@ -28,6 +28,12 @@ type ViewProps = { rows: AuditRow[]; filter: string; onFilter: (text: string) =>
 /** The page for a given state; `AuditLog` adds the asking. */
 export function AuditView({ rows, filter, onFilter, range, onRange, more, onMore }: ViewProps) {
   const mono = { fontFamily: tokens.mono, fontSize: 14 };
+  // Names stay on one line and end in "…" with the whole name as a tooltip: a name broken mid-word reads as two names.
+  const name = (text: string, sx: object = mono) => (
+    <TableCell title={text || undefined} sx={{ ...sx, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+      {text}
+    </TableCell>
+  );
   const narrowed = !!filter.trim() || range !== "all";
   return (
     <>
@@ -68,11 +74,14 @@ export function AuditView({ rows, filter, onFilter, range, onRange, more, onMore
         </Paper>
       ) : (
         <TableContainer component={Paper} variant="outlined">
-          <Table size="small" aria-label={t("audit.table")}>
+          {/* Fixed layout: the window width decides the columns, never a long name (no sideways scroll at 1100 px). */}
+          <Table size="small" aria-label={t("audit.table")} sx={{ tableLayout: "fixed", "& td, & th": { px: 1.5 } }}>
             <TableHead>
               <TableRow>
                 {(["audit.col.time", "audit.col.action", "common.connection", "audit.col.bucket", "audit.col.prefix", "audit.col.object", "audit.col.result"] satisfies Key[]).map((key) => (
-                  <TableCell key={key}>{t(key, { tz: TZ })}</TableCell>
+                  <TableCell key={key} sx={{ width: key === "audit.col.time" || key === "audit.col.action" ? 180 : undefined }}>
+                    {t(key, { tz: TZ })}
+                  </TableCell>
                 ))}
               </TableRow>
             </TableHead>
@@ -80,13 +89,11 @@ export function AuditView({ rows, filter, onFilter, range, onRange, more, onMore
               {rows.map((row, i) => (
                 <TableRow key={i} sx={{ height: 40 }}>
                   <TableCell sx={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>{vnTime(row.ts * 1000, true)}</TableCell>
-                  <TableCell>
-                    <code>{row.action}</code>
-                  </TableCell>
-                  <TableCell sx={{ color: row.connection ? undefined : "text.secondary" }}>{row.connection || t("tabs.goneConnection")}</TableCell>
-                  <TableCell sx={mono}>{row.bucket}</TableCell>
-                  <TableCell sx={{ ...mono, wordBreak: "break-all" }}>{row.prefix}</TableCell>
-                  <TableCell sx={{ ...mono, wordBreak: "break-all" }}>{row.object}</TableCell>
+                  {name(row.action)}
+                  {name(row.connection || t("tabs.goneConnection"), { color: row.connection ? undefined : "text.secondary" })}
+                  {name(row.bucket)}
+                  {name(row.prefix)}
+                  {name(row.object)}
                   <TableCell sx={{ color: row.ok ? "success.main" : "error.main" }}>{row.ok ? t("audit.ok") : t("audit.failed", { message: row.message })}</TableCell>
                 </TableRow>
               ))}

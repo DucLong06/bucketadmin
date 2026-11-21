@@ -76,6 +76,8 @@ test("the table shows time in UTC+7, action, connection label, bucket, folder an
   expect(html).toContain('aria-label="Audit log entries"');
   // Rows keep the size floor.
   expect(html).toMatch(/<tr class="[^"]*MuiTableRow-root[^"]*css-[^"]*"/);
+  // Long names are cut with "…", never broken mid-word; the whole name is the tooltip.
+  expect(html).toContain('title="reports/2026/"');
 });
 
 test("read-only: a filter and a time range, and no button that deletes or exports", () => {
