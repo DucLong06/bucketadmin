@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useContext, useState } from "react";
+import { createContext, type ReactNode, useContext, useMemo, useState } from "react";
 import {
   Alert,
   Autocomplete,
@@ -61,6 +61,9 @@ export const duplicateLabels = (profiles: Profile[]): Set<string> => {
 /** The connection of a tab. A short list is a plain select; a long one is searched by typing a
  *  part of a label or of an endpoint, and each choice shows its endpoint (labels may repeat). */
 export function ClusterSelect(props: { profiles: Profile[]; value: string; onChange: (id: string) => void }) {
+  const picked = props.profiles.find((p) => p.id === props.value);
+  // A reload of the profiles brings new objects; a new `value` object makes MUI put the text being typed back to the label.
+  const value = useMemo(() => picked, [picked?.id, picked?.label, picked?.endpoint]);
   if (props.profiles.length > SEARCH_ABOVE) {
     return (
       <Autocomplete
@@ -68,7 +71,7 @@ export function ClusterSelect(props: { profiles: Profile[]; value: string; onCha
         disableClearable
         autoHighlight
         options={props.profiles}
-        value={props.profiles.find((p) => p.id === props.value) ?? undefined}
+        value={value}
         onChange={(_, picked) => picked && props.onChange(picked.id)}
         isOptionEqualToValue={(a, b) => a.id === b.id}
         getOptionLabel={(p) => p.label}

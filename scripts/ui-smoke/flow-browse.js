@@ -76,10 +76,9 @@
       // Type-ahead: the label is typed, the matching choice (label, endpoint under it) is clicked.
       f.focus();
       setValue(f, label);
-      // A connection saved a moment ago arrives with the next reload of the profiles, and that reload puts the
-      // field back to the connection in use: the label is typed again until its choice is there.
+      // A connection saved a moment ago arrives with the next reload of the profiles; the typed text must survive it.
       (await waitFor(() => {
-        if (connectionField().value !== label) setValue(connectionField(), label);
+        if (connectionField().value !== label) throw new Error(`the typed "${label}" was replaced by "${connectionField().value}" when the profiles reloaded`);
         return all("[role=option]").find((o) => o.textContent.trim().startsWith(label));
       }, `connection ${label} among the choices`)).click();
       await waitFor(() => connectionShown() === label && all("[role=option]").length === 0, `connection ${label} chosen`);
