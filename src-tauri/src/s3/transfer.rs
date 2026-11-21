@@ -78,8 +78,9 @@ impl S3 {
             Ok(mut url) => {
                 let host = format!("{bucket}.{}", url.host_str().unwrap_or_default());
                 match url.set_host(Some(&host)) {
-                    Ok(()) => url.to_string(),
-                    Err(_) => self.endpoint.clone(),
+                    // set_host stops at a ':' (it would leave "evil.test" of "evil.test:x"): only the whole name counts.
+                    Ok(()) if url.host_str() == Some(host.as_str()) => url.to_string(),
+                    _ => self.endpoint.clone(),
                 }
             }
             Err(_) => self.endpoint.clone(),
@@ -437,6 +438,14 @@ mod tests {
             "{url}"
         );
         assert!(url.contains("eu-west-1"), "{url}");
+        // A bucket name cannot move the accepted host off the endpoint.
+        for odd in ["evil.test:x", "evil.test/", "evil.test#", "UPPER"] {
+            assert_eq!(host.bucket_host(odd), endpoint, "{odd}");
+        }
+        assert_eq!(
+            host.bucket_host("bucket-a"),
+            "http://bucket-a.rgw.example:7480/"
+        );
         // A bucket name that is no host name stays in the path.
         let url = host.presign_get("b", "k", None, 60, None).await.unwrap();
         assert!(url.starts_with("http://rgw.example:7480/b/k?"), "{url}");
