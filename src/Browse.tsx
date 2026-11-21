@@ -34,7 +34,7 @@ import BucketPanel from "./BucketPanel";
 import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import { accessLevel, type Access } from "./caps";
 import MyInfo from "./MyInfo";
-import { PathPicker, PathPickerDialog } from "./PathPicker";
+import { PathPicker } from "./PathPicker";
 import PinnedPanel from "./PinnedPanel";
 import { isPinned, type Pin, type PinOps } from "./pins";
 import ObjectDrawer, { canUndelete, download, finalDeleteWarning, undeleteHint, type Versioning } from "./ObjectDrawer";
@@ -44,7 +44,7 @@ import { eyebrow, thinScroll, tokens } from "./theme";
 import type { StartTransfer } from "./transfers";
 import { explain } from "./errors";
 import { t, type Key } from "./i18n";
-import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, FoldHeading, PinToggle, useAction } from "./ui";
+import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, FoldHeading, ListFilter, PinToggle, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
 
 type Props = {
@@ -74,6 +74,13 @@ type Props = {
 };
 /** Recent places the sidebar lists before "show all": the card stays a glance, the buckets stay the main thing. */
 export const RECENT_IN_SIDEBAR = 5;
+/** The whole list ("show all") gets a filter field above this many places. */
+export const RECENT_FILTER_ABOVE = 8;
+/** The layout's breakpoints, in CSS px (the zoom setting narrows the page), decided here and used by the app
+ *  shell too. NARROW: the date column goes and the paddings tighten. SHORT (a low window, or a big zoom): the
+ *  heights tighten, so the bucket card stays whole in view. `roomy` and `tight` below are the two older steps. */
+export const NARROW = "@media (max-width:859px)";
+export const SHORT = "@media (max-height:559px)";
 /** `uid` is empty while browsing with the caller's own saved key. */
 type Session = { uid: string; access_key: string; buckets: BrowseBucket[]; buckets_error: string | null };
 type Row = { folder: string } | { object: ObjectEntry };
@@ -102,9 +109,9 @@ function useTableHeight() {
   }, []);
   return height;
 }
-// The whole heading as a tooltip: a narrow column cuts it short.
-const th = (text: string) => (
-  <Box component="span" title={text} sx={{ ...eyebrow, color: "text.secondary" }}>
+// The whole heading (or more than it: the time zone) as a tooltip: a narrow column cuts it short.
+const th = (text: string, tip = text) => (
+  <Box component="span" title={tip} sx={{ ...eyebrow, color: "text.secondary" }}>
     {text}
   </Box>
 );
@@ -121,6 +128,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const roomy = useMediaQuery("(min-width:1150px)");
   // A 900 px window: the size and date columns give the name the room they can spare.
   const tight = useMediaQuery("(max-width:999px)");
+  // Under 860 px (900 px at 110 % and up): the date stays in the object's properties, the name keeps its room.
+  const narrow = useMediaQuery(NARROW);
   useEffect(() => {
     // The tab's connection was removed (or there was none yet): fall back to the first one.
     if (!profiles.some((p) => p.id === clusterId)) setClusterId(profiles[0]?.id ?? "");
@@ -150,9 +159,12 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const [prefix, setPrefix] = useState("");
   // The path picker. For a key that may not list buckets it is the page itself (typed here);
   // otherwise it is a dialog.
-  const [picking, setPicking] = useState(false);
+  // What is typed into the sidebar's path field, and the field itself.
+  const [sidePath, setSidePath] = useState("");
+  const sideField = useRef<HTMLInputElement | null>(null);
   // The sidebar's Recent card shows every place, not only the newest few (this tab, until it is closed).
   const [recentAll, setRecentAll] = useState(false);
+  const [recentFilter, setRecentFilter] = useState("");
   const [typedPath, setTypedPath] = useState("");
   const inlinePath = useRef<HTMLInputElement | null>(null);
   // The last listing was refused by S3 (AccessDenied): the error gains the way out.
@@ -332,7 +344,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
     const goTo = first.current;
     first.current = null;
     // With nowhere to go yet, the connection's own key lands at its start path.
-    const home = target === "" ? splitPath(profiles.find((p) => p.id === clusterId)?.start_path ?? "") : null;
+    const home = target === "" ? splitPath(profiles.find((p) => p.id === clusterId)?.start_paths?.[0] ?? "") : null;
     if (goTo?.bucket && goTo.clusterId === clusterId) load(goTo.bucket, goTo.prefix, null, target);
     else if (home && !home.error) load(home.bucket, home.prefix, null, target);
     else onPlace({ clusterId, uid: target, bucket: "", prefix: "" });
@@ -472,7 +484,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
         ),
     },
     { header: th(t("browse.col.size")), width: tight ? "100px" : "110px", align: "right", cell: (r) => ("object" in r && !r.object.deleted ? formatBytes(r.object.size) : "—") },
-    { header: th(t("browse.col.modified", { tz: TZ })), width: tight ? "156px" : "190px", cell: (r) => ("object" in r ? vnTime(r.object.last_modified) : "") },
+    // The zone is said once under the list and in the heading's tooltip, not in every heading.
+    ...(narrow ? [] : [{ header: th(t("browse.col.modified"), t("browse.col.modifiedTip", { tz: TZ })), width: tight ? "156px" : "190px", cell: (r: Row) => ("object" in r ? vnTime(r.object.last_modified) : "") }]),
     // The owner is in the object's properties; the concept's table stops at the storage class.
     // A narrow page (a 1100 px window, or 125 % zoom) drops that column rather than scroll sideways; the properties keep it.
     ...(roomy ? [{ header: th(t("browse.col.storageClass")), width: "140px", cell: (r: Row) => ("object" in r ? r.object.storage_class : "") }] : []),
@@ -487,13 +500,21 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   }
   // No bucket list to choose from: the chips and the probe of the picker are the way in.
   const pickerIsThePage = !!session?.buckets_error && !bucket;
-  const pickPath = () => (pickerIsThePage ? inlinePath.current?.focus() : setPicking(true));
+  const pickPath = () => (pickerIsThePage ? inlinePath : sideField).current?.focus();
   const typed = splitPath(typedPath);
+  const sideTyped = splitPath(sidePath);
+  const startPaths = session?.uid === "" ? (profiles.find((p) => p.id === clusterId)?.start_paths ?? []) : [];
   const label = profiles.find((p) => p.id === clusterId)?.label ?? "";
   // The sidebar's recent places: this connection's first, then the others; the newest few until "show all".
   const recentGroups = groupRecents(recents, clusterId);
   const recentOrdered = [...recentGroups.here, ...recentGroups.elsewhere];
-  const recentRows = recentAll ? recentOrdered : recentOrdered.slice(0, RECENT_IN_SIDEBAR);
+  // The whole list is filtered by what a row says: connection, user, path.
+  const recentFilterable = recentAll && recentOrdered.length > RECENT_FILTER_ABOVE;
+  const recentWanted = recentFilterable ? recentFilter.trim().toLowerCase() : "";
+  const recentKept = (place: Place) => !recentWanted || placeLabel(place, profiles).toLowerCase().includes(recentWanted);
+  const recentHere = recentGroups.here.filter(recentKept);
+  const recentListed = [...recentHere, ...recentGroups.elsewhere.filter(recentKept)];
+  const recentRows = recentAll ? recentListed : recentListed.slice(0, RECENT_IN_SIDEBAR);
   const recentFolded = folded.includes("recent");
   const card = { borderRadius: "16px" };
   // What the context menu offers for the row under the pointer.
@@ -506,8 +527,30 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   };
   return (
     <CallerContext.Provider value={access?.uid ?? ""}>
-      <Box sx={{ display: "grid", gridTemplateColumns: "264px minmax(0, 1fr)", gap: 3, alignItems: "start" }}>
-        <Stack component="aside" spacing={2} aria-label={t("browse.sidebar")}>
+      <Box sx={{ display: "grid", gridTemplateColumns: `${narrow ? 200 : tight ? 232 : 264}px minmax(0, 1fr)`, gap: narrow ? 2 : 3, alignItems: "start" }}>
+        {/* The sidebar keeps to the height of the pane (which ends where the task panel begins) and scrolls
+            inside itself: no card of it is ever behind the task panel, wherever the object list is scrolled to. */}
+        <Stack
+          component="aside"
+          spacing={2}
+          useFlexGap
+          aria-label={t("browse.sidebar")}
+          sx={{
+            position: "sticky",
+            top: 0,
+            maxHeight: "calc(var(--ba-pane-h, 100vh) - 24px)",
+            ...thinScroll,
+            overflowX: "hidden",
+            // Room for the focus rings the scroll box would cut.
+            p: "4px",
+            m: "-4px",
+            // The connection field has a width floor for other screens; here it is as wide as the column, less the scroll bar.
+            "& > .MuiTextField-root, & > .MuiAutocomplete-root": { minWidth: 0 },
+            // What the sidebar holds besides the bucket list (see LIST_MAX_HEIGHT in BucketPanel).
+            "--ba-side-rest": canBrowseAs ? "451px" : "395px",
+            [SHORT]: { maxHeight: "calc(var(--ba-pane-h, 100vh) - 12px)", gap: 1, "--ba-side-rest": canBrowseAs ? "332px" : "276px" },
+          }}
+        >
           <ClusterSelect profiles={profiles} value={clusterId} onChange={setClusterId} />
           {canBrowseAs && (
             <Stack
@@ -527,7 +570,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
             </Stack>
           )}
           {session && (
-            <Typography variant="body2" color="text.secondary">
+            // A low window keeps its room for the buckets; the key is on the Connections screen too.
+            <Typography variant="body2" color="text.secondary" sx={{ [SHORT]: { display: session.uid ? undefined : "none" } }}>
               {t("browse.usingKey")}{" "}
               <Box component="span" sx={{ fontFamily: tokens.mono, fontSize: 14 }}>
                 {maskKey(session.access_key)}
@@ -561,11 +605,43 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                 e.preventDefault();
                 setBucketMenu({ bucket: name, x: e.clientX, y: e.clientY });
               }}
-              onPickPath={pickPath}
+              pathEntry={
+                // The picker itself: what S3 lists at the typed path is suggested under the field; Enter opens.
+                <Box
+                  component="form"
+                  onSubmit={(e: FormEvent) => {
+                    e.preventDefault();
+                    if (sideTyped.error) return;
+                    load(sideTyped.bucket, sideTyped.prefix, null);
+                    setSidePath("");
+                    // Like an address bar after Enter: the field lets go, so its dropdown does not open again over the card.
+                    sideField.current?.blur();
+                  }}
+                >
+                  <PathPicker
+                    dropdown
+                    clusterId={clusterId}
+                    uid={session.uid}
+                    value={sidePath}
+                    onChange={setSidePath}
+                    label={t("browse.openPath")}
+                    optional
+                    inputRef={sideField}
+                    buckets={session.buckets.map((b) => b.name)}
+                    quietBucket={!!session.buckets_error}
+                    action={
+                      <Button type="submit" size="small" disabled={!!sideTyped.error} sx={{ minWidth: 0 }}>
+                        {t("common.open")}
+                      </Button>
+                    }
+                  />
+                </Box>
+              }
             />
           )}
           <PinnedPanel
             pins={pins}
+            startPaths={startPaths}
             profiles={profiles}
             clusterId={clusterId}
             onOpen={goHere}
@@ -585,11 +661,21 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               />
               {!recentFolded && (
                 <>
+                  {recentFilterable && (
+                    <Box sx={{ px: 1.5, pb: 1 }}>
+                      <ListFilter placeholder={t("recent.filter")} value={recentFilter} onChange={setRecentFilter} shown={recentListed.length} total={recentOrdered.length} />
+                    </Box>
+                  )}
+                  {recentListed.length === 0 && (
+                    <Typography variant="body2" color="text.secondary" sx={{ px: 2, pb: 1.5 }}>
+                      {t("list.filterNone")}
+                    </Typography>
+                  )}
                   {/* Every place: the list scrolls inside the card, so the column does not grow with it. */}
                   <List dense id={`recent-${clusterId}`} aria-label={t("browse.recentList")} style={{ maxHeight: 336 }} sx={{ ...thinScroll, pt: 0 }}>
                     {recentRows.map((place, i) => [
                       // Grouped like the pins: this connection's places, then the others under a divider.
-                      i === recentGroups.here.length && (
+                      i === recentHere.length && (
                         <Divider key="others" component="li" textAlign="left" sx={{ my: 0.5, fontSize: 12.5, color: "text.secondary" }}>
                           {t("browse.pinsElsewhere")}
                         </Divider>
@@ -664,6 +750,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                     value={typedPath}
                     onChange={setTypedPath}
                     label={t("browse.openPath")}
+                    quietBucket
                     autoFocus={active}
                     inputRef={inlinePath}
                     action={
@@ -703,7 +790,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                     {t("browse.eyebrow", { label })}
                   </Typography>
                   <Stack direction="row" sx={{ alignItems: "center", gap: 1 }}>
-                  <Breadcrumbs aria-label={t("browse.path")} separator="/" sx={{ minWidth: 0, fontFamily: tokens.serif, fontSize: 29, fontWeight: 600, lineHeight: 1.25, "& .MuiBreadcrumbs-separator": { color: "divider" } }}>
+                  <Breadcrumbs aria-label={t("browse.path")} separator="/" sx={{ minWidth: 0, fontFamily: tokens.serif, fontSize: 29, fontWeight: 600, lineHeight: 1.25, "& .MuiBreadcrumbs-separator": { color: "divider" }, "& button": { overflowWrap: "anywhere", textAlign: "left" } }}>
                     <Link component="button" underline="none" color={crumbs.length ? "text.secondary" : "text.primary"} onClick={() => load(bucket, "", null)} sx={{ font: "inherit" }}>
                       {bucket}
                     </Link>
@@ -729,7 +816,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                     />
                   </Stack>
                 </Box>
-                <Stack direction="row" spacing={1}>
+                <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
                   <Button variant="contained" onClick={async () => upload(await invoke<string[]>("browse_pick_upload", { title: t("browse.pickUploadTitle") }))}>
                     {t("common.upload")}
                   </Button>
@@ -774,14 +861,14 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                   {t("browse.refresh")}
                 </Button>
                 <Box sx={{ flexGrow: 1 }} />
-                <Stack component="form" onSubmit={search} direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                <Stack component="form" onSubmit={search} direction="row" spacing={1} sx={{ alignItems: "center", maxWidth: "100%" }}>
                   <TextField
                     label={t("browse.searchLabel")}
                     placeholder="*.parquet"
                     value={pattern}
                     onChange={(e) => setPattern(e.target.value)}
                     size="small"
-                    sx={{ width: 340 }}
+                    sx={{ width: 340, minWidth: 0, flexShrink: 1 }}
                     title={t("browse.searchHint", { results: SEARCH_RESULTS, seconds: SEARCH_SECONDS })}
                     slotProps={{ inputLabel: { shrink: true } }}
                   />
@@ -819,7 +906,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               {listing && !found && (
                 <Stack direction="row" spacing={2} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
                   <Typography variant="body2" color="text.secondary">
-                    {t(listing.next_token ? "browse.loadedMore" : "browse.loaded", { folders: listing.prefixes.length, objects: objects.length })} {t("browse.dropHint")}
+                    {t(listing.next_token ? "browse.loadedMore" : "browse.loaded", { folders: listing.prefixes.length, objects: objects.length })} {t("browse.dropHint")} {t("browse.timesIn", { tz: TZ })}
                   </Typography>
                   {listing.next_token && (
                     <Button size="small" variant="outlined" disabled={busy} onClick={() => load(bucket, prefix, listing.next_token)}>
@@ -979,15 +1066,6 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
           {notice?.text}
         </Alert>
       </Snackbar>
-      <PathPickerDialog
-        open={picking}
-        title={t("pathPicker.openTitle")}
-        submitLabel={t("common.open")}
-        clusterId={clusterId}
-        uid={session?.uid ?? ""}
-        onSubmit={(toBucket, toPrefix) => load(toBucket, toPrefix, null)}
-        onClose={() => setPicking(false)}
-      />
       <CreateBucketDialog
         clusterId={clusterId}
         uid={session?.uid ?? ""}

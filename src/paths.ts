@@ -28,3 +28,11 @@ export function startPath(text: string): { path: string; error?: undefined } | {
   const split = splitPath(text);
   return split.error ? { error: split.error } : { path: joinPath(split.bucket, split.prefix) };
 }
+
+/** The start paths after `typed` is added to them: in its stored form, and not a second time. Nothing typed
+ *  adds nothing; a text that cannot be a path says why and adds nothing. */
+export function addStartPath(paths: string[], typed: string): { paths: string[]; error?: undefined } | { error: Key } {
+  const next = startPath(typed);
+  if (next.error) return next;
+  return { paths: !next.path || paths.includes(next.path) ? paths : [...paths, next.path] };
+}

@@ -73,7 +73,7 @@ test("the size floors hold in both themes: body 15 px, rows and inputs at least 
     expect(theme.typography.fontSize).toBe(15);
     expect(parseFloat(String(theme.typography.caption.fontSize)) * 16, `${mode}: caption`).toBeGreaterThanOrEqual(12);
     expect(parseFloat(String(theme.typography.body2.fontSize)) * 16, `${mode}: body`).toBeCloseTo(15, 5);
-    const panel = createElement(BucketPanel, { title: "Buckets", buckets, bucketsError: null, current: "", active: true, onOpen: nothing, onCreate: nothing, onPickPath: nothing });
+    const panel = createElement(BucketPanel, { title: "Buckets", buckets, bucketsError: null, current: "", active: true, onOpen: nothing, onCreate: nothing, pathEntry: null });
     const html = renderToString(createElement(ThemeProvider, { theme }, createElement(CssBaseline), panel));
     const css = [...html.matchAll(/<style[^>]*>(.*?)<\/style>/gs)].map((m) => m[1]).join("");
     const rule = (tag: RegExp) => {

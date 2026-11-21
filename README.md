@@ -21,14 +21,18 @@ The pictures in this document come from the smoke test, run against a test clust
   suggests "No proxy".
 - **Tabs**: each tab is at one place (connection + bucket + folder) and keeps its listing, scroll position and ticked rows
   while you are in another tab (shortcuts: see Shortcuts). The open tabs come back when the app is started again.
-- **Open path**: type `bucket` or `bucket/folder/` to go straight there, also when your key may only list that one folder;
-  a connection can have a start path that is opened by itself (see Scoped access).
+- **Open path**: a field in the bucket card of the left column. Type `bucket` or `bucket/folder/` and it suggests path by
+  path in a dropdown under the field: the buckets that start with what is typed, then the folders S3 lists there. `Tab` or
+  `→` takes the highlighted row, `Enter` opens. It also works when your key may only list that one folder; a connection can
+  have start paths, the first of which is opened by itself (see Scoped access).
 - **Pinned**: bookmarks to buckets and to folders deep inside them, one click away in the left column and in the app bar,
   remembered between runs (see Pinned places).
 - **Bucket list**: however many buckets the key owns, the list keeps a fixed height and scrolls inside its card; a filter
-  field appears above 8 buckets (`↑` `↓` move, `Enter` opens, `Esc` clears) and the header shows the count.
+  field is there from 2 buckets on (`↑` `↓` move, `Enter` opens, `Esc` clears) and the header shows the count.
+- **A filter in every list**: the Pinned card (above 5 places, by name or path), the whole Recent list (above 8) and the app
+  bar's Pinned menu (above 8) have the same filter field as the buckets: `Esc` clears it, and it counts "3 of 12".
 - **See-your-access path picker**: Open path, pinning a typed path and a connection's start path share one picker. It shows
-  "Paths you can open" (start path, pins, recent places, and, when the key may read it, what a bucket policy grants) and, as
+  "Your paths" (start paths, pins, recent places, and, when the key may read it, what a bucket policy grants) and, as
   you type, the folders S3 lists at exactly that path, one click to go deeper. When the key may not list there, an amber hint
   says so; the path can still be opened. Nothing is ever listed above what you typed.
 - **Dark & light themes**: a warm-charcoal dark theme and a warm-paper light theme with the same amber accent, chosen in the
@@ -56,7 +60,11 @@ The pictures in this document come from the smoke test, run against a test clust
 - **Copy URL**: a 15-minute presigned URL of the object, straight to the clipboard; another lifetime can be set under
   Properties.
 - Recursive search with limits (`*.parquet`, `logs/2026-*`…).
-- Every time is shown in Vietnam time (UTC+7), in both languages.
+- Every time is shown in Vietnam time (UTC+7), in both languages; the zone is said once under the list and in the tooltip
+  of the "Last modified" heading.
+- **Fits small windows**: checked from 900 to 1920 px wide at 100, 125 and 150% size. Nothing scrolls sideways; in a narrow
+  window the list drops its date and storage-class columns (the object's properties keep them), and the left column scrolls
+  inside itself, above the Tasks panel.
 - **General settings** (at the bottom of the Connections screen): the proxy for the whole app; the interface size, with an
   `A- 100% A+` stepper (80, 90, 100, 110, 125, 150%) that makes the whole app bigger or smaller like a browser's zoom and is
   remembered for the next run; the language, `VI | EN`, which switches at once, without a restart. On first run the app
@@ -65,6 +73,8 @@ The pictures in this document come from the smoke test, run against a test clust
   folder); the log never holds a secret or a presigned URL.
 
 ![The light theme](docs/images/browse.light.png)
+
+![First run: no connection yet](docs/images/connection-empty.png)
 
 ![Adding a connection](docs/images/connection.png)
 
@@ -85,6 +95,10 @@ The pictures in this document come from the smoke test, run against a test clust
 ![A long bucket list stays inside its card](docs/images/buckets-many.png)
 
 ![The interface at 125%](docs/images/zoom.png)
+
+![A 900 px window](docs/images/responsive-900.png)
+
+![A 1920 px window](docs/images/responsive-1920.png)
 
 ## Install
 
@@ -107,9 +121,12 @@ To play compressed video / audio in the preview, the machine needs GStreamer's c
 
 ## Quick start
 
-**1. Add a connection.** **Connections** → fill in a name, the endpoint (for example `https://rgw.example.com` or
-`http://rgw.example.com:7480`), your access key and secret key → **Test connection** → **Save**. The test only lists buckets
-over S3, so an ordinary key without any caps works.
+**1. Add a connection.** **Connections** → **Add a connection** → fill in the four required fields: a name, the endpoint
+(`https://` is already there; for example `https://rgw.example.com` or `http://rgw.example.com:7480`), your access key and
+secret key → **Test connection** (the answer shows inside the form) → **Save**. Save stays disabled until the four fields
+are filled, and says which one comes first. The test only lists buckets over S3, so an ordinary key without any caps works.
+Start paths, an admin key and a proxy of its own are under **Advanced**, which most connections never need. A saved
+connection has **Browse buckets**, **Edit** (start paths, proxy) and a menu with Test and Delete.
 
 **2. Browse.** **Browse** → choose a bucket. A bucket that is shared with you (S3 does not list those) is opened by its path
 under **Open path** in the left column.
@@ -127,8 +144,10 @@ one prefix, and often the key may not list buckets at all. Such a key works like
 - **Open path** (left column of Browse) takes `bucket` or `bucket/folder/…` and lands exactly there. `s3://bucket/folder/` and
   a leading `/` mean the same; the path of a file (`bucket/folder/report.csv`) opens the folder the file is in. A folder whose
   name looks like a file name (`v1.2`) needs its trailing `/`.
-- **Start path** (optional field of a connection, also editable on a saved one): `team-bucket/project-a/` is opened by itself
-  whenever that connection is opened, in every new tab.
+- **Start paths** (optional, under Advanced in the form; under Edit on a saved connection): type `team-bucket/project-a/`
+  and press `Enter` to add it as a chip, `×` removes one; a connection can have several. The first is opened by itself
+  whenever that connection is opened, in every new tab. All of them are offered as "Your paths" in the path picker and are
+  the first rows of the Pinned card, under "From the connection".
 - When the key may not list buckets, the bucket card says so instead of showing an error, and the keyboard is already in the
   Open-path field. "Test connection" passes for such a key and tells you to set a start path.
 - The breadcrumb still leads upwards. Above your folder S3 answers "not allowed"; the message then points back to Open path.
@@ -149,7 +168,7 @@ Pin what you use every day: a bucket, or a folder any number of levels down.
 
 ### Admin key (optional)
 
-When adding a connection you may also enter an admin key. The app uses it for two things only, and never to sign S3 requests:
+When adding a connection you may also enter an admin key (under Advanced). The app uses it for two things only, and never to sign S3 requests:
 
 | What | Caps the admin key needs |
 |---|---|

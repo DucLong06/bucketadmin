@@ -1,14 +1,21 @@
 import { type MouseEvent, useState } from "react";
-import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, List, ListItemButton, ListItemIcon, ListItemText, Menu, MenuItem, Paper, TextField, IconButton } from "@mui/material";
+import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, List, ListItemButton, ListItemIcon, ListItemText, Menu, MenuItem, Paper, TextField, IconButton, Typography } from "@mui/material";
 import type { Profile } from "./api";
 import { t } from "./i18n";
-import { defaultLabel, orderPins, pinLabel, type Pin, type PinOps } from "./pins";
+import { splitPath } from "./paths";
+import { SOURCE_ICON } from "./PathPicker";
+import { defaultLabel, filterPins, orderPins, pinLabel, type Pin, type PinOps } from "./pins";
 import { placeLabel, type Place } from "./tabs";
 import { thinScroll, tokens } from "./theme";
-import { FoldHeading, PinIcon } from "./ui";
+import { FoldHeading, ListFilter, PinIcon } from "./ui";
+
+/** The card gets a filter field above this many rows. */
+export const PINS_FILTER_ABOVE = 5;
 
 type Props = {
   pins: Pin[];
+  /** The start paths of the connection being browsed (with its own key): the first rows of the card. */
+  startPaths?: string[];
   profiles: Profile[];
   /** The connection being browsed in this tab: its pins come first. */
   clusterId: string;
@@ -27,13 +34,25 @@ type Props = {
 /** The sidebar's Pinned card, under the buckets. Pins of other connections are listed too, greyed
  *  under a divider: every pin stays one click away. The list scrolls inside the card, and the
  *  whole card folds to its heading when the user wants the room for what is below it. */
-export default function PinnedPanel({ pins, profiles, clusterId, onOpen, onOpenTab, ops, onAdd, folded, onFold }: Props) {
+export default function PinnedPanel({ pins, startPaths = [], profiles, clusterId, onOpen, onOpenTab, ops, onAdd, folded, onFold }: Props) {
   // Right-clicked pin (with its position in the whole list) and where the pointer was.
   const [menu, setMenu] = useState<{ pin: Pin; index: number; x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<Pin | null>(null);
   const [name, setName] = useState("");
-  if (pins.length === 0) return null;
-  const { here, elsewhere } = orderPins(pins, clusterId);
+  // The filter belongs to this tab and is not saved.
+  const [filter, setFilter] = useState("");
+  if (pins.length === 0 && startPaths.length === 0) return null;
+  const filterable = pins.length + startPaths.length > PINS_FILTER_ABOVE;
+  const wanted = filterable ? filter.trim().toLowerCase() : "";
+  const starts = startPaths.filter((path) => path.toLowerCase().includes(wanted));
+  const startPlace = (path: string): Place => {
+    const at = splitPath(path);
+    return { clusterId, uid: "", bucket: at.error ? "" : at.bucket, prefix: at.error ? "" : at.prefix };
+  };
+  // Filtered after ordering: a pin keeps its position in the whole list (moving it up or down means that list).
+  const matching = new Set(filterable ? filterPins(pins, filter) : pins);
+  const ordered = orderPins(pins, clusterId);
+  const [here, elsewhere] = [ordered.here, ordered.elsewhere].map((group) => group.filter(({ pin }) => matching.has(pin)));
   const pick = (action: (pin: Pin, index: number) => void) => () => {
     if (menu) action(menu.pin, menu.index);
     setMenu(null);
@@ -73,8 +92,37 @@ export default function PinnedPanel({ pins, profiles, clusterId, onOpen, onOpenT
           )
         }
       />
+      {!folded && filterable && (
+        <Box sx={{ px: 1.5, pb: 1 }}>
+          <ListFilter placeholder={t("pins.filter")} value={filter} onChange={setFilter} shown={matching.size + starts.length} total={pins.length + startPaths.length} />
+        </Box>
+      )}
+      {!folded && matching.size + starts.length === 0 && (
+        <Typography variant="body2" color="text.secondary" sx={{ px: 2, pb: 1.5 }}>
+          {t("list.filterNone")}
+        </Typography>
+      )}
       {!folded && (
         <List dense id="pinned-list" aria-label={t("browse.pinnedList")} style={{ maxHeight: 216 }} sx={{ ...thinScroll, pt: 0 }}>
+          {/* Where the connection says its key works: not pins (nothing to rename or unpin), but as near. */}
+          {starts.length > 0 && (
+            <Divider component="li" textAlign="left" sx={{ my: 0.5, fontSize: 12.5, color: "text.secondary" }}>
+              {t("pins.fromConnection")}
+            </Divider>
+          )}
+          {starts.map((path) => (
+            <ListItemButton
+              key={`start ${path}`}
+              title={t("pathPicker.source.start")}
+              onClick={(e: MouseEvent) => (e.ctrlKey || e.metaKey ? onOpenTab(startPlace(path)) : onOpen(startPlace(path)))}
+              onAuxClick={(e: MouseEvent) => e.button === 1 && onOpenTab(startPlace(path))}
+            >
+              <ListItemIcon data-source="start" sx={{ minWidth: 28, color: "text.secondary" }}>
+                {SOURCE_ICON.start}
+              </ListItemIcon>
+              <ListItemText primary={path} slotProps={{ primary: { sx: { fontFamily: tokens.mono, fontSize: 14.5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } } }} />
+            </ListItemButton>
+          ))}
           {here.map((entry) => row(entry, true))}
           {elsewhere.length > 0 && (
             <Divider component="li" textAlign="left" sx={{ my: 0.5, fontSize: 12.5, color: "text.secondary" }}>

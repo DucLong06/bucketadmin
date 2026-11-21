@@ -9,8 +9,13 @@
 #   xvfb-run -a -s "-screen 0 1280x900x24" scripts/ui-smoke/ui-smoke.sh "$PWD/src-tauri/target/debug/bucketadmin"
 # $1 = app binary (debug build: only those honour BUCKETADMIN_DEV_SCRIPT). Screenshots: /tmp/ba-smoke/*.png.
 # UI_LANG=vi|en (default vi): the language the app runs in. The same flow passes in both.
+# FLOW=responsive runs the responsive pass (responsive.js) instead of the whole flow: the same screens at
+# every window width and zoom step of its matrix. It needs a screen as wide as its widest window:
+#   FLOW=responsive xvfb-run -a -s "-screen 0 1920x1080x24" scripts/ui-smoke/ui-smoke.sh <binary>
 HERE="$(dirname "$(readlink -f "$0")")"
-export TPL="$HERE/driver.tpl.js" FLOW_JS="$HERE/flow-browse.js"
+export FLOW="${FLOW:-browse}"
+case "$FLOW" in browse) FLOW_FILE=flow-browse.js ;; responsive) FLOW_FILE=responsive.js ;; *) echo "FLOW must be browse or responsive, not '$FLOW'"; exit 1 ;; esac
+export TPL="$HERE/driver.tpl.js" FLOW_JS="$HERE/$FLOW_FILE"
 mkdir -p /tmp/ba-smoke
 export UI_LANG="${UI_LANG:-vi}"
 case "$UI_LANG" in vi|en) ;; *) echo "UI_LANG must be vi or en, not '$UI_LANG'"; exit 1 ;; esac
@@ -28,6 +33,8 @@ export NAMES="$(grep -oE 'await shot\("[^"]+"\)' "$FLOW_JS" | sed -E 's/.*"(.*)"
 ENTER_AT="06-csv 28-copy-url"
 # Slots at which the shell presses a real Ctrl+D (a synthetic key event does not prove a shortcut).
 CTRL_D_AT="38-ctrl-d"
+# Slots at which the shell presses a real Tab: the path field of the bucket card takes its highlighted suggestion.
+TAB_AT="38a-path-suggest"
 # Debug builds take GitHub's "latest release" answer from here: the flow sees a newer release.
 export BUCKETADMIN_DEV_UPDATE='{"tag_name":"v9.9.9","html_url":"https://github.com/DucLong06/bucketadmin/releases/tag/v9.9.9"}'
 # Files the flow uploads, and where its downloads go. Native file dialogs cannot be driven
@@ -50,7 +57,8 @@ mkdir -p "$XDG_DATA_HOME/bucketadmin"
 echo "{\"lang\": \"$UI_LANG\"}" > "$XDG_DATA_HOME/bucketadmin/settings.json"
 # Many connections from the first second: 20 saved profiles with made-up endpoints and key ids (no
 # secret exists for them anywhere), two of them under the same label. The flow adds its real ones.
-python3 - > "$XDG_DATA_HOME/bucketadmin/profiles.json" <<'PY'
+# (The responsive pass starts with none: its first screen is the one a new user sees.)
+[ "$FLOW" = browse ] && python3 - > "$XDG_DATA_HOME/bucketadmin/profiles.json" <<'PY'
 import json
 print(json.dumps([{"id": f"seed{n:02}", "label": f"site-{1 if n == 20 else n:02}", "endpoint": f"http://s3-{n:02}.example.invalid:7480",
                    "access_key": f"AKIAEXAMPLE{n:09}"} for n in range(1, 21)], indent=2))
@@ -59,8 +67,11 @@ rm -f /tmp/ba-smoke/*.png
 # Long enough for the slowest step even when the lab is slow.
 export STEP="${STEP:-10000}"
 export START=$(( $(date +%s%3N) + 15000 ))
+# A picture is the window as it is at that moment (1200x800 unless WINDOW or the flow resized it).
 shot() {
-  python3 -c "from PIL import ImageGrab; ImageGrab.grab().crop((0, 0, 1200, 800)).save('/tmp/ba-smoke/$1.png')"
+  local size
+  size="$(xdotool getwindowgeometry "$WID" | sed -n 's/.*Geometry: \([0-9]*\)x\([0-9]*\).*/\1, \2/p')"
+  python3 -c "from PIL import ImageGrab; ImageGrab.grab().crop((0, 0, ${size:-1200, 800})).save('/tmp/ba-smoke/$1.png')"
   echo "screenshot: /tmp/ba-smoke/$1.png"
 }
 # Lab creds reach the driver through this 0600 file only; it is deleted at the end.
@@ -101,6 +112,11 @@ for name in $NAMES; do
     # A presigned URL is a credential: only its path is printed, never the signature.
     echo "clipboard after a real Enter at $name: ${clip%%\?*}$([[ "$clip" == *X-Amz-Signature=* ]] && echo "?… (presigned, X-Amz-Expires=$(printf '%s' "$clip" | grep -o 'X-Amz-Expires=[0-9]*' | cut -d= -f2))")"
     shot "${name}-copied"
+  fi
+  if [[ " $TAB_AT " == *" $name "* ]]; then
+    # M12.5: a real Tab in the path field takes the highlighted suggestion (and does not leave the field).
+    xdotool key Tab; sleep 0.8
+    shot "${name}-pressed"
   fi
   if [[ " $CTRL_D_AT " == *" $name "* ]]; then
     xdotool key ctrl+d; sleep 0.8
@@ -145,7 +161,7 @@ for action, target, detail, ok, msg in sqlite3.connect(db).execute("select actio
 raw = open(db, "rb").read()
 print("admin secret key in audit.db:", raw.count(os.environ["RGW_SECRET_KEY"].encode()), "occurrences")
 print("keys typed in by the flow in audit.db:", raw.count(b"bam7uismokesecret") + raw.count(b"BAM7UISMOKEKEY"), "occurrences")
-expected = ["object.presign", "object.tags.set", "object.upload", "version.restore", "version.delete", "acl.set", "acl.set_many",
+expected = [] if os.environ["FLOW"] != "browse" else ["object.presign", "object.tags.set", "object.upload", "version.restore", "version.delete", "acl.set", "acl.set_many",
             "object.delete", "object.delete_many", "object.undelete", "bucket.create", "folder.create", "bucket.versioning.set"]
 missing = [a for a in expected if a not in seen]
 print("audit actions expected from this flow but not recorded:", missing or "none")

@@ -20,15 +20,15 @@ import {
 import { invoke, type Profile } from "./api";
 import { explain } from "./errors";
 import { AccessContext, PathPickerDialog } from "./PathPicker";
-import { isPinned, movePin, pinLabel, togglePin, type Pin, type PinOps } from "./pins";
+import { filterPins, isPinned, movePin, togglePin, type Pin, type PinOps } from "./pins";
 import AuditLog from "./AuditLog";
-import Browse from "./Browse";
+import Browse, { NARROW, SHORT } from "./Browse";
 import Connections from "./Connections";
 import { t, useLang } from "./i18n";
 import { closeTab, cycleTab, groupRecents, placeLabel, placePath, restoreTabs, samePlace, saveTabs, tabShortcut, tabTitle, type BrowseTab, type Place, type SavedTabs } from "./tabs";
 import { eyebrow, setMode, themes, tokens, useMode } from "./theme";
 import { TaskPanel, useTransfers } from "./transfers";
-import { ErrorAlert, PinToggle } from "./ui";
+import { ErrorAlert, ListFilter, PinToggle } from "./ui";
 import { zoomShortcut } from "./zoom";
 
 /** A release newer than this build (backend `update_check`). */
@@ -36,6 +36,8 @@ type Update = { tag: string; url: string; current: string };
 
 /** Pins the app-bar menu lists (the sidebar has them all). */
 const PINS_IN_MENU = 15;
+/** Above this many pins the menu starts with a field to type a part of a name or a path into. */
+const PINS_MENU_FILTER_ABOVE = 8;
 const newTab = (start: Place): BrowseTab => ({ id: crypto.randomUUID(), start, at: start });
 const nowhere = (clusterId: string): Place => ({ clusterId, uid: "", bucket: "", prefix: "" });
 
@@ -57,6 +59,16 @@ export default function App() {
   // The other connections' recent places are folded away while the list is long.
   const [recentOthers, setRecentOthers] = useState(false);
   const tabBar = useRef<HTMLDivElement | null>(null);
+  // The height the tab panes really have (the window less the app bar, the tab strip and the task panel),
+  // as a CSS variable: the sidebar of a tab and its bucket list size themselves by it.
+  const panes = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = panes.current;
+    if (!el) return;
+    const watch = new ResizeObserver(() => el.style.setProperty("--ba-pane-h", `${el.clientHeight}px`));
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, []);
   // With many tabs the bar scrolls: the tab on screen is always in view.
   useEffect(() => {
     tabBar.current?.querySelector('[role=tab][aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -65,6 +77,7 @@ export default function App() {
   // the guess, and a refusal (the list is full) puts back what is really saved.
   const [pins, setPins] = useState<Pin[]>([]);
   const [pinMenu, setPinMenu] = useState<HTMLElement | null>(null);
+  const [pinMenuFilter, setPinMenuFilter] = useState("");
   const [pinError, setPinError] = useState<string | null>(null);
   // The connection a path is being pinned on, while the path picker is open for that.
   const [pinning, setPinning] = useState<string | null>(null);
@@ -224,6 +237,8 @@ export default function App() {
   const browsing = page === "browse";
   const known = recents.filter((r) => profiles?.some((p) => p.id === r.clusterId));
   const knownPins = pins.filter((pin) => profiles?.some((p) => p.id === pin.place.clusterId));
+  const pinMenuFilterable = knownPins.length > PINS_MENU_FILTER_ABOVE;
+  const pinMenuRows = pinMenuFilterable ? filterPins(knownPins, pinMenuFilter) : knownPins;
   // The Recent menu, grouped like the pins: the connection of the tab on screen first.
   const recentGroups = groupRecents(known, activeCluster());
   const recentItem = (place: Place) => (
@@ -237,7 +252,7 @@ export default function App() {
       <CssBaseline />
       <AccessContext.Provider value={{ profiles: profiles ?? [], pins: knownPins, recents: known }}>
       <Box sx={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-        <Box component="header" sx={{ display: "flex", alignItems: "center", gap: 4.5, height: 68, px: 5, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
+        <Box component="header" sx={{ display: "flex", alignItems: "center", gap: 4.5, height: 68, px: 5, borderBottom: 1, borderColor: "divider", flexShrink: 0, [NARROW]: { gap: 2, px: 2 }, [SHORT]: { height: 48 } }}>
           <Typography component="div" sx={{ fontFamily: tokens.serif, fontStyle: "italic", fontWeight: 600, fontSize: 25, letterSpacing: "-0.01em" }}>
             Bucket
             <Box component="span" sx={{ color: "primary.main", fontStyle: "normal" }}>
@@ -293,7 +308,7 @@ export default function App() {
         <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
           {/* The browse layer stays mounted (and keeps every tab's state) while the connections screen is shown. */}
           <Box sx={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", visibility: browsing ? "visible" : "hidden" }}>
-            <Stack direction="row" sx={{ alignItems: "flex-end", gap: 0.75, px: 5, pt: 1.25, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
+            <Stack direction="row" sx={{ alignItems: "flex-end", gap: 0.75, px: 5, pt: 1.25, borderBottom: 1, borderColor: "divider", flexShrink: 0, [NARROW]: { px: 2 }, [SHORT]: { pt: 0.5 } }}>
               {/* Tabs keep a readable width; when they do not fit, this strip scrolls (wheel, keyboard, or by itself to the active tab). */}
               <Stack
                 direction="row"
@@ -359,10 +374,42 @@ export default function App() {
                 +
               </IconButton>
               <Box sx={{ flexGrow: 1 }} />
-              <Button size="small" aria-haspopup="menu" onClick={(e) => setPinMenu(e.currentTarget)} sx={{ mb: 0.5, flexShrink: 0 }}>
+              <Button
+                size="small"
+                aria-haspopup="menu"
+                onClick={(e) => {
+                  setPinMenuFilter("");
+                  setPinMenu(e.currentTarget);
+                }}
+                sx={{ mb: 0.5, flexShrink: 0 }}
+              >
                 {t("app.pinned")}
               </Button>
-              <Menu anchorEl={pinMenu} open={pinMenu !== null} onClose={() => setPinMenu(null)} slotProps={{ list: { "aria-label": t("app.pinned.list") } }}>
+              {/* With the type-ahead field the keyboard starts in it, not on the first item. */}
+              <Menu anchorEl={pinMenu} open={pinMenu !== null} onClose={() => setPinMenu(null)} autoFocus={!pinMenuFilterable} slotProps={{ list: { "aria-label": t("app.pinned.list") } }}>
+                {pinMenuFilterable && (
+                  // Typing is for the field (a menu would jump to the item that starts with the letter); Esc is the menu's.
+                  <Box
+                    component="li"
+                    role="presentation"
+                    sx={{ px: 1.5, pb: 1, minWidth: 300 }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") return;
+                      e.stopPropagation();
+                      if (e.key !== "ArrowDown") return;
+                      // The arrow down leaves the field for the first item (the menu itself would start from the item it had last).
+                      e.preventDefault();
+                      e.currentTarget.parentElement?.querySelector<HTMLElement>('[role=menuitem]:not([aria-disabled="true"])')?.focus();
+                    }}
+                  >
+                    <ListFilter placeholder={t("pins.filter")} value={pinMenuFilter} onChange={setPinMenuFilter} shown={pinMenuRows.length} total={knownPins.length} autoFocus />
+                  </Box>
+                )}
+                {pinMenuFilterable && pinMenuRows.length === 0 && (
+                  <MenuItem disabled sx={{ whiteSpace: "normal", maxWidth: 340 }}>
+                    {t("list.filterNone")}
+                  </MenuItem>
+                )}
                 {knownPins.length === 0 && (
                   <MenuItem disabled sx={{ whiteSpace: "normal", maxWidth: 340 }}>
                     {t("app.pinned.none")}
@@ -378,7 +425,7 @@ export default function App() {
                 >
                   {t("pins.add")}
                 </MenuItem>
-                {knownPins.slice(0, PINS_IN_MENU).map((pin) => (
+                {pinMenuRows.slice(0, PINS_IN_MENU).map((pin) => (
                   <MenuItem key={JSON.stringify(pin.place)} title={placeLabel(pin.place, profiles ?? [])} onClick={() => goTo(pin.place)}>
                     {pin.label ? `${pin.label} · ${placeLabel(pin.place, profiles ?? [])}` : placeLabel(pin.place, profiles ?? [])}
                   </MenuItem>
@@ -411,14 +458,14 @@ export default function App() {
                 {(!recentGroups.collapsed || recentOthers) && recentGroups.elsewhere.map(recentItem)}
               </Menu>
             </Stack>
-            <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
+            <Box ref={panes} sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
               {profiles &&
                 tabs.map((tab) => {
                   const shown = browsing && tab.id === active;
                   return (
                     // Hidden, not unmounted and not display:none: the tab keeps its state and its scroll position.
                     <Box key={tab.id} role="tabpanel" aria-hidden={!shown} sx={{ position: "absolute", inset: 0, overflow: "auto", visibility: shown ? "visible" : "hidden" }}>
-                      <Container maxWidth="xl" sx={{ py: 3, px: "40px !important" }}>
+                      <Container maxWidth="xl" sx={{ py: 3, px: "40px !important", [NARROW]: { px: "16px !important" }, [SHORT]: { py: 1.5 } }}>
                         <Browse
                           profiles={profiles}
                           start={tab.start}
@@ -443,7 +490,7 @@ export default function App() {
           </Box>
           {!browsing && (
             <Box sx={{ position: "absolute", inset: 0, overflow: "auto" }}>
-              <Container maxWidth="lg" sx={{ py: 4, px: "40px !important" }}>
+              <Container maxWidth="lg" sx={{ py: 4, px: "40px !important", [NARROW]: { px: "16px !important" }, [SHORT]: { py: 2 } }}>
                 <ErrorAlert error={error} />
                 {page === "audit" ? <AuditLog /> : <Connections profiles={profiles ?? []} onChanged={reload} scale={scale} onScale={zoomTo} onBrowse={browseConnection} />}
               </Container>

@@ -1,10 +1,11 @@
-import { createElement } from "react";
+import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToString } from "react-dom/server";
 import { expect, test } from "vitest";
 import type { Profile } from "./api";
 import { applyLang } from "./i18n";
-import PinnedPanel from "./PinnedPanel";
-import { defaultLabel, isPinned, movePin, orderPins, pinLabel, togglePin, type Pin } from "./pins";
+import PinnedPanel, { PINS_FILTER_ABOVE } from "./PinnedPanel";
+import { ListFilter } from "./ui";
+import { defaultLabel, filterPins, isPinned, movePin, orderPins, pinLabel, togglePin, type Pin } from "./pins";
 import type { Place } from "./tabs";
 
 const at = (clusterId: string, bucket: string, prefix = "", uid = ""): Place => ({ clusterId, uid, bucket, prefix });
@@ -91,4 +92,55 @@ test("the Pinned panel lists the current connection's pins first, the others und
   expect(text(folded)).not.toContain("|logs/2026|");
   applyLang("vi");
   expect(text(render("c1"))).toContain(`|Đã ghim · ${pins.length}|`);
+});
+
+// ---- M12.3: the shared filter field, and the Pinned card's use of it
+
+const somePins = (n: number) => Array.from({ length: n }, (_, i) => ({ place: { clusterId: "c1", uid: "", bucket: `team-${i + 1}`, prefix: i % 2 ? "Reports/" : "" }, label: i === 0 ? "Daily Notes" : "", added: i }));
+const card = (n: number) =>
+  renderToString(createElement(PinnedPanel, { pins: somePins(n), profiles: [], clusterId: "c1", onOpen: () => {}, onOpenTab: () => {}, ops: { toggle: () => {}, rename: () => {}, move: () => {} }, folded: false, onFold: () => {} }));
+
+test("the Pinned card has the filter field above 5 pins, matching name and path whatever the case", () => {
+  applyLang("en");
+  expect(PINS_FILTER_ABOVE).toBe(5);
+  expect(card(5)).not.toContain("Filter pinned places…");
+  expect(card(6)).toContain('placeholder="Filter pinned places…"');
+  applyLang("vi");
+  expect(card(6)).toContain('placeholder="Lọc vị trí đã ghim…"');
+  applyLang("en");
+  const pins = somePins(6);
+  expect(filterPins(pins, "daily").map((pin) => pin.place.bucket)).toEqual(["team-1"]);
+  expect(filterPins(pins, "REPORTS").map((pin) => pin.place.bucket)).toEqual(["team-2", "team-4", "team-6"]);
+  expect(filterPins(pins, " team-3 ").map((pin) => pin.place.bucket)).toEqual(["team-3"]);
+  expect(filterPins(pins, "")).toBe(pins);
+});
+
+/** Every element of a rendered tree (the field is a plain function: no browser needed to press a key in it). */
+function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
+  if (Array.isArray(node)) return node.flatMap(elements);
+  if (!isValidElement<Record<string, unknown>>(node)) return [];
+  return [node, ...elements(node.props.children as ReactNode)];
+}
+
+test("ListFilter: Esc clears what is typed (and is kept from the menu around it); other keys go to the list; the count shows while filtering", () => {
+  applyLang("en");
+  const typed: string[] = [];
+  const keys: string[] = [];
+  const field = (value: string) => ListFilter({ value, onChange: (text) => typed.push(text), placeholder: "Filter…", shown: 3, total: 12, onKeyDown: (e) => keys.push(e.key) });
+  const press = (value: string, key: string) => {
+    const stopped: string[] = [];
+    const onKeyDown = elements(field(value))[0].props.onKeyDown as (e: unknown) => void;
+    onKeyDown({ key, preventDefault: () => stopped.push("default"), stopPropagation: () => stopped.push("propagation") });
+    return stopped;
+  };
+  expect(press("logs", "Escape")).toEqual(["default", "propagation"]);
+  expect(typed).toEqual([""]);
+  // Nothing typed: Esc belongs to whatever is around the field.
+  expect(press("", "Escape")).toEqual([]);
+  expect(press("logs", "ArrowDown")).toEqual([]);
+  expect(keys).toEqual(["Escape", "ArrowDown"]);
+  expect(typed).toEqual([""]);
+  expect(renderToString(field("logs"))).toContain("3 of 12");
+  expect(renderToString(field(""))).not.toContain("3 of 12");
+  expect(renderToString(field("logs"))).toContain('aria-label="Filter…"');
 });

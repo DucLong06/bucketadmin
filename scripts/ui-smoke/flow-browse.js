@@ -88,6 +88,15 @@
     const pinnedRows = () => pinnedButtons().map((row) => row.textContent.trim());
     const savedPins = async () => (await invoke("pin_list")).map((pin) => `${pin.place.bucket}/${pin.place.prefix}${pin.label ? `=${pin.label}` : ""}`).join(" | ");
     const panelOf = (key) => last(all(sel(key)))?.closest(".MuiPaper-root");
+    // M12.4: start path, admin key and proxy are in the form's Advanced group, closed until it is asked for
+    // (and then open for the rest of the run).
+    const openAdvanced = async () => {
+      if (!document.getElementById("conn-advanced")) await clickSel('[aria-controls="conn-advanced"]');
+      await waitFor(() => document.getElementById("conn-advanced"), "the Advanced group of the form");
+    };
+    const maskedMine = `${MINE.ak.slice(0, 4)}…${MINE.ak.slice(-4)}`;
+    // What a saved connection's row says (label, host, keys, start path).
+    const rowSays = (label, text) => all("li").some((row) => row.querySelector(sel("conn.more", { label })) && row.textContent.includes(text));
     const addConnection = async (label, key, startPath) => {
       await click(T("app.connections"));
       await type(T("conn.label"), label);
@@ -95,7 +104,10 @@
       await type(T("conn.accessKey"), key.ak);
       await type(T("conn.secretKey"), key.sk);
       // The form's own field: every saved connection below it has a start path field too.
-      if (startPath !== undefined) await type(T("conn.startPath"), startPath, first);
+      if (startPath !== undefined) {
+        await openAdvanced();
+        await type(T("conn.startPath"), startPath, first);
+      }
     };
     // The add-connection form is the first form of the Connections screen; every saved connection
     // below it has a "Test connection" button of its own, so the form's is asked for by position.
@@ -113,7 +125,7 @@
     check(all(".MuiChip-root").some((c) => c.textContent === T("app.update.badge", { tag: "v9.9.9" })), "update badge in the masthead");
     check(!button("Users") && !button("Buckets") && !button("Audit"), "no admin screens");
     await click(T("app.connections"));
-    const savedRows = () => all(starts("conn.remove")).length;
+    const savedRows = () => all(starts("conn.more")).length;
     await waitFor(() => all(sel("conn.countAria", { n: 20 })).length === 1 && savedRows() === 20 && hasText(T("conn.add")), "twenty saved connections, counted in a badge");
     // One picture with the badge (docs/images/update*.png); the later pictures do not show the canned release.
     await shot("00a-update-badge");
@@ -127,7 +139,7 @@
     await waitFor(() => savedRows() === 2 && flagged() === 2, "two connections share a label: both are listed and flagged");
     setValue(search, "SITE-1");
     await waitFor(() => savedRows() === 10 && flagged() === 0 && hasText(T("browse.filterCount", { n: 10, m: 20 })), "search by label, whatever the case: 10 of 20");
-    check(all(starts("conn.remove")).every((b) => b.closest("li").getBoundingClientRect().height >= 40) && search.getBoundingClientRect().height >= 23 && search.closest(".MuiInputBase-root").getBoundingClientRect().height >= 40, "rows and the search field keep the size floor");
+    check(all(starts("conn.more")).every((b) => b.closest("li").getBoundingClientRect().height >= 40) && search.getBoundingClientRect().height >= 23 && search.closest(".MuiInputBase-root").getBoundingClientRect().height >= 40, "rows and the search field keep the size floor");
     all("h2").find((h) => h.textContent === T("conn.savedList")).scrollIntoView({ block: "start" });
     check(fits(), "Connections with many rows does not scroll sideways");
     await shot("00-connections-many");
@@ -140,6 +152,9 @@
     themeSwitch.click();
     await waitFor(() => document.documentElement.dataset.theme === "dark" && !themeSwitch.checked, "and off again");
     all(".MuiContainer-root").forEach((c) => (c.parentElement.scrollTop = 0));
+    // M12.4: the endpoint starts with its scheme; Save is disabled and says which field comes first.
+    const saveTip = () => first(all("form")).querySelector("button[type=submit]").parentElement.title;
+    check((await field(T("conn.endpoint"))).value === "https://" && !button(T("common.save")) && saveTip() === T("conn.missing", { field: T("conn.label") }), `an empty form: Save is disabled and its tooltip names the first missing field (${saveTip()})`);
     await type(T("conn.label"), "lab");
     await type(T("conn.endpoint"), CFG.ENDPOINT);
     await type(T("conn.accessKey"), MINE.ak);
@@ -147,7 +162,11 @@
     // The lab is a private address: "no proxy" is suggested for it.
     await waitFor(() => hasText(T("conn.internalHint")), "no-proxy suggestion for a private endpoint");
     await click(T("conn.noProxy.pick"));
-    await waitFor(() => proxyOf(T("proxy.name.new")).value === "none", "suggestion taken");
+    await waitFor(() => !hasText(T("conn.internalHint")), "suggestion taken: the hint is gone");
+    check(first(all("form")).querySelector('[aria-controls="conn-advanced"]').getAttribute("aria-expanded") === "false" && !document.getElementById("conn-advanced"), "the Advanced group is closed on a first visit");
+    await openAdvanced();
+    check(proxyOf(T("proxy.name.new")).value === "none", "and the proxy choice in the Advanced group says so");
+    check(button(T("common.save")) && !saveTip(), "the four required fields are filled: Save is enabled and its tooltip is gone");
     await testForm();
     await waitFor(() => hasText(T("error.s3.SignatureDoesNotMatch")), "a wrong secret is named as such");
     await type(T("conn.secretKey"), MINE.sk);
@@ -156,7 +175,14 @@
     check(fits(), "Connections does not scroll sideways");
     await shot("01-connection");
     await click(T("common.save"));
-    await waitFor(() => hasText(T("conn.saved", { label: "lab" })) && proxyOf(T("proxy.name.of", { label: "lab" }))?.value === "none", "connection saved with its own proxy choice");
+    await waitFor(() => hasText(T("conn.saved", { label: "lab" })) && rowSays("lab", maskedMine), "connection saved; its row shows the host and the masked key");
+    // The row's own settings are behind Edit; Test and Delete are in its menu.
+    await clickSel(sel("conn.editFor", { label: "lab" }));
+    await waitFor(() => proxyOf(T("proxy.name.of", { label: "lab" }))?.value === "none", "saved with its own proxy choice");
+    await clickSel(sel("conn.editFor", { label: "lab" }));
+    await clickSel(sel("conn.more", { label: "lab" }));
+    await clickSel(sel("conn.testFor", { label: "lab" }));
+    await waitFor(() => rowSays("lab", T("conn.ok", { n: 1 })), "the saved connection's test, from its menu, answers in its row", 20000);
 
     // ---- Browse: the key's buckets as cards, then one bucket
     await click(T("app.browse"));
@@ -339,7 +365,8 @@
       .map((cell) => /^\d{4}-\d\d-\d\d (\d\d:\d\d)$/.exec(cell.textContent.trim()))
       .find(Boolean);
     // (Column headers are shown in capitals by a style, so their own text is compared, not what is painted.)
-    const labelled = all("[role=columnheader]").some((h) => h.textContent === T("browse.col.modified", { tz: "UTC+7" }));
+    // M12.2: the heading is short enough for a 900 px window; the zone is its tooltip and one caption under the list.
+    const labelled = all("[role=columnheader]").some((h) => h.textContent === T("browse.col.modified") && h.querySelector("[title]")?.title === T("browse.col.modifiedTip", { tz: "UTC+7" })) && hasText(T("browse.timesIn", { tz: "UTC+7" }));
     check(labelled && modified && apart(secondsOfDay(`${modified[1]}:00`)) < 300, `last-modified ${modified?.[0]} is the time in Vietnam`);
     await shot("17-upload-done");
     await openObject("bin/upload-20m.bin");
@@ -593,7 +620,7 @@
     await type(T("conn.endpoint"), CFG.ENDPOINT);
     await type(T("conn.accessKey"), RO.ak);
     await type(T("conn.secretKey"), RO.sk);
-    document.querySelector("form details").open = true;
+    await openAdvanced();
     await type(T("conn.adminAccessKey"), CFG.AK);
     check(!button(T("common.save")), "half an admin key cannot be saved");
     await type(T("conn.adminSecretKey"), CFG.SK);
@@ -615,10 +642,11 @@
     await waitFor(() => hasText(T("browse.usingKeyOfUser", { uid: OWNER })) && all(bucketButtons).length === 2, "browsing with the owner's key", 20000);
     await click(T("browse.backToMyKey"));
     await waitFor(() => hasText(T("browse.usingKeyMine")) && hasText(T("browse.noBuckets")), "back on my own key", 20000);
-    await click(T("browse.openPath"));
-    await type(T("browse.openPath"), BUCKET);
-    (await field(T("browse.openPath"))).form.requestSubmit();
-    await dialogsGone();
+    // M12.5: the path is typed into the field of the bucket card itself.
+    const sidePath = await field(T("browse.openPath"));
+    setValue(sidePath, BUCKET);
+    sidePath.form.requestSubmit();
+    await waitFor(() => sidePath.value === "", "the path field empties once its path is opened");
     await waitFor(() => hasText(loaded(4, 0)), "the read-only user can list");
     await click(T("common.upload"));
     await waitFor(() => hasText(T("error.s3.AccessDenied")), "upload refused for the read-only user", 30000);
@@ -712,21 +740,41 @@
     press("d");
     await waitFor(() => pinnedRows().length === 3, "and it is unpinned again");
 
-    // ---- M10.1 the path picker: known places as chips, and the folders S3 lists at the typed path
+    // ---- M10.1 / M12.5 the path picker is the field of the bucket card: known places, and the folders S3
+    // lists at the typed path, are rows in a dropdown under it
     const chipPaths = () => all(`${sel("pathPicker.chips")} [role=listitem]`).map((c) => c.textContent.trim());
     const children = () => all(`${sel("pathPicker.children")} [role=listitem]`);
-    await click(T("browse.openPath"));
     const picker = await field(T("browse.openPath"));
-    await waitFor(() => document.activeElement === picker, "the picker opens with the keyboard in its field");
-    check([`${BUCKET}/notes/`, `${BUCKET}/media/`, BUCKET].every((path) => chipPaths().includes(path)) && all(`${sel("pathPicker.chips")} [data-source=pin]`).length === 3, `pins and recent places are chips: ${chipPaths().join(" ")}`);
+    check(chipPaths().length === 0 && children().length === 0, "no dropdown until the field has the keyboard");
+    picker.focus();
+    await waitFor(() => document.activeElement === picker && chipPaths().length > 0, "with the keyboard in the field its dropdown opens");
+    check([`${BUCKET}/notes/`, `${BUCKET}/media/`, BUCKET].every((path) => chipPaths().includes(path)) && all(`${sel("pathPicker.chips")} [data-source=pin]`).length === 3, `pins and recent places are rows of it: ${chipPaths().join(" ")}`);
+    // A bucket's name half typed: the listed buckets that start with it.
+    setValue(picker, BUCKET.slice(0, 5));
+    await waitFor(() => children().some((c) => c.textContent.trim() === `${BUCKET}/`), "a half-typed name suggests the bucket");
     setValue(picker, BUCKET);
     await waitFor(() => children().length === 4, "the bucket's folders are suggested", 15000);
+    const firstFolder = children()[0].textContent.trim();
+    check(children()[0].classList.contains("Mui-focusVisible"), "the first row is the highlighted one");
+    // Tab, pressed for real by the shell after this picture, takes that row; the next level is asked about.
+    picker.setSelectionRange(picker.value.length, picker.value.length);
+    await shot("38a-path-suggest");
+    await waitFor(() => picker.value === `${BUCKET}/${firstFolder}/` && document.activeElement === picker, `a real Tab completes the highlighted folder (${picker.value}) and stays in the field`, 15000);
+    // The arrow down and the arrow right, as the page sees them: the second row, completed.
+    setValue(picker, BUCKET);
+    await waitFor(() => children().length === 4, "the folders again", 15000);
+    const secondFolder = children()[1].textContent.trim();
+    picker.setSelectionRange(picker.value.length, picker.value.length);
+    for (const key of ["ArrowDown", "ArrowRight"]) picker.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    await waitFor(() => picker.value === `${BUCKET}/${secondFolder}/`, `arrow down, then arrow right, complete the second folder (${picker.value})`);
+    setValue(picker, BUCKET);
+    await waitFor(() => children().length === 4, "the folders once more", 15000);
     children().find((c) => c.textContent.trim() === "media").click();
     await waitFor(() => picker.value === `${BUCKET}/media/` && children().length < 4, "a click on a folder appends it, and the new path is asked about", 15000);
     check(paneErrors() === 0, "no error on the way");
+    check(fits(), "the open dropdown does not scroll the page sideways");
     await shot("38b-path-picker");
     picker.form.requestSubmit();
-    await dialogsGone();
     await waitFor(() => objectLink("media/icon.png"), "the picked path opens", 20000);
 
     // ---- M9.1 a key that was granted one folder: start path, the refused root, Open path
@@ -737,24 +785,26 @@
     await testForm();
     await waitFor(() => formSays(T("conn.ok", { n: 0 })), "the scoped key connects (the lab lets every user list the buckets it owns: none)");
     await click(T("common.save"));
-    const startPathOf = (label) => document.querySelector(`input${sel("conn.startPathOf", { label })}`)?.value;
-    await waitFor(() => hasText(T("conn.saved", { label: "du-an" })) && startPathOf("du-an") === `${BUCKET}/notes/`, "saved; the start path reads back in its stored form");
-    check(startPathOf("lab") === "", "a connection without a start path shows an empty field");
+    await waitFor(() => hasText(T("conn.saved", { label: "du-an" })) && rowSays("du-an", `${BUCKET}/notes/`), "saved; the start path reads back in its stored form");
+    check(!rowSays("lab", `${BUCKET}/`), "a connection without a start path shows none");
     await click(T("app.browse"));
     await menusGone();
     press("t");
     await waitFor(() => tabs().length === 3 && hasText(T("browse.chooseBucket")), "a new tab");
     await useConnection("du-an");
     await waitFor(() => objectLink("notes/readme.txt") && hasText(loaded(0, 3)) && tabs()[2].textContent.includes("notes"), "the connection lands at its start path", 20000);
-    check(pinnedRows().length === 3 && all(`${sel("browse.pinnedList")} [role=separator]`).length === 1, "another connection's pins are listed under a divider");
+    // M12.5: the connection's start path is the first row of the Pinned card, under "From the connection".
+    const separators = () => all(`${sel("browse.pinnedList")} [role=separator]`).map((d) => d.textContent.trim());
+    check(pinnedRows().length === 4 && pinnedRows()[0] === `${BUCKET}/notes/` && pinnedButtons()[0].querySelector("[data-source=start]"), `the start path is the first row of the Pinned card: ${pinnedRows().join(" | ")}`);
+    check(separators().join(" | ") === [T("pins.fromConnection"), T("browse.pinsElsewhere")].join(" | "), `the start path and another connection's pins are each under a divider: ${separators().join(" | ")}`);
     // Above the granted folder S3 refuses; the error says what to do and leads to the field.
     await click(BUCKET);
     await waitFor(() => paneErrors() === 1 && pane().innerText.includes(T("error.s3.AccessDenied")) && hasText(T("browse.deniedHint")), "the bucket root is refused, with the way out");
     await shot("39-scoped-denied");
     await click(T("browse.openPath"));
     const pathField = await field(T("browse.openPath"));
-    await waitFor(() => document.activeElement === pathField, "the hint opens the path picker, keyboard in its field");
-    check(chipPaths()[0] === `${BUCKET}/notes/` && all(`${sel("pathPicker.chips")} [role=listitem]`)[0].querySelector("[data-source=start]"), `the connection's start path is the first chip: ${chipPaths().join(" ")}`);
+    await waitFor(() => document.activeElement === pathField && !pathField.closest(".MuiDialog-root") && chipPaths().length > 0, "the hint leads to the path field of the bucket card, keyboard in it");
+    check(chipPaths()[0] === `${BUCKET}/notes/` && all(`${sel("pathPicker.chips")} [role=listitem]`)[0].querySelector("[data-source=start]"), `the connection's start path is the first row: ${chipPaths().join(" ")}`);
     setValue(pathField, "bad bucket/x");
     await waitFor(() => hasText(T("paths.bucketSpace")), "a path that cannot be one says why");
     // Only the bucket typed: its root is refused. An amber hint; the path can still be submitted.
@@ -764,7 +814,6 @@
     await shot("39b-picker-denied");
     setValue(pathField, `s3://${BUCKET}/notes/readme.txt`);
     pathField.form.requestSubmit();
-    await dialogsGone();
     await waitFor(() => objectLink("notes/readme.txt") && hasText(loaded(0, 3)) && paneErrors() === 0 && !hasText(T("browse.deniedHint")), "a file's path opens the folder the file is in", 20000);
     check(fits(), "nothing scrolls sideways");
     await shot("40-scoped-path");
@@ -781,7 +830,12 @@
     check(paneErrors() === 0 && !hasText(T("browse.noBuckets")), "no error, and not the empty-list text");
     // No bucket list to choose from: the path picker is on the page itself, with the keyboard.
     const inline = await field(T("browse.openPath"));
-    await waitFor(() => document.activeElement === inline && !inline.closest(".MuiDialog-root"), "the path picker on the page has the keyboard");
+    await waitFor(() => document.activeElement === inline && !inline.closest(".MuiDialog-root") && !inline.closest("aside"), "the path picker on the page has the keyboard");
+    // M12.5: a bucket's name half typed by a key that cannot list buckets: nothing is said, in amber or otherwise.
+    setValue(inline, BUCKET.slice(0, 5));
+    await sleep(2500);
+    check(!hasText(T("pathPicker.deniedHint")) && !pane().innerText.includes(piece("pathPicker.error")) && paneErrors() === 0, "a half-typed bucket name is probed silently");
+    setValue(inline, "");
     await shot("41-no-list");
 
     // ---- M9.2 many buckets: a list of bounded height with a filter
@@ -875,12 +929,13 @@
     // ---- remove every connection: their tabs and pins have nothing left to show
     await click(T("app.connections"));
     for (const label of ["chi-doc", "du-an", "no-list", "many", "lab"]) {
+      await clickSel(sel("conn.more", { label }));
       await clickSel(sel("conn.remove", { label }));
       // M11: a connection is not removed by one click; the dialog says what goes with it.
       await waitFor(() => hasText(T("conn.removeTitle")) && hasText(T("conn.removeText", { label })), `the removal of ${label} is asked about`);
       await click(T("conn.removeConfirm"));
       await dialogsGone();
-      await waitFor(() => !document.querySelector(sel("conn.remove", { label })), `connection ${label} removed`);
+      await waitFor(() => !document.querySelector(sel("conn.more", { label })), `connection ${label} removed`);
     }
     await waitFor(() => all(sel("conn.countAria", { n: 20 })).length === 1 && savedRows() === 20, "the flow's connections are removed; the seeded ones are left");
     check((await invoke("pin_list")).length === 0, "the pins of removed connections are gone");

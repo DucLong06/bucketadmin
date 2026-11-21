@@ -16,6 +16,9 @@ const ENGLISH_WORDS = /\b(download|delete|settings?|connect|upload|copy|copied|c
 const VIETNAMESE_WORDS = /Tải|Xoá|Kết nối|Cài đặt|Đóng|Huỷ|Lưu|Mở|Tìm|Sao chép|Thư mục/i;
 /** A language's own name is written in that language in both tables. */
 const OWN_NAME: Key[] = ["lang.vi", "lang.en"];
+/** Product terms the Vietnamese interface keeps in English, like "Bucket": the name of the Browse screen. */
+const PRODUCT_TERMS = /\bBrowse\b/g;
+const keepTerms = (text: string) => text.replace(PRODUCT_TERMS, " ");
 
 test("both tables have the same keys, no empty value, and the same placeholders", () => {
   expect(Object.keys(vi).sort()).toEqual(Object.keys(en).sort());
@@ -30,11 +33,19 @@ test("both tables have the same keys, no empty value, and the same placeholders"
 });
 
 test("no English UI word in the Vietnamese table, no Vietnamese in the English one", () => {
-  const strip = (text: string) => text.replace(/\{\w+(:[^}]*)?\}/g, " ");
+  const strip = (text: string) => keepTerms(text.replace(/\{\w+(:[^}]*)?\}/g, " "));
   for (const key of keys.filter((k) => !OWN_NAME.includes(k))) {
     expect(strip(vi[key]), `vi ${key}`).not.toMatch(ENGLISH_WORDS);
     expect(en[key], `en ${key}`).not.toMatch(VIETNAMESE);
   }
+});
+
+test("the Vietnamese table never says \"Duyệt\": the Browse screen keeps its English name, other uses say Mở or Xem", () => {
+  // "trình duyệt" is the web browser, a different word.
+  for (const key of keys) expect(vi[key].replaceAll("trình duyệt", ""), `vi ${key}`).not.toMatch(/duyệt/i);
+  expect(vi["app.browse"]).toBe("Browse");
+  expect(vi["browse.eyebrow"]).toBe("Browse · {label}");
+  expect(vi["conn.browse"]).toBe("Mở bucket");
 });
 
 test("t() fills variables, picks plural forms, and follows the language", () => {
@@ -120,7 +131,7 @@ test("the main views in Vietnamese show no English UI word", () => {
   const all = views().map(shown);
   expect(all.join(" ")).toMatch(/Kết nối/);
   expect(all.join(" ")).toMatch(/Cài đặt chung/);
-  all.forEach((text, i) => expect(text, `view ${i}`).not.toMatch(ENGLISH_WORDS));
+  all.forEach((text, i) => expect(keepTerms(text), `view ${i}`).not.toMatch(ENGLISH_WORDS));
 });
 
 test("the main views in English show no Vietnamese", () => {

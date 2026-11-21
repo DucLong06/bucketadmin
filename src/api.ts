@@ -23,8 +23,8 @@ export type Profile = {
   plain_user?: boolean;
   /** This cluster's own proxy choice; absent = follow the app-wide setting. */
   proxy?: Proxy | null;
-  /** Where a session on this connection lands: "bucket" or "bucket/prefix/"; empty or absent = nowhere in particular. */
-  start_path?: string;
+  /** The paths this connection's key works in, "bucket" or "bucket/prefix/" each; a session lands at the first. Absent = none. */
+  start_paths?: string[];
 };
 /** How requests leave the machine: by the environment's proxy variables, always direct, or through one given proxy. */
 export type Proxy = { mode: "auto" } | { mode: "none" } | { mode: "custom"; url: string };
