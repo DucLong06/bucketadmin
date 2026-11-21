@@ -1,6 +1,6 @@
 // The audit log, to look at: what this app changed, where and when. Read-only by design — the
 // log is the record of what was done, so this page has nothing that deletes or exports it.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Box, Button, Paper, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, ToggleButton, ToggleButtonGroup, Typography } from "@mui/material";
 import { invoke } from "./api";
 import { TZ, vnTime } from "./format";
@@ -121,7 +121,10 @@ export default function AuditLog() {
   const [more, setMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ask = (offset: number) => invoke<AuditRow[]>("audit_list", { limit: PAGE, offset, filter, sinceUnix: sinceFor(range) });
+  // Counts the questions: older entries asked for under another filter or range are not appended to the new list.
+  const asked = useRef(0);
   useEffect(() => {
+    asked.current += 1;
     let stale = false;
     const timer = setTimeout(() => {
       ask(0).then(
@@ -139,14 +142,17 @@ export default function AuditLog() {
       clearTimeout(timer);
     };
   }, [filter, range]);
-  const older = () =>
-    ask(rows.length).then(
+  const older = () => {
+    const mine = ++asked.current;
+    return ask(rows.length).then(
       (page) => {
+        if (mine !== asked.current) return;
         setRows((shown) => [...shown, ...page]);
         setMore(page.length === PAGE);
       },
       (e) => setError(String(e)),
     );
+  };
   return (
     <>
       <ErrorAlert error={error} sx={{ mb: 2 }} />
