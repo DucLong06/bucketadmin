@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Concept F — Ops Mission Control</title>
+<style>
+:root{--bg:#0f1216;--p1:#161b22;--p2:#1c2330;--line:#283042;--tx:#dde3ee;--tx2:#8493b0;--amb:#ffb454;--cyn:#5fd3f3;--grn:#7ee787;--red:#ff8080;--br:12px}
+*{margin:0;padding:0;box-sizing:border-box;font-family:"Segoe UI",system-ui,sans-serif}
+body{background:var(--bg);color:var(--tx);height:100vh;display:grid;grid-template-columns:220px 1fr 300px;grid-template-rows:46px 1fr 150px}
+header{grid-column:1/4;display:flex;align-items:center;gap:14px;padding:0 16px;background:var(--p1);border-bottom:1px solid var(--line);font-size:13px}
+header .logo{font-weight:700;letter-spacing:.02em}
+header .nav{display:flex;gap:2px;margin-left:10px}
+header .nav span{padding:6px 13px;border-radius:9px;color:var(--tx2);cursor:pointer}
+header .nav .on{background:var(--p2);color:var(--tx);box-shadow:inset 0 0 0 1px var(--line)}
+.st{margin-left:auto;display:flex;gap:8px;align-items:center;font-size:11.5px;color:var(--tx2)}
+.st .led{width:8px;height:8px;border-radius:2px}
+.aside{border-right:1px solid var(--line);padding:10px 8px;background:var(--p1);font-size:12.5px;overflow:auto}
+.aside h3{font-size:10.5px;color:var(--tx2);text-transform:uppercase;letter-spacing:.07em;padding:8px 8px 6px}
+.tw{padding:5px 8px;border-radius:9px;color:var(--tx2);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tw.on{background:var(--p2);color:var(--tx)}
+.tw.sub{padding-left:24px}
+.main{padding:14px 18px;overflow:auto}
+.bar1{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.bar1 .crumb{font-size:12.5px;color:var(--tx2)}
+.bar1 .crumb b{color:var(--tx)}
+.bar1 input{margin-left:auto;background:var(--p1);border:1px solid var(--line);border-radius:9px;color:var(--tx2);font-size:12px;padding:6px 10px;width:210px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:left;font-size:10.5px;color:var(--tx2);text-transform:uppercase;letter-spacing:.06em;padding:6px 8px;background:var(--p1);border-bottom:1px solid var(--line)}
+td{padding:7px 8px;border-bottom:1px solid #1b212e}
+tr.sel td{background:rgba(95,211,243,.08)}
+.pill2{font-size:10.5px;padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--tx2)}
+.pill2.p{color:var(--cyn);border-color:rgba(95,211,243,.4)}
+.pill2.i{color:var(--amb);border-color:rgba(255,180,84,.4)}
+.mono{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--tx2)}
+.right{border-left:1px solid var(--line);background:var(--p1);padding:12px;font-size:12px;overflow:auto}
+.right h4{font-size:12.5px;margin-bottom:2px}
+.right .path{color:var(--tx2);font-size:11px;margin-bottom:10px}
+.kv{display:flex;justify-content:space-between;padding:5.5px 0;border-bottom:1px solid #1b212e}
+.kv b{font-weight:500}
+.spark{margin-top:12px}
+.foot{grid-column:1/4;background:var(--p1);border-top:1px solid var(--line);display:flex;padding:8px 16px;gap:18px;align-items:center;font-size:12px;overflow-x:auto}
+.tsk{display:flex;align-items:center;gap:9px;color:var(--tx2);white-space:nowrap}
+.pgb{width:110px;height:5px;border-radius:99px;background:var(--p2);overflow:hidden}
+.pgb i{display:block;height:100%;background:var(--cyn)}
+.pgb.a i{background:var(--amb)}
+.hl{color:var(--tx)}
+</style></head><body>
+<header>
+  <span class="logo">BUCKETADMIN</span>
+  <nav class="nav"><span class="on">Duyệt</span><span>Users</span><span>Buckets</span><span>Usage</span><span>Nhật ký</span></nav>
+  <div class="st"><span class="led" style="background:var(--grn)"></span> ceph-lab · user thường <span class="pill2 i">chỉ browse</span></div>
+</header>
+<aside class="aside">
+  <h3>Cây bucket</h3>
+  <div class="tw on">🪣 llm-guardrail</div>
+  <div class="tw sub">📁 datasets</div>
+  <div class="tw sub">📁 models</div>
+  <div class="tw sub">📁 traces</div>
+  <div class="tw">🪣 backup-soc</div>
+  <div class="tw">🪣 shared-team</div>
+  <h3>Đã lưu</h3>
+  <div class="tw">🔑 key của tôi (AKIA…M003)</div>
+</aside>
+<main class="main">
+  <div class="bar1"><span class="crumb"><b>llm-guardrail</b> / datasets / <b>2026-q4</b></span><input placeholder="Lọc nhanh tên object…"></div>
+  <table>
+    <tr><th></th><th>Tên</th><th>Kích thước</th><th>Sửa đổi</th><th>Loại</th><th>Trạng thái</th></tr>
+    <tr class="sel"><td><input type="checkbox" checked></td><td>📁 raw-traces</td><td class="mono">—</td><td class="mono">18/11 09:12</td><td></td><td><span class="pill2">thư mục</span></td></tr>
+    <tr><td><input type="checkbox"></td><td>📄 events-2026-11-18.parquet</td><td class="mono">412 MB</td><td class="mono">18/11 08:40</td><td><span class="pill2 p">Parquet</span></td><td><span class="pill2">đủ phiên bản</span></td></tr>
+    <tr><td><input type="checkbox"></td><td>📄 events-2026-11-17.parquet</td><td class="mono">398 MB</td><td class="mono">17/11 08:38</td><td><span class="pill2 p">Parquet</span></td><td><span class="pill2">đủ phiên bản</span></td></tr>
+    <tr><td><input type="checkbox"></td><td>📄 README.md</td><td class="mono">2 kB</td><td class="mono">12/11 14:02</td><td><span class="pill2">Text</span></td><td></td></tr>
+    <tr><td><input type="checkbox"></td><td>📦 weekly-snapshot.zip</td><td class="mono">18,4 GB</td><td class="mono">16/11 22:00</td><td><span class="pill2">ZIP</span></td><td><span class="pill2 i">đang tải lên 64%</span></td></tr>
+  </table>
+</main>
+<section class="right">
+  <h4>events-2026-11-18.parquet</h4>
+  <div class="path">llm-guardrail / datasets / 2026-q4</div>
+  <div style="border:1px solid var(--line);border-radius:10px;height:96px;display:flex;align-items:center;justify-content:center;color:var(--tx2);margin-bottom:10px;font-size:11.5px">📊 Parquet · ranged · trang 1/85</div>
+  <div class="kv"><span>Khóa</span><b class="mono">AKIA…M003</b></div>
+  <div class="kv"><span>Sửa đổi</span><b>18/11 08:40</b></div>
+  <div class="kv"><span>Phiên bản</span><b>3</b></div>
+  <div class="kv"><span>ACL</span><b>riêng tư</b></div>
+  <div class="spark" style="font-size:10.5px;color:var(--tx2)">DÒNG ĐỌC 24H ▁▂▅▇▆▃▂▂▃▅▇▇▅▃▂</div>
+</section>
+<footer class="foot">
+  <span class="tsk"><span class="pgb"><i style="width:64%"></i></span><span class="hl">↑ weekly-snapshot.zip</span> 64% · 2,1 MB/s</span>
+  <span class="tsk"><span class="pgb a"><i style="width:28%"></i></span>↓ models.tar · 28%</span>
+  <span class="tsk" style="color:var(--grn)">✓ copy URL ký (15 phút)</span>
+  <span class="tsk" style="margin-left:auto;color:var(--red)">⌫ Del xóa (2 chọn)</span>
+</footer>
+</body></html>

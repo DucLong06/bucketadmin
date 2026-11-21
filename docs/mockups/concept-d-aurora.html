@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Concept D — Aurora Glass</title>
+<style>
+:root{--bg1:#0b0f1e;--bg2:#141b33;--glass:rgba(255,255,255,.055);--line:rgba(255,255,255,.11);--tx:#e8ecf8;--tx2:#9aa5c4;--acc:#7c8cff;--acc2:#4dd8c0;--ok:#4ade9e;--err:#ff7d92}
+*{margin:0;padding:0;box-sizing:border-box;font-family:"Segoe UI",system-ui,sans-serif}
+body{min-height:100vh;background:linear-gradient(135deg,var(--bg1) 0%,var(--bg2) 55%,#1a1440 100%);color:var(--tx);padding:24px}
+.pill{display:flex;gap:6px;padding:6px;border:1px solid var(--line);background:var(--glass);backdrop-filter:blur(14px);border-radius:16px;width:fit-content;margin:0 auto 20px}
+.pill span{padding:8px 18px;border-radius:11px;font-size:13px;color:var(--tx2);cursor:pointer}
+.pill .on{background:rgba(124,140,255,.18);color:#fff}
+.wrap{display:grid;grid-template-columns:250px 1fr 340px;gap:14px;max-width:1280px;margin:0 auto}
+.card{background:var(--glass);backdrop-filter:blur(16px);border:1px solid var(--line);border-radius:16px;padding:16px}
+h1{font-size:17px;margin-bottom:2px} .sub{font-size:12px;color:var(--tx2);margin-bottom:14px}
+.badge{font-size:11px;padding:3px 10px;border-radius:99px;background:rgba(77,216,192,.14);color:var(--acc2);border:1px solid rgba(77,216,192,.3)}
+.tree{font-size:13px}
+.tree .b{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:10px;color:var(--tx2);cursor:pointer}
+.tree .b.on,.tree .b:hover{background:rgba(124,140,255,.13);color:#fff}
+.tree .d{padding-left:28px}
+.crumbs{display:flex;gap:4px;font-size:12px;color:var(--tx2);margin-bottom:12px;align-items:center}
+.crumbs b{color:#fff;font-weight:500} .crumbs span{opacity:.5}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--tx2);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.06em;padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:10px;border-bottom:1px solid rgba(255,255,255,.05)}
+tr:hover td{background:rgba(124,140,255,.07)}
+.chip{font-size:11px;padding:2px 8px;border-radius:8px;background:rgba(255,255,255,.07);color:var(--tx2)}
+.name{display:flex;align-items:center;gap:8px;color:#fff}
+.prev{height:170px;border-radius:12px;background:rgba(10,14,28,.6);border:1px solid var(--line);margin-bottom:12px;display:flex;align-items:center;justify-content:center;color:var(--tx2);font-size:12px}
+.row{display:flex;justify-content:space-between;font-size:12px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+.row b{font-weight:500;color:#fff}
+.task{display:flex;align-items:center;gap:8px;font-size:12px;padding:8px 0}
+.bar{flex:1;height:5px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden}
+.bar i{display:block;height:100%;width:64%;background:linear-gradient(90deg,var(--acc),var(--acc2));border-radius:99px}
+.toast{position:fixed;bottom:22px;right:22px;background:var(--glass);backdrop-filter:blur(16px);border:1px solid var(--line);border-radius:14px;padding:12px 16px;font-size:12.5px;display:flex;gap:10px;align-items:center}
+.k{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--acc2)}
+</style></head><body>
+<nav class="pill"><span class="on">Duyệt</span><span>Người dùng</span><span>Bucket</span><span>Cụm</span><span>Nhật ký</span></nav>
+<div class="wrap">
+  <aside class="card">
+    <h1 style="display:flex;gap:8px;align-items:center">ceph-lab <span class="badge">Chỉ browse</span></h1>
+    <div class="sub">duyệt bằng key của tôi</div>
+    <div class="tree">
+      <div class="b on">📁 llm-guardrail</div>
+      <div class="b d">📁 datasets</div>
+      <div class="b d">📁 models</div>
+      <div class="b">📁 backup-soc</div>
+      <div class="b">📁 shared-team</div>
+    </div>
+  </aside>
+  <main class="card">
+    <div class="crumbs"><b>llm-guardrail</b><span>/</span>datasets<span>/</span><b>2026-q4</b></div>
+    <table>
+      <tr><th>Tên</th><th>Kích thước</th><th>Sửa đổi</th><th></th></tr>
+      <tr><td class="name">📁 raw-traces</td><td class="chip">—</td><td>18/11 09:12</td><td></td></tr>
+      <tr><td class="name">📄 events-2026-11-18.parquet</td><td>412 MB</td><td>18/11 08:40</td><td><span class="chip">Parquet</span></td></tr>
+      <tr><td class="name">📄 events-2026-11-17.parquet</td><td>398 MB</td><td>17/11 08:38</td><td><span class="chip">Parquet</span></td></tr>
+      <tr><td class="name">📄 README.md</td><td>2 kB</td><td>12/11 14:02</td><td><span class="chip">Text</span></td></tr>
+      <tr><td class="name">🖼 banner.png</td><td>1,1 MB</td><td>10/11 10:00</td><td><span class="chip">Ảnh</span></td></tr>
+    </table>
+  </main>
+  <section class="card">
+    <h1>Xem trước</h1><div class="sub">events-2026-11-18.parquet · 512 dòng/trang</div>
+    <div class="prev">📊 bảng Parquet — chỉ đọc footer + row-group (không tải cả file)</div>
+    <div class="row"><span>Khóa truy cập</span><b class="k">AKIA…M003</b></div>
+    <div class="row"><span>Hạn mức bucket</span><b>500 GB</b></div>
+    <div class="row"><span>Tác vụ</span><b>3 đang chạy</b></div>
+    <h1 style="margin-top:16px">Tác vụ</h1>
+    <div class="task"><span class="bar"><i></i></span><span style="min-width:74px;text-align:right">64% ↑ traces.zip</span></div>
+    <div class="task"><span class="bar"><i style="width:28%"></i></span><span style="min-width:74px;text-align:right">28% ↓ models.tar</span></div>
+  </section>
+</div>
+<div class="toast">✅ Đã tạo URL có chữ ký (15 phút) — <span class="k">đã copy</span></div>
+</body></html>
