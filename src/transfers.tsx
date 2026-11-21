@@ -120,7 +120,7 @@ export function TaskPanel({ tasks }: { tasks: ReturnType<typeof useTransfers> })
             <Button size="small" onClick={() => setFolded(!folded)} aria-expanded={!folded}>
               {folded ? t("tasks.unfold") : t("tasks.fold")}
             </Button>
-            <Button size="small" onClick={clear}>
+            <Button size="small" onClick={clear} disabled={items.every((task) => task.state === "queued" || task.state === "running")}>
               {t("tasks.clear")}
             </Button>
           </Stack>

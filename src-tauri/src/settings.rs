@@ -178,6 +178,19 @@ pub fn valid_theme(theme: &str) -> Result<String, String> {
     Err(format!("invalid theme {theme:?}: expected dark or light"))
 }
 
+/// Sections of the browse sidebar that can be folded to their heading.
+pub const SIDEBAR_SECTIONS: [&str; 2] = ["pinned", "recent"];
+
+/// A sidebar section that can be folded: one of [`SIDEBAR_SECTIONS`].
+pub fn valid_section(section: &str) -> Result<String, String> {
+    if SIDEBAR_SECTIONS.contains(&section) {
+        return Ok(section.to_string());
+    }
+    Err(format!(
+        "invalid sidebar section {section:?}: expected pinned or recent"
+    ))
+}
+
 /// Languages the UI is written in.
 pub const LANGS: [&str; 2] = ["en", "vi"];
 
@@ -213,6 +226,9 @@ pub struct Settings {
     /// The browse tabs that were open, at most [`MAX_TABS`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tabs: Option<SavedTabs>,
+    /// Sidebar sections the user folded away, each one of [`SIDEBAR_SECTIONS`]; the others are open.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folded: Vec<String>,
 }
 
 impl Default for Settings {
@@ -226,6 +242,7 @@ impl Default for Settings {
             recent: Vec::new(),
             pins: Vec::new(),
             tabs: None,
+            folded: Vec::new(),
         }
     }
 }
@@ -244,6 +261,20 @@ impl Settings {
     /// The saved theme; a hand-edited value that is no theme counts as the default (dark).
     pub fn theme(&self) -> String {
         valid_theme(&self.theme).unwrap_or_else(|_| default_theme())
+    }
+
+    /// The folded sidebar sections; a hand-edited name that is no section is left out.
+    pub fn folded(&self) -> Vec<String> {
+        let known = |name: &&String| SIDEBAR_SECTIONS.contains(&name.as_str());
+        self.folded.iter().filter(known).cloned().collect()
+    }
+
+    /// Folds or unfolds one sidebar section.
+    pub fn fold(&mut self, section: &str, folded: bool) {
+        self.folded.retain(|name| name != section);
+        if folded {
+            self.folded.push(section.to_string());
+        }
     }
 
     /// Puts `place` at the front of the recent places; a place already listed moves up.
@@ -684,6 +715,34 @@ mod tests {
         assert_eq!(store.get().unwrap().theme(), "dark");
         assert!(valid_theme("system").is_err() && valid_theme("").is_err());
         assert_eq!(valid_theme("light"), Ok("light".to_string()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn folded_sidebar_sections_survive_a_reload() {
+        let dir = temp_dir("folded");
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = SettingsStore::new(&dir);
+        // A settings.json written before the field existed: every section is open.
+        std::fs::write(dir.join("settings.json"), r#"{"ui_scale":110}"#).unwrap();
+        assert!(store.get().unwrap().folded().is_empty());
+        store.change(|s| s.fold("recent", true)).unwrap();
+        store.change(|s| s.fold("recent", true)).unwrap();
+        store.change(|s| s.fold("pinned", true)).unwrap();
+        let reloaded = SettingsStore::new(&dir).get().unwrap();
+        assert_eq!(reloaded.folded(), ["recent", "pinned"]);
+        assert_eq!(reloaded.ui_scale, 110);
+        let open = store.change(|s| s.fold("recent", false)).unwrap();
+        assert_eq!(open.folded(), ["pinned"]);
+        // A hand-edited name that is no section is ignored, and cannot be saved through the app.
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"folded":["buckets","recent"]}"#,
+        )
+        .unwrap();
+        assert_eq!(store.get().unwrap().folded(), ["recent"]);
+        assert!(valid_section("buckets").is_err() && valid_section("").is_err());
+        assert_eq!(valid_section("pinned"), Ok("pinned".to_string()));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -1,11 +1,11 @@
 import { type MouseEvent, useState } from "react";
-import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, List, ListItemButton, ListItemIcon, ListItemText, Menu, MenuItem, Paper, Stack, TextField, Typography, IconButton } from "@mui/material";
+import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, List, ListItemButton, ListItemIcon, ListItemText, Menu, MenuItem, Paper, TextField, IconButton } from "@mui/material";
 import type { Profile } from "./api";
 import { t } from "./i18n";
 import { defaultLabel, orderPins, pinLabel, type Pin, type PinOps } from "./pins";
 import { placeLabel, type Place } from "./tabs";
-import { eyebrow, thinScroll, tokens } from "./theme";
-import { PinIcon } from "./ui";
+import { thinScroll, tokens } from "./theme";
+import { FoldHeading, PinIcon } from "./ui";
 
 type Props = {
   pins: Pin[];
@@ -19,12 +19,15 @@ type Props = {
   ops: PinOps;
   /** Pin a path that is typed or picked (the path picker). */
   onAdd?: () => void;
+  /** The card is folded to its heading (a saved choice, shared by every tab), and how to change that. */
+  folded: boolean;
+  onFold: (folded: boolean) => void;
 };
 
-/** The sidebar's Pinned card. Pins of other connections are listed too, greyed under a divider
- *  rather than hidden behind a toggle: every pin stays one click away with no hidden state, and
- *  the list scrolls inside the card, so they cost the column no height. */
-export default function PinnedPanel({ pins, profiles, clusterId, onOpen, onOpenTab, ops, onAdd }: Props) {
+/** The sidebar's Pinned card, under the buckets. Pins of other connections are listed too, greyed
+ *  under a divider: every pin stays one click away. The list scrolls inside the card, and the
+ *  whole card folds to its heading when the user wants the room for what is below it. */
+export default function PinnedPanel({ pins, profiles, clusterId, onOpen, onOpenTab, ops, onAdd, folded, onFold }: Props) {
   // Right-clicked pin (with its position in the whole list) and where the pointer was.
   const [menu, setMenu] = useState<{ pin: Pin; index: number; x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<Pin | null>(null);
@@ -57,25 +60,30 @@ export default function PinnedPanel({ pins, profiles, clusterId, onOpen, onOpenT
   );
   return (
     <Paper variant="outlined" sx={{ borderRadius: "16px" }}>
-      <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between", pl: 2, pr: 0.75, pt: 1 }}>
-        <Typography component="h2" sx={{ ...eyebrow, color: "text.secondary" }}>
-          {t("browse.pinned")}
-        </Typography>
-        {onAdd && (
-          <IconButton aria-label={t("pins.addHere")} title={t("pins.addHere")} onClick={onAdd} sx={{ width: 40, height: 40, fontSize: 20 }}>
-            +
-          </IconButton>
-        )}
-      </Stack>
-      <List dense aria-label={t("browse.pinnedList")} style={{ maxHeight: 216 }} sx={thinScroll}>
-        {here.map((entry) => row(entry, true))}
-        {elsewhere.length > 0 && (
-          <Divider component="li" textAlign="left" sx={{ my: 0.5, fontSize: 12.5, color: "text.secondary" }}>
-            {t("browse.pinsElsewhere")}
-          </Divider>
-        )}
-        {elsewhere.map((entry) => row(entry, false))}
-      </List>
+      <FoldHeading
+        title={t("browse.bucketsCount", { title: t("browse.pinned"), n: pins.length })}
+        open={!folded}
+        onToggle={() => onFold(!folded)}
+        controls="pinned-list"
+        action={
+          onAdd && (
+            <IconButton aria-label={t("pins.addHere")} title={t("pins.addHere")} onClick={onAdd} sx={{ width: 40, height: 40, fontSize: 20 }}>
+              +
+            </IconButton>
+          )
+        }
+      />
+      {!folded && (
+        <List dense id="pinned-list" aria-label={t("browse.pinnedList")} style={{ maxHeight: 216 }} sx={{ ...thinScroll, pt: 0 }}>
+          {here.map((entry) => row(entry, true))}
+          {elsewhere.length > 0 && (
+            <Divider component="li" textAlign="left" sx={{ my: 0.5, fontSize: 12.5, color: "text.secondary" }}>
+              {t("browse.pinsElsewhere")}
+            </Divider>
+          )}
+          {elsewhere.map((entry) => row(entry, false))}
+        </List>
+      )}
       <Menu
         open={menu !== null}
         onClose={() => setMenu(null)}

@@ -40,11 +40,11 @@ import { isPinned, type Pin, type PinOps } from "./pins";
 import ObjectDrawer, { canUndelete, download, finalDeleteWarning, undeleteHint, type Versioning } from "./ObjectDrawer";
 import { splitPath } from "./paths";
 import { groupRecents, placeLabel, placePath, type Place } from "./tabs";
-import { eyebrow, tokens } from "./theme";
+import { eyebrow, thinScroll, tokens } from "./theme";
 import type { StartTransfer } from "./transfers";
 import { explain } from "./errors";
 import { t, type Key } from "./i18n";
-import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, PinToggle, useAction } from "./ui";
+import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, FoldHeading, PinToggle, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
 
 type Props = {
@@ -68,8 +68,12 @@ type Props = {
   onOpenTab: (at: Place) => void;
   /** Pin a path of a connection, typed or picked in the path picker. */
   onPinPath: (clusterId: string) => void;
+  /** Sidebar sections folded to their heading ("pinned", "recent"): a saved choice, shared by every tab. */
+  folded: string[];
+  onFold: (section: string, folded: boolean) => void;
 };
-const RECENT_IN_SIDEBAR = 6;
+/** Recent places the sidebar lists before "show all": the card stays a glance, the buckets stay the main thing. */
+export const RECENT_IN_SIDEBAR = 5;
 /** `uid` is empty while browsing with the caller's own saved key. */
 type Session = { uid: string; access_key: string; buckets: BrowseBucket[]; buckets_error: string | null };
 type Row = { folder: string } | { object: ObjectEntry };
@@ -98,19 +102,25 @@ function useTableHeight() {
   }, []);
   return height;
 }
+// The whole heading as a tooltip: a narrow column cuts it short.
 const th = (text: string) => (
-  <Box component="span" sx={{ ...eyebrow, color: "text.secondary" }}>
+  <Box component="span" title={text} sx={{ ...eyebrow, color: "text.secondary" }}>
     {text}
   </Box>
 );
 
+// A tick box looks 18 px and is hit on the whole of its cell (28 x 40).
+const tickSx = { p: "11px 5px", m: "-11px -5px" };
+
 /** "a/b/c.txt" under prefix "a/b/" is shown as "c.txt". */
 const baseName = (key: string, prefix: string) => key.slice(prefix.length);
 
-export default function Browse({ profiles, start, active, startTransfer, onPlace, remember, recents, onRecent, pins, pinOps, onOpenTab, onPinPath }: Props) {
+export default function Browse({ profiles, start, active, startTransfer, onPlace, remember, recents, onRecent, pins, pinOps, onOpenTab, onPinPath, folded, onFold }: Props) {
   const [clusterId, setClusterId] = useState(start.clusterId);
   // Wide enough for every column of the object list (CSS px: the zoom setting narrows the page).
   const roomy = useMediaQuery("(min-width:1150px)");
+  // A 900 px window: the size and date columns give the name the room they can spare.
+  const tight = useMediaQuery("(max-width:999px)");
   useEffect(() => {
     // The tab's connection was removed (or there was none yet): fall back to the first one.
     if (!profiles.some((p) => p.id === clusterId)) setClusterId(profiles[0]?.id ?? "");
@@ -141,7 +151,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   // The path picker. For a key that may not list buckets it is the page itself (typed here);
   // otherwise it is a dialog.
   const [picking, setPicking] = useState(false);
-  const [recentOthers, setRecentOthers] = useState(false);
+  // The sidebar's Recent card shows every place, not only the newest few (this tab, until it is closed).
+  const [recentAll, setRecentAll] = useState(false);
   const [typedPath, setTypedPath] = useState("");
   const inlinePath = useRef<HTMLInputElement | null>(null);
   // The last listing was refused by S3 (AccessDenied): the error gains the way out.
@@ -413,7 +424,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
       header: (
         <Checkbox
           size="small"
-          sx={{ p: 0 }}
+          sx={tickSx}
           checked={allPicked}
           indeterminate={picked.size > 0 && !allPicked}
           onChange={(e) => setPicked(e.target.checked ? new Set(tickable.map(rowId)) : new Set())}
@@ -425,7 +436,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
         isGone(r) ? null : (
           <Checkbox
             size="small"
-            sx={{ p: 0 }}
+            sx={tickSx}
             checked={picked.has(rowId(r))}
             onChange={() => toggle(rowId(r))}
             slotProps={{ input: { "aria-label": t("browse.selectRow", { name: nameOf(r) }) } }}
@@ -437,7 +448,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
       width: "minmax(160px, 4fr)",
       cell: (r) =>
         "folder" in r ? (
-          <Link component="button" onClick={() => load(bucket, r.folder, null)} aria-label={t("browse.openFolder", { folder: r.folder })} sx={{ fontFamily: tokens.mono, fontSize: 15 }}>
+          <Link component="button" onClick={() => load(bucket, r.folder, null)} aria-label={t("browse.openFolder", { folder: r.folder })} title={baseName(r.folder, prefix)} sx={{ fontFamily: tokens.mono, fontSize: 15 }}>
             {baseName(r.folder, prefix)}
           </Link>
         ) : (
@@ -452,14 +463,16 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               if (found && session) remember({ clusterId, uid: session.uid, bucket, prefix: r.object.key.slice(0, r.object.key.lastIndexOf("/") + 1) });
             }}
             aria-label={t("browse.openObject", { key: r.object.key })}
+            // A long name is cut by its column: the tooltip has all of it.
+            title={baseName(r.object.key, prefix)}
           >
             {baseName(r.object.key, prefix)}
             {r.object.deleted && <Chip size="small" color="warning" variant="outlined" label={t("browse.deletedChip")} sx={{ ml: 1 }} />}
           </Link>
         ),
     },
-    { header: th(t("browse.col.size")), width: "110px", align: "right", cell: (r) => ("object" in r && !r.object.deleted ? formatBytes(r.object.size) : "—") },
-    { header: th(t("browse.col.modified", { tz: TZ })), width: "190px", cell: (r) => ("object" in r ? vnTime(r.object.last_modified) : "") },
+    { header: th(t("browse.col.size")), width: tight ? "100px" : "110px", align: "right", cell: (r) => ("object" in r && !r.object.deleted ? formatBytes(r.object.size) : "—") },
+    { header: th(t("browse.col.modified", { tz: TZ })), width: tight ? "156px" : "190px", cell: (r) => ("object" in r ? vnTime(r.object.last_modified) : "") },
     // The owner is in the object's properties; the concept's table stops at the storage class.
     // A narrow page (a 1100 px window, or 125 % zoom) drops that column rather than scroll sideways; the properties keep it.
     ...(roomy ? [{ header: th(t("browse.col.storageClass")), width: "140px", cell: (r: Row) => ("object" in r ? r.object.storage_class : "") }] : []),
@@ -477,10 +490,11 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const pickPath = () => (pickerIsThePage ? inlinePath.current?.focus() : setPicking(true));
   const typed = splitPath(typedPath);
   const label = profiles.find((p) => p.id === clusterId)?.label ?? "";
-  // The sidebar's recent places: this connection's first; the others follow, folded away while the whole list is long.
+  // The sidebar's recent places: this connection's first, then the others; the newest few until "show all".
   const recentGroups = groupRecents(recents, clusterId);
-  const recentFolded = recentGroups.collapsed && !recentOthers;
-  const recentRows = [...recentGroups.here, ...(recentFolded ? [] : recentGroups.elsewhere)].slice(0, RECENT_IN_SIDEBAR);
+  const recentOrdered = [...recentGroups.here, ...recentGroups.elsewhere];
+  const recentRows = recentAll ? recentOrdered : recentOrdered.slice(0, RECENT_IN_SIDEBAR);
+  const recentFolded = folded.includes("recent");
   const card = { borderRadius: "16px" };
   // What the context menu offers for the row under the pointer.
   const menuRow = menu?.row;
@@ -533,7 +547,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               )}
             </Typography>
           )}
-          <PinnedPanel pins={pins} profiles={profiles} clusterId={clusterId} onOpen={goHere} onOpenTab={onOpenTab} ops={pinOps} onAdd={() => onPinPath(clusterId)} />
+          {/* The buckets come first: they are what the app is opened for. Pinned and Recent follow, and fold to a heading. */}
           {session && (
             <BucketPanel
               title={session.uid ? t("browse.bucketsOfUser", { uid: session.uid }) : t("browse.bucketsMine")}
@@ -550,38 +564,61 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               onPickPath={pickPath}
             />
           )}
+          <PinnedPanel
+            pins={pins}
+            profiles={profiles}
+            clusterId={clusterId}
+            onOpen={goHere}
+            onOpenTab={onOpenTab}
+            ops={pinOps}
+            onAdd={() => onPinPath(clusterId)}
+            folded={folded.includes("pinned")}
+            onFold={(now) => onFold("pinned", now)}
+          />
           {recents.length > 0 && (
             <Paper variant="outlined" sx={card}>
-              <Typography component="h2" sx={{ ...eyebrow, color: "text.secondary", px: 2, pt: 2 }}>
-                {t("browse.recent")}
-              </Typography>
-              <List dense aria-label={t("browse.recentList")}>
-                {recentRows.map((place, i) => [
-                  // Grouped like the pins: this connection's places, then the others under a divider.
-                  i === recentGroups.here.length && i < recentRows.length && (
-                    <Divider key="others" component="li" textAlign="left" sx={{ my: 0.5, fontSize: 12.5, color: "text.secondary" }}>
-                      {t("browse.pinsElsewhere")}
-                    </Divider>
-                  ),
-                  <ListItem
-                    key={JSON.stringify(place)}
-                    disablePadding
-                    secondaryAction={
-                      <PinToggle pinned={isPinned(pins, place)} label={t(isPinned(pins, place) ? "browse.unpinThis" : "browse.pinThis", { path: placePath(place) })} onToggle={() => pinOps.toggle(place)} />
-                    }
-                    sx={{ "& .MuiListItemSecondaryAction-root": { right: 6 } }}
-                  >
-                    <ListItemButton onClick={() => onRecent(place)} sx={{ pr: "44px !important", color: place.clusterId === clusterId ? "text.primary" : "text.secondary" }}>
-                      <ListItemText primary={placeLabel(place, profiles)} slotProps={{ primary: { sx: { fontSize: 14, wordBreak: "break-all" } } }} />
+              <FoldHeading
+                title={t("browse.bucketsCount", { title: t("browse.recent"), n: recents.length })}
+                open={!recentFolded}
+                onToggle={() => onFold("recent", !recentFolded)}
+                controls={`recent-${clusterId}`}
+              />
+              {!recentFolded && (
+                <>
+                  {/* Every place: the list scrolls inside the card, so the column does not grow with it. */}
+                  <List dense id={`recent-${clusterId}`} aria-label={t("browse.recentList")} style={{ maxHeight: 336 }} sx={{ ...thinScroll, pt: 0 }}>
+                    {recentRows.map((place, i) => [
+                      // Grouped like the pins: this connection's places, then the others under a divider.
+                      i === recentGroups.here.length && (
+                        <Divider key="others" component="li" textAlign="left" sx={{ my: 0.5, fontSize: 12.5, color: "text.secondary" }}>
+                          {t("browse.pinsElsewhere")}
+                        </Divider>
+                      ),
+                      <ListItem
+                        key={JSON.stringify(place)}
+                        disablePadding
+                        secondaryAction={
+                          <PinToggle pinned={isPinned(pins, place)} label={t(isPinned(pins, place) ? "browse.unpinThis" : "browse.pinThis", { path: placePath(place) })} onToggle={() => pinOps.toggle(place)} />
+                        }
+                        sx={{ "& .MuiListItemSecondaryAction-root": { right: 6 } }}
+                      >
+                        <ListItemButton title={placeLabel(place, profiles)} onClick={() => onRecent(place)} sx={{ pr: "44px !important", color: place.clusterId === clusterId ? "text.primary" : "text.secondary" }}>
+                          {/* Under this connection's name already: only the path. One line; the tooltip has all of it. */}
+                          <ListItemText
+                            primary={placeLabel(place, profiles, place.clusterId !== clusterId)}
+                            slotProps={{ primary: { sx: { fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } } }}
+                          />
+                        </ListItemButton>
+                      </ListItem>,
+                    ])}
+                  </List>
+                  {recentOrdered.length > RECENT_IN_SIDEBAR && (
+                    <ListItemButton dense aria-expanded={recentAll} aria-controls={`recent-${clusterId}`} onClick={() => setRecentAll(!recentAll)} sx={{ color: "text.secondary", borderRadius: "0 0 16px 16px", borderTop: 1, borderColor: "divider" }}>
+                      <ListItemText primary={t(recentAll ? "recent.showFewer" : "recent.showAll", { n: recentOrdered.length })} slotProps={{ primary: { sx: { fontSize: 14 } } }} />
                     </ListItemButton>
-                  </ListItem>,
-                ])}
-                {recentFolded && (
-                  <ListItemButton aria-expanded={false} onClick={() => setRecentOthers(true)} sx={{ color: "text.secondary" }}>
-                    <ListItemText primary={t("recent.others", { n: recentGroups.elsewhere.length })} slotProps={{ primary: { sx: { fontSize: 14 } } }} />
-                  </ListItemButton>
-                )}
-              </List>
+                  )}
+                </>
+              )}
             </Paper>
           )}
         </Stack>
@@ -699,17 +736,17 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                   <Button variant="outlined" onClick={() => setCreating("folder")}>
                     {t("browse.createFolder")}
                   </Button>
-                  <Button
-                    variant="outlined"
-                    disabled={busy || picked.size !== 1 || pickedOf("o").length !== 1}
-                    onClick={() => copyUrl(pickedOf("o")[0])}
-                    title={t("browse.copyUrlHint")}
-                  >
-                    {t("browse.copyUrl")}
-                  </Button>
-                  <Button variant="outlined" color="error" disabled={busy || picked.size === 0} onClick={() => planDelete(pickedOf("o"), pickedOf("f"))}>
-                    {t("browse.deleteCount", { n: picked.size })}
-                  </Button>
+                  {/* A disabled button shows no tooltip of its own: the hint is on a wrapper, so it is there exactly when it is needed. */}
+                  <Box component="span" title={t("browse.copyUrlHint")} sx={{ display: "inline-flex" }}>
+                    <Button variant="outlined" disabled={busy || picked.size !== 1 || pickedOf("o").length !== 1} onClick={() => copyUrl(pickedOf("o")[0])}>
+                      {t("browse.copyUrl")}
+                    </Button>
+                  </Box>
+                  <Box component="span" title={picked.size === 0 ? t("browse.deleteHint") : undefined} sx={{ display: "inline-flex" }}>
+                    <Button variant="outlined" color="error" disabled={busy || picked.size === 0} onClick={() => planDelete(pickedOf("o"), pickedOf("f"))}>
+                      {t("browse.deleteCount", { n: picked.size })}
+                    </Button>
+                  </Box>
                 </Stack>
               </Stack>
               <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
@@ -773,6 +810,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                 label={t("browse.objectList")}
                 onRowMenu={(row, e) => {
                   e.preventDefault();
+                  // The menu, and the dialog or sheet it opens, give the keyboard back to where it was: the row's name.
+                  e.currentTarget.querySelector<HTMLElement>("button")?.focus();
                   setMenu({ row, x: e.clientX, y: e.clientY });
                 }}
                 empty={<Typography color="text.secondary">{found ? t("browse.noMatch") : listing ? t("browse.emptyFolder") : ""}</Typography>}
@@ -914,6 +953,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
         title={t(switching ? "browse.versioningOnTitle" : "browse.versioningOffTitle")}
         text={t(switching ? "browse.versioningOnText" : "browse.versioningOffText", { bucket })}
         confirmLabel={t(switching ? "browse.versioningOn" : "browse.versioningOff")}
+        tone={switching ? "primary" : "error"}
         busy={busy}
         error={error}
         onConfirm={switchVersioning}
