@@ -2,6 +2,7 @@
 # UI smoke test of the real app against a real RGW: the whole app, end to end, as a user who
 # only has an S3 key. Needs RGW_ACCESS_KEY / RGW_SECRET_KEY (lab at http://127.0.0.1:7480),
 # xdotool, xclip, ffmpeg, python3 with Pillow, cargo, and a Secret Service.
+# The app starts with 20 made-up saved connections (many connections is the normal case to test).
 # It creates throw-away data on the cluster (users ba-m4-ui*, their buckets: two for the flow and
 # 32 empty ones for the bucket list) and removes it again.
 #   npx tauri build --debug --no-bundle
@@ -47,6 +48,13 @@ rm -rf /tmp/ba-smoke/data
 # The app starts in the language under test (everything else in settings.json has a default).
 mkdir -p "$XDG_DATA_HOME/bucketadmin"
 echo "{\"lang\": \"$UI_LANG\"}" > "$XDG_DATA_HOME/bucketadmin/settings.json"
+# Many connections from the first second: 20 saved profiles with made-up endpoints and key ids (no
+# secret exists for them anywhere), two of them under the same label. The flow adds its real ones.
+python3 - > "$XDG_DATA_HOME/bucketadmin/profiles.json" <<'PY'
+import json
+print(json.dumps([{"id": f"seed{n:02}", "label": f"site-{1 if n == 20 else n:02}", "endpoint": f"http://s3-{n:02}.example.invalid:7480",
+                   "access_key": f"AKIAEXAMPLE{n:09}"} for n in range(1, 21)], indent=2))
+PY
 rm -f /tmp/ba-smoke/*.png
 # Long enough for the slowest step even when the lab is slow.
 export STEP="${STEP:-10000}"

@@ -6,6 +6,7 @@ import {
   Chip,
   Container,
   CssBaseline,
+  Divider,
   IconButton,
   Menu,
   MenuItem,
@@ -18,12 +19,14 @@ import {
 } from "@mui/material";
 import { invoke, type Profile } from "./api";
 import { explain } from "./errors";
+import { AccessContext, PathPickerDialog } from "./PathPicker";
 import { isPinned, movePin, pinLabel, togglePin, type Pin, type PinOps } from "./pins";
+import AuditLog from "./AuditLog";
 import Browse from "./Browse";
 import Connections from "./Connections";
 import { t, useLang } from "./i18n";
-import { closeTab, cycleTab, placeLabel, placePath, restoreTabs, samePlace, saveTabs, tabShortcut, tabTitle, type BrowseTab, type Place, type SavedTabs } from "./tabs";
-import { theme, tokens } from "./theme";
+import { closeTab, cycleTab, groupRecents, placeLabel, placePath, restoreTabs, samePlace, saveTabs, tabShortcut, tabTitle, type BrowseTab, type Place, type SavedTabs } from "./tabs";
+import { eyebrow, setMode, themes, tokens, useMode } from "./theme";
 import { TaskPanel, useTransfers } from "./transfers";
 import { ErrorAlert, PinToggle } from "./ui";
 import { zoomShortcut } from "./zoom";
@@ -39,6 +42,9 @@ const nowhere = (clusterId: string): Place => ({ clusterId, uid: "", bucket: "",
 export default function App() {
   // Every string below (and in every child) is looked up again when the language changes.
   useLang();
+  const mode = useMode();
+  // The app-bar menu: theme, audit log.
+  const [appMenu, setAppMenu] = useState<HTMLElement | null>(null);
   const [page, setPage] = useState("browse");
   const [profiles, setProfiles] = useState<Profile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,11 +54,20 @@ export default function App() {
   const [active, setActive] = useState("");
   const [recents, setRecents] = useState<Place[]>([]);
   const [recentMenu, setRecentMenu] = useState<HTMLElement | null>(null);
+  // The other connections' recent places are folded away while the list is long.
+  const [recentOthers, setRecentOthers] = useState(false);
+  const tabBar = useRef<HTMLDivElement | null>(null);
+  // With many tabs the bar scrolls: the tab on screen is always in view.
+  useEffect(() => {
+    tabBar.current?.querySelector('[role=tab][aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [active, tabs.length]);
   // Pinned places, shared by every tab. A change shows at once; the saved list then replaces
   // the guess, and a refusal (the list is full) puts back what is really saved.
   const [pins, setPins] = useState<Pin[]>([]);
   const [pinMenu, setPinMenu] = useState<HTMLElement | null>(null);
   const [pinError, setPinError] = useState<string | null>(null);
+  // The connection a path is being pinned on, while the path picker is open for that.
+  const [pinning, setPinning] = useState<string | null>(null);
   function savePins(guess: Pin[], command: string, args: Record<string, unknown>) {
     setPins(guess);
     invoke<Pin[]>(command, args).then(setPins, (e) => {
@@ -193,9 +208,18 @@ export default function App() {
   const browsing = page === "browse";
   const known = recents.filter((r) => profiles?.some((p) => p.id === r.clusterId));
   const knownPins = pins.filter((pin) => profiles?.some((p) => p.id === pin.place.clusterId));
+  // The Recent menu, grouped like the pins: the connection of the tab on screen first.
+  const recentGroups = groupRecents(known, activeCluster());
+  const recentItem = (place: Place) => (
+    <MenuItem key={JSON.stringify(place)} onClick={() => goTo(place)} sx={{ justifyContent: "space-between", gap: 2 }}>
+      {placeLabel(place, profiles ?? [])}
+      <PinToggle pinned={isPinned(pins, place)} label={t(isPinned(pins, place) ? "browse.unpinThis" : "browse.pinThis", { path: placePath(place) })} onToggle={() => pinOps.toggle(place)} />
+    </MenuItem>
+  );
   return (
-    <ThemeProvider theme={theme}>
+    <ThemeProvider theme={themes[mode]}>
       <CssBaseline />
+      <AccessContext.Provider value={{ profiles: profiles ?? [], pins: knownPins, recents: known }}>
       <Box sx={{ display: "flex", flexDirection: "column", height: "100vh" }}>
         <Box component="header" sx={{ display: "flex", alignItems: "center", gap: 4.5, height: 68, px: 5, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
           <Typography component="div" sx={{ fontFamily: tokens.serif, fontStyle: "italic", fontWeight: 600, fontSize: 25, letterSpacing: "-0.01em" }}>
@@ -205,7 +229,8 @@ export default function App() {
             </Box>
           </Typography>
           <Tabs
-            value={page}
+            // The audit log is reached from the app-bar menu, not from a tab.
+            value={page === "audit" ? false : page}
             onChange={(_, value) => setPage(value)}
             aria-label={t("app.nav")}
             textColor="inherit"
@@ -223,16 +248,45 @@ export default function App() {
               title={t("app.update.title", { current: update.current, url: update.url })}
             />
           )}
+          <Button size="small" variant="outlined" aria-haspopup="menu" onClick={(e) => setAppMenu(e.currentTarget)}>
+            {t("app.menu")}
+          </Button>
+          <Menu anchorEl={appMenu} open={appMenu !== null} onClose={() => setAppMenu(null)} slotProps={{ list: { "aria-label": t("app.menu") } }}>
+            <Typography component="li" role="presentation" sx={{ ...eyebrow, color: "text.secondary", px: 2, pt: 0.5, pb: 0.75 }}>
+              {t("app.theme")}
+            </Typography>
+            {(["dark", "light"] as const).map((choice) => (
+              <MenuItem key={choice} role="menuitemradio" aria-checked={mode === choice} selected={mode === choice} onClick={() => setMode(choice)} sx={{ minHeight: 40, gap: 1.25 }}>
+                <Box component="span" aria-hidden sx={{ width: 10, height: 10, borderRadius: "50%", border: 2, borderColor: mode === choice ? "primary.main" : "divider", bgcolor: mode === choice ? "primary.main" : "transparent" }} />
+                {t(`theme.${choice}`)}
+              </MenuItem>
+            ))}
+            <Divider component="li" sx={{ my: 0.5 }} />
+            <MenuItem
+              selected={page === "audit"}
+              onClick={() => {
+                setAppMenu(null);
+                setPage("audit");
+              }}
+              sx={{ minHeight: 40 }}
+            >
+              {t("app.audit")}
+            </MenuItem>
+          </Menu>
         </Box>
         <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
           {/* The browse layer stays mounted (and keeps every tab's state) while the connections screen is shown. */}
           <Box sx={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", visibility: browsing ? "visible" : "hidden" }}>
-            <Stack
-              direction="row"
-              role="tablist"
-              aria-label={t("app.tabs")}
-              sx={{ alignItems: "flex-end", gap: 0.75, px: 5, pt: 1.25, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}
-            >
+            <Stack direction="row" sx={{ alignItems: "flex-end", gap: 0.75, px: 5, pt: 1.25, borderBottom: 1, borderColor: "divider", flexShrink: 0 }}>
+              {/* Tabs keep a readable width; when they do not fit, this strip scrolls (wheel, keyboard, or by itself to the active tab). */}
+              <Stack
+                direction="row"
+                role="tablist"
+                aria-label={t("app.tabs")}
+                ref={tabBar}
+                onWheel={(e) => (e.currentTarget.scrollLeft += e.deltaY)}
+                sx={{ alignItems: "flex-end", gap: 0.75, minWidth: 0, overflowX: "auto", "&::-webkit-scrollbar": { display: "none" }, scrollbarWidth: "none" }}
+              >
               {tabs.map((tab) => (
                 <Box
                   key={tab.id}
@@ -250,6 +304,7 @@ export default function App() {
                     pr: 0.75,
                     height: 42,
                     maxWidth: 256,
+                    flexShrink: 0,
                     cursor: "pointer",
                     border: 1,
                     borderBottom: 0,
@@ -261,11 +316,11 @@ export default function App() {
                   }}
                 >
                   <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 15 }}>
-                    {tabTitle(tab.at)}
+                    {tabTitle(tab.at, profiles ?? [])}
                   </Box>
                   <IconButton
                     size="small"
-                    aria-label={t("app.tab.close", { title: tabTitle(tab.at) })}
+                    aria-label={t("app.tab.close", { title: tabTitle(tab.at, profiles ?? []) })}
                     title={t("app.tab.closeTip")}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -278,11 +333,12 @@ export default function App() {
                   </IconButton>
                 </Box>
               ))}
-              <IconButton size="small" aria-label={t("tabs.new")} title={t("app.tab.newTip")} onClick={openEmptyTab} sx={{ width: 40, height: 40, mb: 0.125 }}>
+              </Stack>
+              <IconButton size="small" aria-label={t("tabs.new")} title={t("app.tab.newTip")} onClick={openEmptyTab} sx={{ width: 40, height: 40, mb: 0.125, flexShrink: 0 }}>
                 +
               </IconButton>
               <Box sx={{ flexGrow: 1 }} />
-              <Button size="small" aria-haspopup="menu" onClick={(e) => setPinMenu(e.currentTarget)} sx={{ mb: 0.5 }}>
+              <Button size="small" aria-haspopup="menu" onClick={(e) => setPinMenu(e.currentTarget)} sx={{ mb: 0.5, flexShrink: 0 }}>
                 {t("app.pinned")}
               </Button>
               <Menu anchorEl={pinMenu} open={pinMenu !== null} onClose={() => setPinMenu(null)} slotProps={{ list: { "aria-label": t("app.pinned.list") } }}>
@@ -291,23 +347,47 @@ export default function App() {
                     {t("app.pinned.none")}
                   </MenuItem>
                 )}
+                <MenuItem
+                  disabled={!activeCluster()}
+                  onClick={() => {
+                    setPinMenu(null);
+                    setPinning(activeCluster());
+                  }}
+                  sx={{ color: "primary.main" }}
+                >
+                  {t("pins.add")}
+                </MenuItem>
                 {knownPins.slice(0, PINS_IN_MENU).map((pin) => (
                   <MenuItem key={JSON.stringify(pin.place)} title={placeLabel(pin.place, profiles ?? [])} onClick={() => goTo(pin.place)}>
                     {pin.label ? `${pin.label} · ${placeLabel(pin.place, profiles ?? [])}` : placeLabel(pin.place, profiles ?? [])}
                   </MenuItem>
                 ))}
               </Menu>
-              <Button size="small" aria-haspopup="menu" onClick={(e) => setRecentMenu(e.currentTarget)} sx={{ mb: 0.5 }}>
+              <Button
+                size="small"
+                aria-haspopup="menu"
+                onClick={(e) => {
+                  setRecentOthers(false);
+                  setRecentMenu(e.currentTarget);
+                }}
+                sx={{ mb: 0.5, flexShrink: 0 }}
+              >
                 {t("app.recent")}
               </Button>
               <Menu anchorEl={recentMenu} open={recentMenu !== null} onClose={() => setRecentMenu(null)} slotProps={{ list: { "aria-label": t("app.recent.list") } }}>
                 {known.length === 0 && <MenuItem disabled>{t("app.recent.none")}</MenuItem>}
-                {known.map((place) => (
-                  <MenuItem key={JSON.stringify(place)} onClick={() => goTo(place)} sx={{ justifyContent: "space-between", gap: 2 }}>
-                    {placeLabel(place, profiles ?? [])}
-                    <PinToggle pinned={isPinned(pins, place)} label={t(isPinned(pins, place) ? "browse.unpinThis" : "browse.pinThis", { path: placePath(place) })} onToggle={() => pinOps.toggle(place)} />
-                  </MenuItem>
-                ))}
+                {recentGroups.here.map(recentItem)}
+                {recentGroups.elsewhere.length > 0 &&
+                  (recentGroups.collapsed && !recentOthers ? (
+                    <MenuItem aria-expanded={false} onClick={() => setRecentOthers(true)} sx={{ color: "text.secondary" }}>
+                      {t("recent.others", { n: recentGroups.elsewhere.length })}
+                    </MenuItem>
+                  ) : (
+                    <Divider component="li" textAlign="left" sx={{ my: 0.5, fontSize: 12.5, color: "text.secondary" }}>
+                      {t("browse.pinsElsewhere")}
+                    </Divider>
+                  ))}
+                {(!recentGroups.collapsed || recentOthers) && recentGroups.elsewhere.map(recentItem)}
               </Menu>
             </Stack>
             <Box sx={{ position: "relative", flexGrow: 1, minHeight: 0 }}>
@@ -330,6 +410,7 @@ export default function App() {
                           pins={knownPins}
                           pinOps={pinOps}
                           onOpenTab={openTab}
+                          onPinPath={setPinning}
                         />
                       </Container>
                     </Box>
@@ -341,13 +422,25 @@ export default function App() {
             <Box sx={{ position: "absolute", inset: 0, overflow: "auto" }}>
               <Container maxWidth="lg" sx={{ py: 4, px: "40px !important" }}>
                 <ErrorAlert error={error} />
-                <Connections profiles={profiles ?? []} onChanged={reload} scale={scale} onScale={zoomTo} />
+                {page === "audit" ? <AuditLog /> : <Connections profiles={profiles ?? []} onChanged={reload} scale={scale} onScale={zoomTo} />}
               </Container>
             </Box>
           )}
         </Box>
         <TaskPanel tasks={transfers} />
       </Box>
+      <PathPickerDialog
+        open={pinning !== null}
+        title={t("pins.addTitle")}
+        submitLabel={t("pins.addSubmit")}
+        clusterId={pinning ?? ""}
+        onSubmit={(bucket, prefix) => {
+          const place = { clusterId: pinning ?? "", uid: "", bucket, prefix };
+          if (!isPinned(pins, place)) pinOps.toggle(place);
+        }}
+        onClose={() => setPinning(null)}
+      />
+      </AccessContext.Provider>
       <Snackbar open={pinError !== null} autoHideDuration={8000} onClose={() => setPinError(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
         <Alert severity="error" variant="filled" onClose={() => setPinError(null)}>
           {pinError ? explain(pinError).message : ""}

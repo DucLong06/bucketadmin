@@ -1,13 +1,17 @@
-import { createContext, type ReactNode, useContext, useState } from "react";
+import { createContext, type ReactNode, useContext, useMemo, useState } from "react";
 import {
   Alert,
+  Autocomplete,
+  Box,
   Button,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   IconButton,
   Stack,
+  Switch,
   TextField,
   ToggleButton,
   ToggleButtonGroup,
@@ -17,6 +21,7 @@ import type { KeyPair, Profile } from "./api";
 import { capsCommand } from "./caps";
 import { explain } from "./errors";
 import { setLang, t, useLang } from "./i18n";
+import { setMode, useMode } from "./theme";
 
 /** uid the connected cluster key belongs to ("" while unknown); App provides it. */
 export const CallerContext = createContext("");
@@ -40,7 +45,53 @@ export function useAction() {
   return { busy, error, run, setError };
 }
 
+/** Above this many connections a plain list is too long to scan: lists of connections become searchable. */
+export const SEARCH_ABOVE = 8;
+/** Connections whose label, endpoint or key contains `text`, whatever the case. */
+export const filterProfiles = (profiles: Profile[], text: string): Profile[] => {
+  const wanted = text.trim().toLowerCase();
+  return wanted ? profiles.filter((p) => [p.label, p.endpoint, p.access_key, p.browse_access_key ?? ""].some((field) => field.toLowerCase().includes(wanted))) : profiles;
+};
+/** Labels that more than one connection has (allowed, but worth a warning: the lists show labels). */
+export const duplicateLabels = (profiles: Profile[]): Set<string> => {
+  const labels = profiles.map((p) => p.label.trim().toLowerCase());
+  return new Set(labels.filter((label, i) => labels.indexOf(label) !== i));
+};
+
+/** The connection of a tab. A short list is a plain select; a long one is searched by typing a
+ *  part of a label or of an endpoint, and each choice shows its endpoint (labels may repeat). */
 export function ClusterSelect(props: { profiles: Profile[]; value: string; onChange: (id: string) => void }) {
+  const picked = props.profiles.find((p) => p.id === props.value);
+  // A reload of the profiles brings new objects; a new `value` object makes MUI put the text being typed back to the label.
+  const value = useMemo(() => picked, [picked?.id, picked?.label, picked?.endpoint]);
+  if (props.profiles.length > SEARCH_ABOVE) {
+    return (
+      <Autocomplete
+        size="small"
+        disableClearable
+        autoHighlight
+        options={props.profiles}
+        value={value}
+        onChange={(_, picked) => picked && props.onChange(picked.id)}
+        isOptionEqualToValue={(a, b) => a.id === b.id}
+        getOptionLabel={(p) => p.label}
+        filterOptions={(options, state) => filterProfiles(options, state.inputValue)}
+        noOptionsText={t("conn.noMatch")}
+        renderOption={({ key: _, ...row }, p) => (
+          <Box component="li" key={p.id} {...row} sx={{ minHeight: 40, display: "block !important" }}>
+            <Typography noWrap sx={{ fontSize: 15 }}>
+              {p.label}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" noWrap component="div">
+              {p.endpoint}
+            </Typography>
+          </Box>
+        )}
+        renderInput={(params) => <TextField {...params} label={t("common.connection")} placeholder={t("conn.search")} />}
+        sx={{ minWidth: 200 }}
+      />
+    );
+  }
   return (
     <TextField
       select
@@ -103,6 +154,12 @@ export function LangToggle() {
       </ToggleButton>
     </ToggleButtonGroup>
   );
+}
+
+/** Light theme on or off (off = dark): switches the whole app at once and saves the choice. */
+export function ThemeSwitch() {
+  const mode = useMode();
+  return <FormControlLabel sx={{ minHeight: 40, mr: 0 }} control={<Switch checked={mode === "light"} onChange={(_, on) => setMode(on ? "light" : "dark")} />} label={t("settings.lightTheme")} />;
 }
 
 /** A pushpin: filled for a place that is pinned, an outline for one that could be. */

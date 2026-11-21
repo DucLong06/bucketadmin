@@ -2386,3 +2386,86 @@ async fn m9_prefix_scoped_access() {
     remove_user(&admin, scoped_uid).await;
     remove_user(&admin, "ba-m9-owner").await;
 }
+
+/// M10.1: the path picker's two questions, asked by a user whose only grant is a bucket policy
+/// with `s3:ListBucket` under `scoped/`. The probe lists at the typed prefix and nowhere above;
+/// the policy scan works when the policy also lets the user read it, and is silent when not.
+#[tokio::test]
+async fn m10_path_probe_and_accessible_prefixes() {
+    use bucketadmin_lib::s3::access::{probe_path, Probe};
+
+    let Some(admin) = lab() else { return };
+    let (bucket, owner_uid, uid) = ("ba-m10-probe", "ba-m10-owner", "ba-m10-scoped");
+    let (_, owner) = user(&admin, owner_uid).await;
+    let (_, scoped) = user(&admin, uid).await;
+    let created = owner.client().create_bucket().bucket(bucket).send().await;
+    created.expect("create bucket");
+    for key in [
+        "scoped/a.txt",
+        "scoped/sub/b.txt",
+        "scoped/sub2/c.txt",
+        "other/d.txt",
+    ] {
+        put(&owner, bucket, key, key.as_bytes()).await.expect("put");
+    }
+    let me = format!(r#"{{"AWS":["arn:aws:iam:::user/{uid}"]}}"#);
+    let list = format!(
+        r#"{{"Effect":"Allow","Principal":{me},"Action":["s3:ListBucket"],"Resource":["arn:aws:s3:::{bucket}"],"Condition":{{"StringLike":{{"s3:prefix":["scoped/*"]}}}}}}"#
+    );
+    let read_policy = format!(
+        r#"{{"Effect":"Allow","Principal":{me},"Action":["s3:GetBucketPolicy"],"Resource":["arn:aws:s3:::{bucket}"]}}"#
+    );
+    let put_policy = |statements: String| {
+        let doc = format!(r#"{{"Version":"2012-10-17","Statement":[{statements}]}}"#);
+        owner
+            .client()
+            .put_bucket_policy()
+            .bucket(bucket)
+            .policy(doc)
+    };
+
+    // The policy grants the listing only: the user may not read the policy itself.
+    put_policy(list.clone()).send().await.expect("put policy");
+    let root = probe_path(&scoped, bucket).await;
+    println!("probe {bucket:?} -> {root:?}");
+    assert_eq!(root, Probe::Denied);
+    assert_eq!(
+        probe_path(&scoped, &format!("{bucket}/other/")).await,
+        Probe::Denied
+    );
+    let folder = probe_path(&scoped, &format!("s3://{bucket}/scoped/")).await;
+    println!("probe \"s3://{bucket}/scoped/\" -> {folder:?}");
+    let expected = Probe::Ok {
+        bucket: bucket.into(),
+        prefix: "scoped/".into(),
+        children: vec!["sub".into(), "sub2".into()],
+    };
+    assert_eq!(folder, expected);
+    // A name typed halfway is completed by the folders that continue it.
+    let Probe::Ok { children, .. } = probe_path(&scoped, &format!("{bucket}/scoped/su")).await
+    else {
+        panic!("a prefix below the granted one lists");
+    };
+    assert_eq!(children, ["sub", "sub2"]);
+    let missing = probe_path(&scoped, "ba-m10-no-such-bucket/x/").await;
+    println!("probe of a bucket that does not exist -> {missing:?}");
+    assert!(matches!(missing, Probe::Error { .. }), "{missing:?}");
+    let hidden = scoped.accessible_prefixes(bucket).await;
+    println!("accessible_prefixes without s3:GetBucketPolicy -> {hidden:?}");
+    assert!(hidden.is_err(), "the command turns this into an empty list");
+    // The owner reads its own policy; the statement is not about the owner.
+    let owners = owner.accessible_prefixes(bucket).await;
+    assert_eq!(owners.expect("the owner may read the policy"), [""; 0]);
+
+    // Now the policy also lets the user read it: the granted prefix is found.
+    put_policy(format!("{list},{read_policy}"))
+        .send()
+        .await
+        .expect("put policy");
+    let found = scoped.accessible_prefixes(bucket).await;
+    println!("accessible_prefixes with s3:GetBucketPolicy -> {found:?}");
+    assert_eq!(found.expect("the policy is readable now"), ["scoped/"]);
+
+    remove_user(&admin, uid).await;
+    remove_user(&admin, owner_uid).await;
+}

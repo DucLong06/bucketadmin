@@ -5,6 +5,7 @@
 
 use crate::clusters::{ClusterProfile, ProfileStore, SecretStore};
 use crate::rgw_admin::{HttpClient, RgwAdmin};
+use crate::s3::access::{probe_path, Probe};
 use crate::s3::acl::{Acl, AclReport, AppliedAcl, Grant, VersionEntry, Versioning};
 use crate::s3::manage::{DeleteReport, Deleted, Marker, ObjectTag, MAX_DELETE};
 use crate::s3::parquet::ParquetPage;
@@ -32,6 +33,19 @@ impl Sessions {
     pub(crate) fn clear(&self) {
         if let Ok(mut sessions) = self.0.lock() {
             sessions.clear();
+        }
+    }
+}
+
+/// What `accessible_prefixes` learned from a bucket's policy, per (cluster, bucket): asked once
+/// per start of the app. Only answers are kept; a refusal is asked again next time.
+#[derive(Default)]
+pub struct PolicyCache(Mutex<HashMap<(String, String), Vec<String>>>);
+
+impl PolicyCache {
+    pub(crate) fn clear(&self) {
+        if let Ok(mut known) = self.0.lock() {
+            known.clear();
         }
     }
 }
@@ -171,6 +185,8 @@ fn forget_own_session(state: &AppState, cluster_id: &str) {
     if let Ok(mut sessions) = state.browse.0.lock() {
         sessions.remove(&(cluster_id.to_string(), String::new()));
     }
+    // Another key may be granted other prefixes.
+    state.policies.clear();
 }
 
 /// Saves the personal S3 key for "browse with my own key": the secret goes to the OS
@@ -240,6 +256,53 @@ pub async fn open_session(s3: &S3) -> Result<Opened, String> {
 #[tauri::command]
 pub async fn browse_open(state: St<'_>, cluster_id: String, uid: String) -> Cmd<Opened> {
     open_session(&state.s3(&cluster_id, &uid, true).await?).await
+}
+
+/// What a path being typed leads to, for the path picker: the folders right below it, or that
+/// S3 refuses to list there. One small listing AT the typed prefix, never above it. Trouble of
+/// any kind is an answer (`status: "error"`), not a failed command: the picker shows it inline.
+#[tauri::command]
+pub async fn path_probe(
+    state: St<'_>,
+    cluster_id: String,
+    path: String,
+    uid: Option<String>,
+) -> Cmd<Probe> {
+    let uid = uid.unwrap_or_default();
+    Ok(match state.s3(&cluster_id, &uid, false).await {
+        Ok(s3) => probe_path(&s3, &path).await,
+        Err(message) => Probe::Error { message },
+    })
+}
+
+/// Best effort: the prefixes of `bucket` its policy grants the connection's own key, read with
+/// that key. Any trouble (no policy, not allowed to read it, no network) is an empty list.
+#[tauri::command]
+pub async fn accessible_prefixes(
+    state: St<'_>,
+    cluster_id: String,
+    bucket: String,
+) -> Cmd<Vec<String>> {
+    let cache_key = (cluster_id.clone(), bucket.clone());
+    let known = state
+        .policies
+        .0
+        .lock()
+        .ok()
+        .and_then(|k| k.get(&cache_key).cloned());
+    if let Some(prefixes) = known {
+        return Ok(prefixes);
+    }
+    let Ok(s3) = state.s3(&cluster_id, "", false).await else {
+        return Ok(Vec::new());
+    };
+    let Ok(prefixes) = s3.accessible_prefixes(&bucket).await else {
+        return Ok(Vec::new());
+    };
+    if let Ok(mut known) = state.policies.0.lock() {
+        known.insert(cache_key, prefixes.clone());
+    }
+    Ok(prefixes)
 }
 
 #[tauri::command]

@@ -163,6 +163,21 @@ pub fn nearest_scale(percent: u16) -> Result<u16, String> {
     Ok(*nearest.unwrap_or(&100))
 }
 
+/// Colour themes of the UI; the first is the default. An explicit choice, never the system's.
+pub const THEMES: [&str; 2] = ["dark", "light"];
+
+fn default_theme() -> String {
+    THEMES[0].to_string()
+}
+
+/// A theme the user may choose: one of [`THEMES`].
+pub fn valid_theme(theme: &str) -> Result<String, String> {
+    if THEMES.contains(&theme) {
+        return Ok(theme.to_string());
+    }
+    Err(format!("invalid theme {theme:?}: expected dark or light"))
+}
+
 /// Languages the UI is written in.
 pub const LANGS: [&str; 2] = ["en", "vi"];
 
@@ -184,6 +199,9 @@ pub struct Settings {
     /// Language of the UI, one of [`LANGS`]; empty = follow the system's.
     #[serde(default)]
     pub lang: String,
+    /// Colour theme, one of [`THEMES`].
+    #[serde(default = "default_theme")]
+    pub theme: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update: Option<UpdateSeen>,
     /// Places opened last, newest first, at most [`MAX_RECENT`].
@@ -203,6 +221,7 @@ impl Default for Settings {
             proxy: Proxy::default(),
             ui_scale: default_scale(),
             lang: String::new(),
+            theme: default_theme(),
             update: None,
             recent: Vec::new(),
             pins: Vec::new(),
@@ -220,6 +239,11 @@ impl Settings {
     /// The saved language; a hand-edited value that is no language counts as "follow the system".
     pub fn lang(&self) -> String {
         valid_lang(&self.lang).unwrap_or_default()
+    }
+
+    /// The saved theme; a hand-edited value that is no theme counts as the default (dark).
+    pub fn theme(&self) -> String {
+        valid_theme(&self.theme).unwrap_or_else(|_| default_theme())
     }
 
     /// Puts `place` at the front of the recent places; a place already listed moves up.
@@ -637,6 +661,30 @@ mod tests {
         std::fs::write(dir.join("settings.json"), r#"{"ui_scale":9}"#).unwrap();
         assert_eq!(store.get().unwrap().scale(), 100);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn theme_is_dark_until_chosen_and_survives_a_reload() {
+        let dir = temp_dir("theme");
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = SettingsStore::new(&dir);
+        // A settings.json written before the field existed.
+        std::fs::write(dir.join("settings.json"), r#"{"ui_scale":110}"#).unwrap();
+        assert_eq!(store.get().unwrap().theme(), "dark");
+        store.change(|s| s.theme = "light".into()).unwrap();
+        let json = std::fs::read_to_string(dir.join("settings.json")).unwrap();
+        assert!(json.contains(r#""theme": "light""#), "{json}");
+        let reloaded = SettingsStore::new(&dir).get().unwrap();
+        assert_eq!(
+            (reloaded.theme().as_str(), reloaded.ui_scale),
+            ("light", 110)
+        );
+        // A hand-edited value that is no theme: the default, and it cannot be saved through the app.
+        std::fs::write(dir.join("settings.json"), r#"{"theme":"system"}"#).unwrap();
+        assert_eq!(store.get().unwrap().theme(), "dark");
+        assert!(valid_theme("system").is_err() && valid_theme("").is_err());
+        assert_eq!(valid_theme("light"), Ok("light".to_string()));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

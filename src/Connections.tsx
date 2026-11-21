@@ -1,11 +1,12 @@
 import { type FormEvent, useEffect, useState } from "react";
-import { Alert, Box, Button, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import { Alert, Box, Button, Chip, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { invoke, isInternal, maskKey, type EndpointKind, type Opened, type Profile, type Proxy } from "./api";
 import { endpointError } from "./endpoint";
 import { t, type Key } from "./i18n";
+import { PathPicker } from "./PathPicker";
 import { startPath } from "./paths";
 import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
-import { ErrorAlert, LangToggle } from "./ui";
+import { duplicateLabels, ErrorAlert, filterProfiles, LangToggle, SEARCH_ABOVE, ThemeSwitch } from "./ui";
 import { stepScale, UI_SCALES } from "./zoom";
 
 // Kept as data, not as text: what is on screen follows a change of language.
@@ -84,16 +85,8 @@ function ProfileStartPath({ profile, onChanged, fail }: { profile: Profile; onCh
   const next = startPath(draft);
   return (
     <Stack direction="row" spacing={1} sx={{ mt: 1.5, alignItems: "flex-start" }}>
-      <TextField
-        label={t("conn.startPath")}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        size="small"
-        fullWidth
-        error={!!next.error}
-        helperText={next.error ? t(next.error) : t("conn.startPathHelp")}
-        slotProps={{ htmlInput: { style: { fontFamily: "monospace" }, spellCheck: false, "aria-label": t("conn.startPathOf", { label: profile.label }) } }}
-      />
+      {/* Asks nothing until it is typed in: every saved connection has one of these. */}
+      <PathPicker clusterId={profile.id} lazy optional value={draft} onChange={setDraft} label={t("conn.startPath")} helperText={t("conn.startPathHelp")} ariaLabel={t("conn.startPathOf", { label: profile.label })} />
       <Button
         onClick={() => next.error || invoke("profile_set_start_path", { id: profile.id, startPath: next.path }).then(onChanged).catch(fail)}
         disabled={!!next.error || next.path === saved}
@@ -217,6 +210,13 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
   }
 
   const keySx = { htmlInput: { style: { fontFamily: "monospace" } } };
+  // Many connections: the list is searched; the search is not saved.
+  const [search, setSearch] = useState("");
+  const searchable = profiles.length > SEARCH_ABOVE;
+  const listed = searchable ? filterProfiles(profiles, search) : profiles;
+  const repeated = duplicateLabels(profiles);
+  const isRepeated = (label: string) => repeated.has(label.trim().toLowerCase());
+  const labelTaken = !!form.label.trim() && profiles.some((p) => p.label.trim().toLowerCase() === form.label.trim().toLowerCase());
   return (
     <>
       {/* The first screen a new user sees: the language can be chosen right here. */}
@@ -240,7 +240,8 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
           {t("conn.add")}
         </Typography>
         <Stack spacing={2}>
-          {field("label", t("conn.label"), { required: true })}
+          {/* Allowed, but said: the lists of the app show connections by label. */}
+          {field("label", t("conn.label"), { required: true, color: labelTaken ? "warning" : undefined, focused: labelTaken || undefined, helperText: labelTaken ? t("conn.duplicateNew") : undefined })}
           {field("endpoint", t("conn.endpoint"), {
             required: true,
             placeholder: "http://host:7480",
@@ -254,12 +255,8 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
             autoComplete: "off",
             helperText: t("conn.secretHelp"),
           })}
-          {field("startPath", t("conn.startPath"), {
-            placeholder: t("browse.openPathSample"),
-            error: !!start.error,
-            helperText: start.error ? t(start.error) : t("conn.startPathHelp"),
-            slotProps: { htmlInput: { style: { fontFamily: "monospace" }, spellCheck: false } },
-          })}
+          {/* No connection yet, so nothing to ask S3: the picker only checks the text. */}
+          <PathPicker clusterId="" optional value={form.startPath} onChange={(startPath) => setForm({ ...form, startPath })} label={t("conn.startPath")} helperText={t("conn.startPathHelp")} />
           <details>
             <summary>{t("conn.adminKey")}</summary>
             <Stack spacing={2} sx={{ mt: 2 }}>
@@ -300,16 +297,45 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
         </Stack>
       </Paper>
 
-      <Typography variant="h6" component="h2" gutterBottom>
-        {t("conn.savedList")}
-      </Typography>
+      <Stack direction="row" sx={{ alignItems: "center", gap: 1.5, mb: 1.5, flexWrap: "wrap" }}>
+        <Typography variant="h6" component="h2">
+          {t("conn.savedList")}
+        </Typography>
+        {profiles.length > 0 && (
+          <Chip
+            size="small"
+            variant="outlined"
+            aria-label={t("conn.countAria", { n: profiles.length })}
+            label={searchable && search.trim() ? t("browse.filterCount", { n: listed.length, m: profiles.length }) : profiles.length}
+            sx={{ fontVariantNumeric: "tabular-nums" }}
+          />
+        )}
+        {searchable && (
+          <TextField
+            placeholder={t("conn.search")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setSearch("")}
+            size="small"
+            title={t("conn.searchHint")}
+            slotProps={{ htmlInput: { "aria-label": t("conn.search"), spellCheck: false, type: "search" } }}
+            sx={{ ml: "auto", width: 320, maxWidth: "100%" }}
+          />
+        )}
+      </Stack>
       {profiles.length === 0 && <Typography color="text.secondary">{t("conn.none")}</Typography>}
+      {profiles.length > 0 && listed.length === 0 && <Typography color="text.secondary">{t("conn.noMatch")}</Typography>}
       <Stack spacing={1.5} component="ul" sx={{ listStyle: "none", p: 0, m: 0 }}>
-        {profiles.map((p) => (
+        {listed.map((p) => (
           <Paper key={p.id} component="li" variant="outlined" sx={{ p: 2.5 }}>
             <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
               <Stack sx={{ flexGrow: 1, minWidth: 0 }}>
                 <Typography sx={{ fontWeight: 600 }}>{p.label}</Typography>
+                {isRepeated(p.label) && (
+                  <Typography variant="caption" color="warning.main" role="note">
+                    {t("conn.duplicateLabel")}
+                  </Typography>
+                )}
                 <Typography variant="body2" color="text.secondary" noWrap>
                   <Mono>{p.endpoint}</Mono> · {t("conn.myKey")} <Mono>{maskKey(p.browse_access_key ?? p.access_key)}</Mono>
                   {p.browse_access_key && p.browse_access_key !== p.access_key && (
@@ -381,6 +407,9 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
             {t("settings.language")}
           </Typography>
           <LangToggle />
+          <Box sx={{ ml: 3 }}>
+            <ThemeSwitch />
+          </Box>
         </Stack>
       </Paper>
     </>

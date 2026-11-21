@@ -1,14 +1,20 @@
-import { type FormEvent, type KeyboardEvent, type MouseEvent, type Ref, useEffect, useRef, useState } from "react";
-import { Alert, Box, Button, InputAdornment, List, ListItemButton, ListItemText, Paper, Stack, TextField, Typography } from "@mui/material";
+import { type KeyboardEvent, type MouseEvent, useEffect, useRef, useState } from "react";
+import { Alert, Box, Button, InputAdornment, List, ListItemButton, ListItemText, Paper, TextField, Typography } from "@mui/material";
 import type { BrowseBucket } from "./api";
 import { t } from "./i18n";
-import { splitPath } from "./paths";
 import { eyebrow, thinScroll, tokens } from "./theme";
+import { visibleRange } from "./virtual";
 
 /** The filter field is only worth its row above this many buckets. */
 export const FILTER_ABOVE = 8;
 /** The list never grows past this: about 38 % of the window, and never under five rows. */
 export const LIST_MAX_HEIGHT = "max(200px, 38vh)";
+
+/** Above this many rows the list only mounts the rows in view (and a few around them). */
+export const WINDOW_ABOVE = 100;
+/** Height of a bucket row (the theme's floor for dense rows), and the list's own padding above the first. */
+const ROW = 40;
+const LIST_PAD = 8;
 
 /** Buckets whose name contains `text`, whatever the case. */
 export const filterBuckets = <B extends { name: string }>(buckets: B[], text: string): B[] => {
@@ -42,20 +48,13 @@ type Props = {
   onCreate: () => void;
   /** A bucket row was right-clicked. */
   onBucketMenu?: (bucket: string, e: MouseEvent) => void;
-  /** The Open-path field, so other parts of the page can send the user there. */
-  pathRef?: Ref<HTMLInputElement>;
+  /** Go to the path picker: any path the key may use is typed (or picked) there. */
+  onPickPath: () => void;
 };
 
-/** The sidebar's bucket card: the key's buckets in a list of bounded height with a filter, and a
- *  field that opens any path the key may use. Only the list scrolls; the controls stay put. */
-export default function BucketPanel({ title, buckets, bucketsError, current, active, onOpen, onCreate, onBucketMenu, pathRef }: Props) {
-  const [path, setPath] = useState("");
-  const split = splitPath(path);
-  const field = useRef<HTMLInputElement | null>(null);
-  // A key that may not list buckets has one thing to do here: type the path it was given.
-  useEffect(() => {
-    if (bucketsError && active && !current) field.current?.focus();
-  }, [bucketsError]);
+/** The sidebar's bucket card: the key's buckets in a list of bounded height with a filter, and the
+ *  way to the path picker. Only the list scrolls; the controls stay put. */
+export default function BucketPanel({ title, buckets, bucketsError, current, active, onOpen, onCreate, onBucketMenu, onPickPath }: Props) {
 
   // The filter belongs to this tab and is not saved.
   const [filter, setFilter] = useState("");
@@ -71,10 +70,23 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
   const filterable = buckets.length > FILTER_ABOVE;
   const shown = filterable ? filterBuckets(buckets, filter) : buckets;
   const list = useRef<HTMLUListElement | null>(null);
-  const rowAt = (i: number) => list.current?.querySelectorAll<HTMLElement>("[role=button]")[i];
+  // A long list is windowed: rows of a known height, placed by two spacers, so 5000 buckets cost what 30 do.
+  const windowed = shown.length > WINDOW_ABOVE;
+  const [scrollTop, setScrollTop] = useState(0);
+  const viewport = Math.max(200, 0.38 * (globalThis.innerHeight ?? 800));
+  const [from, to] = windowed ? visibleRange(scrollTop, viewport, ROW, shown.length) : [0, shown.length];
+  /** Scrolls the list just far enough to show row `i`; in a windowed list the row need not be mounted. */
+  function revealAt(i: number) {
+    const el = list.current;
+    if (!el || i < 0) return;
+    if (!windowed) return reveal(el, el.querySelectorAll<HTMLElement>("[role=button]")[i]);
+    const top = LIST_PAD + i * ROW;
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (top + ROW > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW - el.clientHeight;
+  }
   // A tab that is shown again, or that went to another bucket: its bucket is in view.
   useEffect(() => {
-    if (active) reveal(list.current, list.current?.querySelector<HTMLElement>(".Mui-selected"));
+    if (active) revealAt(shown.findIndex((b) => b.name === current));
   }, [active, current, shown.length]);
 
   function onFilterKey(e: KeyboardEvent) {
@@ -85,16 +97,12 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
       const next = moveHighlight(cursor.current, e.key, shown.length);
       setHighlight(next);
       // The highlighted row stays in view while the arrow keys walk the list.
-      reveal(list.current, rowAt(next));
+      revealAt(next);
     } else if (e.key === "Enter") {
       const picked = shown[moveHighlight(cursor.current, "", shown.length)];
       if (picked) onOpen(picked.name, "");
     } else return;
     e.preventDefault();
-  }
-  function openPath(e: FormEvent) {
-    e.preventDefault();
-    if (!split.error) onOpen(split.bucket, split.prefix);
   }
   return (
     <Paper variant="outlined" sx={{ borderRadius: "16px" }}>
@@ -109,6 +117,9 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
             onChange={(e) => {
               setFilter(e.target.value);
               setHighlight(0);
+              // Another list: from its top.
+              if (list.current) list.current.scrollTop = 0;
+              setScrollTop(0);
             }}
             onKeyDown={onFilterKey}
             onFocus={() => setFiltering(true)}
@@ -132,11 +143,21 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
         </Box>
       )}
       {/* The height limit is on the element itself (not in a class): it is what keeps the rest of the sidebar in reach. */}
-      <List dense aria-label={t("browse.bucketList")} ref={list} style={{ maxHeight: LIST_MAX_HEIGHT }} sx={{ ...thinScroll, mb: filterable ? 1 : 0 }}>
-        {shown.map((b, i) => (
+      <List
+        dense
+        aria-label={t("browse.bucketList")}
+        ref={list}
+        onScroll={windowed ? (e) => setScrollTop(e.currentTarget.scrollTop) : undefined}
+        style={{ maxHeight: LIST_MAX_HEIGHT }}
+        sx={{ ...thinScroll, mb: filterable ? 1 : 0 }}
+      >
+        {from > 0 && <li aria-hidden style={{ height: from * ROW }} />}
+        {shown.slice(from, to).map((b, n) => [b, from + n] as const).map(([b, i]) => (
           <ListItemButton
             key={b.name}
             selected={b.name === current}
+            aria-setsize={windowed ? shown.length : undefined}
+            aria-posinset={windowed ? i + 1 : undefined}
             // The row the filter field's arrow keys are on looks like the focused one.
             className={filtering && i === highlight ? "Mui-focusVisible" : undefined}
             onClick={() => onOpen(b.name, "")}
@@ -145,6 +166,7 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
             <ListItemText primary={b.name} slotProps={{ primary: { sx: { fontFamily: tokens.mono, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, title: b.name } }} />
           </ListItemButton>
         ))}
+        {to < shown.length && <li aria-hidden style={{ height: (shown.length - to) * ROW }} />}
       </List>
       {bucketsError ? (
         <Alert severity="info" sx={{ mx: 1.5, mb: 1.5 }}>
@@ -162,37 +184,12 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
           {t("browse.createBucket")}
         </Button>
       </Box>
-      <Stack component="form" onSubmit={openPath} sx={{ px: 2, pt: 2, pb: 1.5, borderTop: 1, borderColor: "divider" }}>
-        <TextField
-          label={t("browse.openPath")}
-          placeholder={t("browse.openPathSample")}
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          size="small"
-          error={!!path.trim() && !!split.error}
-          helperText={path.trim() && split.error ? t(split.error) : t("browse.openPathHelp")}
-          inputRef={(input: HTMLInputElement | null) => {
-            field.current = input;
-            if (typeof pathRef === "function") pathRef(input);
-            else if (pathRef) pathRef.current = input;
-          }}
-          slotProps={{
-            htmlInput: { style: { fontFamily: tokens.mono }, spellCheck: false },
-            inputLabel: { shrink: true },
-            // The button sits in the field: one row less in a column that has none to spare.
-            input: {
-              sx: { pr: 0.5 },
-              endAdornment: (
-                <InputAdornment position="end">
-                  <Button type="submit" size="small" disabled={!!split.error} sx={{ minWidth: 0 }}>
-                    {t("common.open")}
-                  </Button>
-                </InputAdornment>
-              ),
-            },
-          }}
-        />
-      </Stack>
+      <Box sx={{ px: 2, pt: 2, pb: 2, borderTop: 1, borderColor: "divider" }}>
+        {/* For a key that may not list buckets this is the way in, so it is the filled button. */}
+        <Button size="small" variant={bucketsError ? "contained" : "outlined"} fullWidth onClick={onPickPath} title={t("browse.openPathHelp")}>
+          {t("browse.openPath")}
+        </Button>
+      </Box>
     </Paper>
   );
 }

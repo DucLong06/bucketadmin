@@ -11,8 +11,7 @@ needed.
 
 ![Browsing a bucket in several tabs](docs/images/browse.png)
 
-The pictures in this document come from the smoke test, run against a test cluster; the "New version v9.9.9" badge is the
-canned answer that test gives the update check.
+The pictures in this document come from the smoke test, run against a test cluster.
 
 ## Features
 
@@ -28,6 +27,16 @@ canned answer that test gives the update check.
   remembered between runs (see Pinned places).
 - **Bucket list**: however many buckets the key owns, the list keeps a fixed height and scrolls inside its card; a filter
   field appears above 8 buckets (`↑` `↓` move, `Enter` opens, `Esc` clears) and the header shows the count.
+- **See-your-access path picker**: Open path, pinning a typed path and a connection's start path share one picker. It shows
+  "Paths you can open" (start path, pins, recent places, and, when the key may read it, what a bucket policy grants) and, as
+  you type, the folders S3 lists at exactly that path, one click to go deeper. When the key may not list there, an amber hint
+  says so; the path can still be opened. Nothing is ever listed above what you typed.
+- **Dark & light themes**: a warm-charcoal dark theme and a warm-paper light theme with the same amber accent, chosen in the
+  app-bar menu or in General settings and remembered (no flash at start; no "follow the system" mode).
+- **Scales to hundreds of buckets and many connections**: the bucket list mounts only the rows in view (500 buckets cost what
+  30 do); above 8 connections the Connections screen and a tab's connection box become searchable, repeated labels are
+  flagged, tabs read `connection · bucket` and the tab bar scrolls; Recent is grouped per connection like Pinned.
+- **Audit log** (app-bar menu): a read-only table of what the app changed, with a filter and today / 7 days / 30 days / all.
 - **Recent**: the 20 places opened last, remembered between runs; choosing one opens it as a tab (a place that is already
   open is shown in its tab).
 - Create buckets and folders, upload (pick files or drag and drop, multipart), download with resume, delete one or many
@@ -55,7 +64,11 @@ canned answer that test gives the update check.
 - Every change you make (upload, delete, ACL change…) is written to a local audit log (SQLite, `audit.db` in the app's data
   folder); the log never holds a secret or a presigned URL.
 
+![The light theme](docs/images/browse.light.png)
+
 ![Adding a connection](docs/images/connection.png)
+
+![Many saved connections: a count and a search field](docs/images/connections-many.png)
 
 ![Parquet preview](docs/images/parquet.png)
 
@@ -79,8 +92,8 @@ Requirements: Ubuntu 22.04 or later (amd64) with a keyring service (GNOME Keyrin
 Ubuntu desktop).
 
 ```bash
-wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.2/bucketadmin_0.1.2_amd64.deb
-sudo apt install ./bucketadmin_0.1.2_amd64.deb
+wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.3/bucketadmin_0.1.3_amd64.deb
+sudo apt install ./bucketadmin_0.1.3_amd64.deb
 ```
 
 Other formats and older versions: the [Releases](https://github.com/DucLong06/bucketadmin/releases) page.
@@ -170,7 +183,9 @@ The cluster administration screens (users, keys, caps, quotas, onboarding from C
   tag; a notice appears only when that release is newer than the version you run. The request carries none of your data;
   when GitHub cannot be reached the app silently skips it.
 
-Every CSP directive and the handling of presigned URLs in detail: [docs/SECURITY.md](docs/SECURITY.md) (in Vietnamese).
+![A newer release: the badge in the top bar (the release, v9.9.9, is a canned answer of the test run)](docs/images/update.png)
+
+Every CSP directive and the handling of presigned URLs in detail: [docs/SECURITY.md](docs/SECURITY.md) ([Tiếng Việt](docs/SECURITY.vi.md)).
 
 ## Troubleshooting
 
@@ -196,8 +211,8 @@ npm ci
 npm run tauri dev                      # run the app in development mode
 npm test && npm run build              # test and build the frontend
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-scripts/build-deb.sh 0.1.2~dev1        # build the deb
-scripts/render-gate.sh bucketadmin_0.1.2~dev1_amd64.deb   # check that the package just built shows the real interface
+scripts/build-deb.sh 0.1.3~dev1        # build the deb
+scripts/render-gate.sh bucketadmin_0.1.3~dev1_amd64.deb   # check that the package just built shows the real interface
 python3 scripts/gen-icons.py           # render the icon set again from src-tauri/icons/icon.svg (needs google-chrome, Pillow)
 ```
 

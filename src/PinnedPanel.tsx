@@ -1,5 +1,5 @@
 import { type MouseEvent, useState } from "react";
-import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, List, ListItemButton, ListItemIcon, ListItemText, Menu, MenuItem, Paper, TextField, Typography } from "@mui/material";
+import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, List, ListItemButton, ListItemIcon, ListItemText, Menu, MenuItem, Paper, Stack, TextField, Typography, IconButton } from "@mui/material";
 import type { Profile } from "./api";
 import { t } from "./i18n";
 import { defaultLabel, orderPins, pinLabel, type Pin, type PinOps } from "./pins";
@@ -17,12 +17,14 @@ type Props = {
   /** Open the place in a new tab. */
   onOpenTab: (at: Place) => void;
   ops: PinOps;
+  /** Pin a path that is typed or picked (the path picker). */
+  onAdd?: () => void;
 };
 
 /** The sidebar's Pinned card. Pins of other connections are listed too, greyed under a divider
  *  rather than hidden behind a toggle: every pin stays one click away with no hidden state, and
  *  the list scrolls inside the card, so they cost the column no height. */
-export default function PinnedPanel({ pins, profiles, clusterId, onOpen, onOpenTab, ops }: Props) {
+export default function PinnedPanel({ pins, profiles, clusterId, onOpen, onOpenTab, ops, onAdd }: Props) {
   // Right-clicked pin (with its position in the whole list) and where the pointer was.
   const [menu, setMenu] = useState<{ pin: Pin; index: number; x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<Pin | null>(null);
@@ -55,9 +57,16 @@ export default function PinnedPanel({ pins, profiles, clusterId, onOpen, onOpenT
   );
   return (
     <Paper variant="outlined" sx={{ borderRadius: "16px" }}>
-      <Typography component="h2" sx={{ ...eyebrow, color: "text.secondary", px: 2, pt: 2 }}>
-        {t("browse.pinned")}
-      </Typography>
+      <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between", pl: 2, pr: 0.75, pt: 1 }}>
+        <Typography component="h2" sx={{ ...eyebrow, color: "text.secondary" }}>
+          {t("browse.pinned")}
+        </Typography>
+        {onAdd && (
+          <IconButton aria-label={t("pins.addHere")} title={t("pins.addHere")} onClick={onAdd} sx={{ width: 40, height: 40, fontSize: 20 }}>
+            +
+          </IconButton>
+        )}
+      </Stack>
       <List dense aria-label={t("browse.pinnedList")} style={{ maxHeight: 216 }} sx={thinScroll}>
         {here.map((entry) => row(entry, true))}
         {elsewhere.length > 0 && (

@@ -245,7 +245,7 @@ export const en = {
   "browse.chooseBucket": "Choose a bucket",
   "browse.chooseBucketHint": "The buckets owned by the key in use. Open a shared bucket, or a folder you were granted, by its path in the left column.",
   "browse.chooseBucketNone": "The key in use owns no bucket. Create a bucket, or open a shared one by its path, in the left column.",
-  "browse.chooseBucketDenied": "The key in use may not list buckets. Type the path you were given (bucket/folder/) under \"Open path\" in the left column.",
+  "browse.chooseBucketDenied": "The key in use may not list buckets. Type the path you were given (bucket/folder/) below, or pick one of the paths you can open.",
   "browse.bucketCards": "Buckets",
   "browse.bucketCreated": "Created {date}",
   "browse.bucketJustCreated": "Just created",
@@ -595,6 +595,65 @@ export const en = {
   // endpoint.ts
   "endpoint.url": "Enter a URL like http://host:7480",
   "endpoint.scheme": "The endpoint must start with http:// or https://",
+
+  // Path picker (PathPicker.tsx): typed paths, what the key can reach (M10.1)
+  "pathPicker.chips": "Paths you can open",
+  "pathPicker.source.start": "Start path of this connection",
+  "pathPicker.source.pin": "Pinned place",
+  "pathPicker.source.recent": "Opened recently",
+  "pathPicker.source.policy": "Granted by the bucket policy",
+  "pathPicker.pick": "Use the path {path}",
+  "pathPicker.children": "Folders here",
+  "pathPicker.child": "Go into the folder {name}",
+  "pathPicker.noChildren": "You may list this path. There are no folders below it.",
+  "pathPicker.deniedHint": "This key may not list there — if you were granted a deeper folder, keep typing; the path can still be opened",
+  "pathPicker.error": "This path could not be checked: {message}",
+  "pathPicker.openTitle": "Open a path",
+  "pins.add": "Pin a path…",
+  "pins.addTitle": "Pin a path",
+  "pins.addSubmit": "Pin",
+  "pins.addHere": "Pin a path on this connection",
+
+  // Theme (M10.2): dark or light, an explicit choice
+  "app.menu": "Menu",
+  "app.theme": "Theme",
+  "theme.dark": "Dark",
+  "theme.light": "Light",
+  "settings.lightTheme": "Light theme",
+
+  // Many connections (M10.3): search, count, duplicate labels, grouped recent places
+  "conn.search": "Search connections…",
+  "conn.searchHint": "Type a part of a label, an endpoint or an access key",
+  "conn.noMatch": "No connection matches.",
+  "conn.countAria": "Saved connections: {n}",
+  "conn.duplicateLabel": "Another connection has this label. Tell them apart by their endpoint.",
+  "conn.duplicateNew": "A saved connection already has this label. You can still save.",
+  "recent.others": "Other connections ({n})",
+
+  // Audit log viewer (M10.4): read-only
+  "app.audit": "Audit log",
+  "audit.intro": "Every change made from this app — uploads, deletions, permissions, versioning — newest first. This list is read-only. Times are {tz}.",
+  "audit.filter": "Filter by action, path or connection…",
+  "audit.range": "Time range",
+  "audit.range.today": "Today",
+  "audit.range.7d": "7 days",
+  "audit.range.30d": "30 days",
+  "audit.range.all": "All",
+  "audit.table": "Audit log entries",
+  "audit.col.time": "Time ({tz})",
+  "audit.col.action": "Action",
+  "audit.col.prefix": "Folder",
+  "audit.col.object": "Object",
+  "audit.col.result": "Result",
+  "audit.ok": "Done",
+  "audit.failed": "Failed: {message}",
+  "audit.empty": "Nothing has been recorded yet. Changes you make while browsing — uploads, deletions, permissions — will be listed here.",
+  "audit.emptyFiltered": "No entry matches the filter in this time range.",
+  "audit.more": "Show older entries",
+  "audit.count": "{n:entry|entries} shown: {n}",
+
+  // Audit log viewer: bucket column
+  "audit.col.bucket": "Bucket",
 };
 
 export const vi: Record<keyof typeof en, string> = {
@@ -837,7 +896,7 @@ export const vi: Record<keyof typeof en, string> = {
   "browse.chooseBucket": "Chọn một bucket",
   "browse.chooseBucketHint": "Các bucket mà key đang dùng sở hữu. Bucket được chia sẻ, hoặc thư mục bạn được cấp, thì mở theo đường dẫn ở cột bên trái.",
   "browse.chooseBucketNone": "Key đang dùng không sở hữu bucket nào. Tạo bucket mới, hoặc mở theo đường dẫn một bucket được chia sẻ, ở cột bên trái.",
-  "browse.chooseBucketDenied": "Key đang dùng không được liệt kê bucket. Hãy nhập đường dẫn bạn được cấp (bucket/thư-mục/) vào ô \"Mở đường dẫn\" ở cột bên trái.",
+  "browse.chooseBucketDenied": "Key đang dùng không được liệt kê bucket. Hãy nhập đường dẫn bạn được cấp (bucket/thư-mục/) ở bên dưới, hoặc chọn một trong các đường dẫn bạn dùng được.",
   "browse.bucketCards": "Bucket",
   "browse.bucketCreated": "Tạo {date}",
   "browse.bucketJustCreated": "Vừa tạo",
@@ -1173,4 +1232,63 @@ export const vi: Record<keyof typeof en, string> = {
 
   "endpoint.url": "Nhập URL dạng http://host:7480",
   "endpoint.scheme": "Endpoint phải bắt đầu bằng http:// hoặc https://",
+
+  // Path picker (PathPicker.tsx): typed paths, what the key can reach (M10.1)
+  "pathPicker.chips": "Đường dẫn bạn dùng được",
+  "pathPicker.source.start": "Đường dẫn bắt đầu của kết nối này",
+  "pathPicker.source.pin": "Vị trí đã ghim",
+  "pathPicker.source.recent": "Vừa dùng gần đây",
+  "pathPicker.source.policy": "Được cấp bởi bucket policy",
+  "pathPicker.pick": "Dùng đường dẫn {path}",
+  "pathPicker.children": "Thư mục ở đây",
+  "pathPicker.child": "Vào thư mục {name}",
+  "pathPicker.noChildren": "Bạn được liệt kê đường dẫn này. Bên dưới không có thư mục con.",
+  "pathPicker.deniedHint": "Key này không được liệt kê ở đó — nếu bạn được cấp một thư mục sâu hơn, hãy gõ tiếp; đường dẫn vẫn dùng được",
+  "pathPicker.error": "Không kiểm tra được đường dẫn này: {message}",
+  "pathPicker.openTitle": "Mở một đường dẫn",
+  "pins.add": "Ghim một đường dẫn…",
+  "pins.addTitle": "Ghim một đường dẫn",
+  "pins.addSubmit": "Ghim",
+  "pins.addHere": "Ghim một đường dẫn trên kết nối này",
+
+  // Theme (M10.2): dark or light, an explicit choice
+  "app.menu": "Trình đơn",
+  "app.theme": "Giao diện màu",
+  "theme.dark": "Tối",
+  "theme.light": "Sáng",
+  "settings.lightTheme": "Giao diện sáng",
+
+  // Many connections (M10.3): search, count, duplicate labels, grouped recent places
+  "conn.search": "Tìm kết nối…",
+  "conn.searchHint": "Gõ một phần của tên, endpoint hoặc access key",
+  "conn.noMatch": "Không có kết nối nào khớp.",
+  "conn.countAria": "Số kết nối đã lưu: {n}",
+  "conn.duplicateLabel": "Một kết nối khác cũng mang tên này. Hãy phân biệt chúng bằng endpoint.",
+  "conn.duplicateNew": "Đã có một kết nối mang tên này. Bạn vẫn lưu được.",
+  "recent.others": "Kết nối khác ({n})",
+
+  // Audit log viewer (M10.4): read-only
+  "app.audit": "Nhật ký thao tác",
+  "audit.intro": "Mọi thay đổi thực hiện từ app này — đưa file lên, xoá, phân quyền, versioning — mới nhất ở trên. Danh sách này chỉ để xem. Giờ hiển thị là {tz}.",
+  "audit.filter": "Lọc theo thao tác, đường dẫn hoặc kết nối…",
+  "audit.range": "Khoảng thời gian",
+  "audit.range.today": "Hôm nay",
+  "audit.range.7d": "7 ngày",
+  "audit.range.30d": "30 ngày",
+  "audit.range.all": "Tất cả",
+  "audit.table": "Các mục của nhật ký thao tác",
+  "audit.col.time": "Thời gian ({tz})",
+  "audit.col.action": "Thao tác",
+  "audit.col.prefix": "Thư mục",
+  "audit.col.object": "Object",
+  "audit.col.result": "Kết quả",
+  "audit.ok": "Thành công",
+  "audit.failed": "Lỗi: {message}",
+  "audit.empty": "Chưa có gì được ghi lại. Những thay đổi bạn thực hiện khi duyệt — đưa file lên, xoá, phân quyền — sẽ hiện ở đây.",
+  "audit.emptyFiltered": "Không có mục nào khớp bộ lọc trong khoảng thời gian này.",
+  "audit.more": "Xem các mục cũ hơn",
+  "audit.count": "Đang hiện {n} mục",
+
+  // Audit log viewer: bucket column
+  "audit.col.bucket": "Bucket",
 };

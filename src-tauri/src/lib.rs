@@ -40,6 +40,7 @@ pub(crate) struct AppState {
     http: Mutex<HashMap<Proxy, ReqwestClient>>,
     pub(crate) browse: browse::Sessions,
     pub(crate) transfers: browse::Transfers,
+    pub(crate) policies: browse::PolicyCache,
 }
 
 impl AppState {
@@ -86,6 +87,7 @@ impl AppState {
     /// Browse sessions were built with the proxy choice of their time: drop them.
     fn forget_sessions(&self) {
         self.browse.clear();
+        self.policies.clear();
     }
 }
 
@@ -259,6 +261,29 @@ fn get_lang(state: St<'_>) -> Cmd<'_, String> {
 fn set_lang(state: St<'_>, lang: String) -> Cmd<'_, String> {
     let lang = settings::valid_lang(&lang)?;
     Ok(state.settings.change(|s| s.lang = lang)?.lang)
+}
+
+/// Colour theme of the UI: "dark" or "light".
+#[tauri::command(async)]
+fn get_theme(state: St<'_>) -> Cmd<'_, String> {
+    Ok(state.settings.get()?.theme())
+}
+
+#[tauri::command(async)]
+fn set_theme(window: tauri::WebviewWindow, state: St<'_>, theme: String) -> Cmd<'_, String> {
+    let theme = settings::valid_theme(&theme)?;
+    apply_theme(&window, &theme);
+    Ok(state.settings.change(|s| s.theme = theme)?.theme)
+}
+
+/// What the window shows where the page has drawn nothing yet: the theme's page colour
+/// (`bg` of the palettes in src/theme.ts), so a start in either theme never flashes the other.
+fn apply_theme(window: &tauri::WebviewWindow, theme: &str) {
+    let (r, g, b) = match theme {
+        "light" => (0xfa, 0xf7, 0xf2),
+        _ => (0x18, 0x15, 0x12),
+    };
+    let _ = window.set_background_color(Some(tauri::window::Color(r, g, b, 0xff)));
 }
 
 /// The one zoom mechanism: the webview's own zoom level, the same thing a browser's Ctrl+= changes.
@@ -649,6 +674,54 @@ fn audit_recent(
     state.audit.recent(action.as_deref(), cluster_id.as_deref())
 }
 
+/// One row of the audit-log viewer, with the connection's label as the user knows it
+/// ("" when that connection is no longer saved).
+#[derive(serde::Serialize)]
+struct AuditListed {
+    #[serde(flatten)]
+    row: audit::AuditRow,
+    connection: String,
+}
+
+/// A page of the audit log for its viewer, newest first. Read-only: the log has no command
+/// that deletes or exports it. `filter` is looked for in action, path and connection label.
+#[tauri::command(async)]
+fn audit_list(
+    state: St<'_>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+    filter: Option<String>,
+    since_unix: Option<i64>,
+) -> Cmd<'_, Vec<AuditListed>> {
+    let filter = filter.unwrap_or_default();
+    let profiles = state.profiles.list()?;
+    let wanted = filter.trim().to_lowercase();
+    let labelled = profiles
+        .iter()
+        .filter(|p| !wanted.is_empty() && p.label.to_lowercase().contains(&wanted));
+    let clusters: Vec<String> = labelled.map(|p| p.id.clone()).collect();
+    let rows = state.audit.list(
+        limit.unwrap_or(200),
+        offset.unwrap_or(0),
+        &filter,
+        &clusters,
+        since_unix.unwrap_or(0),
+    )?;
+    let label = |id: &str| {
+        profiles
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.label.clone())
+    };
+    Ok(rows
+        .into_iter()
+        .map(|row| AuditListed {
+            connection: label(&row.cluster_id).unwrap_or_default(),
+            row,
+        })
+        .collect())
+}
+
 pub fn run() {
     let builder = tauri::Builder::default();
     // Debug builds only: run the JS file named by BUCKETADMIN_DEV_SCRIPT in the page.
@@ -673,11 +746,13 @@ pub fn run() {
                 http: Mutex::default(),
                 browse: browse::Sessions::default(),
                 transfers: browse::Transfers::default(),
+                policies: browse::PolicyCache::default(),
             });
             // Before the first paint: the window never shows at another size than the saved one.
             if let Some(window) = app.get_webview_window("main") {
-                let saved = app.state::<AppState>().settings.get();
-                let _ = apply_ui_scale(&window, saved.map(|s| s.scale()).unwrap_or(100));
+                let saved = app.state::<AppState>().settings.get().unwrap_or_default();
+                let _ = apply_ui_scale(&window, saved.scale());
+                apply_theme(&window, &saved.theme());
             }
             Ok(())
         })
@@ -702,6 +777,9 @@ pub fn run() {
             set_ui_scale,
             get_lang,
             set_lang,
+            get_theme,
+            set_theme,
+            audit_list,
             endpoint_kind,
             test_s3,
             update_check,
@@ -712,6 +790,8 @@ pub fn run() {
             usage_get,
             browse::browse_key_set,
             browse::browse_open,
+            browse::path_probe,
+            browse::accessible_prefixes,
             browse::browse_list,
             browse::browse_pick_upload,
             browse::browse_pick_save,

@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { applyLang } from "./i18n";
-import { closeTab, cycleTab, placeLabel, placePath, restoreTabs, samePlace, saveTabs, tabShortcut, tabTitle, type BrowseTab, type Place } from "./tabs";
+import { closeTab, cycleTab, groupRecents, placeLabel, placePath, restoreTabs, samePlace, saveTabs, tabShortcut, tabTitle, type BrowseTab, type Place } from "./tabs";
 
 const place = (bucket = "", prefix = "", clusterId = "c1", uid = ""): Place => ({ clusterId, uid, bucket, prefix });
 const tab = (id: string, at = place()): BrowseTab => ({ id, start: at, at });
@@ -9,7 +9,8 @@ test("titles and labels of a place", () => {
   applyLang("vi");
   expect(tabTitle(place())).toBe("Tab mới");
   expect(tabTitle(place("logs"))).toBe("logs");
-  expect(tabTitle(place("logs", "2026/11/"))).toBe("11");
+  expect(tabTitle(place("logs", "2026/11/"))).toBe("logs/…/11");
+  expect(tabTitle(place("logs", "2026/"))).toBe("logs/2026");
   expect(placePath(place("logs", "2026/11/"))).toBe("logs/2026/11");
   expect(placePath(place("logs"))).toBe("logs");
   const profiles = [{ id: "c1", label: "lab", endpoint: "http://h:1", access_key: "AK" }];
@@ -18,10 +19,25 @@ test("titles and labels of a place", () => {
   expect(placeLabel(place("logs", "", "gone"), profiles)).toBe("kết nối đã xoá · logs");
   applyLang("en");
   expect(tabTitle(place())).toBe("New tab");
+  // With the connections at hand a tab says which one it is on.
+  expect(tabTitle(place("logs"), profiles)).toBe("lab · logs");
+  expect(tabTitle(place("logs", "2026/11/"), profiles)).toBe("lab · logs/…/11");
+  expect(tabTitle(place(), profiles)).toBe("New tab");
+  expect(tabTitle(place("logs", "", "gone"), profiles)).toBe("logs");
   expect(placeLabel(place("logs", "", "gone", "alice"), profiles)).toBe("deleted connection · user alice · logs");
   expect(samePlace(place("a", "b/"), place("a", "b/"))).toBe(true);
   expect(samePlace(place("a", "b/"), place("a", "b/", "c1", "alice"))).toBe(false);
   expect(samePlace(place("a", "b/"), place("a", "b/", "c2"))).toBe(false);
+});
+
+test("recent places group by connection; a long mixed list starts with the other connections folded", () => {
+  const mixed = [place("a", "", "c2"), place("b"), place("c", "", "c3"), place("d")];
+  expect(groupRecents(mixed, "c1")).toEqual({ here: [place("b"), place("d")], elsewhere: [place("a", "", "c2"), place("c", "", "c3")], collapsed: false });
+  const long = Array.from({ length: 16 }, (_, i) => place(`b${i}`, "", i % 2 ? "c1" : "c2"));
+  expect(groupRecents(long, "c1").collapsed).toBe(true);
+  expect(groupRecents(long.slice(0, 15), "c1").collapsed).toBe(false);
+  // Sixteen places of one connection: nothing to fold.
+  expect(groupRecents(long.map((p) => ({ ...p, clusterId: "c1" })), "c1")).toMatchObject({ elsewhere: [], collapsed: false });
 });
 
 test("closing a tab activates its neighbour and never leaves no tab", () => {
