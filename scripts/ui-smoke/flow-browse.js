@@ -186,6 +186,11 @@
     // The row's own settings are behind Edit; Test and Delete are in its menu.
     await clickSel(sel("conn.editFor", { label: "lab" }));
     await waitFor(() => proxyOf(T("proxy.name.of", { label: "lab" }))?.value === "none", "saved with its own proxy choice");
+    // M13.3: Edit also has the connection's Region and Path-style, with their own Save (off until something changes).
+    const savedRegion = all("input").find((i) => i.getAttribute("aria-label") === `${T("conn.region")} ${T("proxy.name.of", { label: "lab" })}`);
+    check(savedRegion && savedRegion.value === "" && all("button").find((b) => b.textContent.trim() === T("conn.saveAddressing"))?.disabled, "Edit: the saved connection's Region is empty and Save addressing waits for a change");
+    savedRegion?.scrollIntoView({ block: "center" });
+    await shot("01c-connection-edit");
     await clickSel(sel("conn.editFor", { label: "lab" }));
     await clickSel(sel("conn.more", { label: "lab" }));
     await clickSel(sel("conn.testFor", { label: "lab" }));
