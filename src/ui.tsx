@@ -4,12 +4,14 @@ import {
   Autocomplete,
   Box,
   Button,
+  ButtonBase,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   FormControlLabel,
   IconButton,
+  LinearProgress,
   Stack,
   Switch,
   TextField,
@@ -21,7 +23,7 @@ import type { KeyPair, Profile } from "./api";
 import { capsCommand } from "./caps";
 import { explain } from "./errors";
 import { setLang, t, useLang } from "./i18n";
-import { setMode, useMode } from "./theme";
+import { eyebrow, setMode, useMode } from "./theme";
 
 /** uid the connected cluster key belongs to ("" while unknown); App provides it. */
 export const CallerContext = createContext("");
@@ -170,6 +172,30 @@ export const PinIcon = ({ filled }: { filled?: boolean }) => (
   </svg>
 );
 
+/** Heading of a sidebar card that folds to this one line. The heading itself is the button;
+ *  `action` (a control of the card) sits at its end, outside the button. `controls`: id of the body. */
+export function FoldHeading({ title, open, onToggle, controls, action }: { title: string; open: boolean; onToggle: () => void; controls: string; action?: ReactNode }) {
+  return (
+    <Stack direction="row" sx={{ alignItems: "center", pr: action ? 0.75 : 0 }}>
+      <Box component="h2" sx={{ flexGrow: 1, minWidth: 0, m: 0 }}>
+        <ButtonBase
+          aria-expanded={open}
+          aria-controls={controls}
+          title={t(open ? "sidebar.fold" : "sidebar.unfold", { title })}
+          onClick={onToggle}
+          sx={{ ...eyebrow, width: "100%", minHeight: 48, justifyContent: "flex-start", gap: 1, pl: 2, pr: 1, borderRadius: "16px", color: "text.secondary", fontFamily: "inherit", "&:hover": { color: "text.primary" } }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinejoin="round" strokeLinecap="round" style={{ flexShrink: 0, transform: open ? "rotate(90deg)" : undefined, transition: "transform 120ms" }}>
+            <path d="M9 5l7 7-7 7" />
+          </svg>
+          {title}
+        </ButtonBase>
+      </Box>
+      {action}
+    </Stack>
+  );
+}
+
 /** Pins or unpins one place: amber and filled while pinned. `label` names the place for a screen reader and the tooltip. */
 export function PinToggle({ pinned, label, onToggle, size = 32 }: { pinned: boolean; label: string; onToggle: () => void; size?: number }) {
   return (
@@ -228,6 +254,8 @@ type ConfirmProps = {
   requireText?: string;
   busy?: boolean;
   error?: string | null;
+  /** "primary" for a confirmation that destroys nothing (the default is the red of a delete). */
+  tone?: "error" | "primary";
   /** Extra controls shown under the text, e.g. an option that changes what the confirmation does. */
   children?: ReactNode;
   onConfirm: () => void;
@@ -258,13 +286,18 @@ export function ConfirmDialog(props: ConfirmProps) {
               fullWidth
             />
           )}
+          {/* A delete of many objects takes its time: the dialog says it is at work. */}
+          {props.busy && <LinearProgress aria-label={t("ui.working")} />}
           <ErrorAlert error={props.error} />
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={close}>{t("common.cancel")}</Button>
+        {/* The keyboard starts on the safe choice (or in the field to type in): Enter never destroys by accident. */}
+        <Button onClick={close} autoFocus={props.requireText === undefined}>
+          {t("common.cancel")}
+        </Button>
         <Button
-          color="error"
+          color={props.tone ?? "error"}
           variant="contained"
           disabled={blocked}
           onClick={() => {

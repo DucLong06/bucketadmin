@@ -31,6 +31,7 @@ export const en = {
   "ui.details": "Technical details",
   "ui.detailsCode": "Technical details ({code})",
   "ui.typeToConfirm": "Type \"{text}\" to confirm",
+  "ui.working": "Working…",
 
   // Masthead, browse tabs, update notice (App.tsx, tabs.ts)
   "app.nav": "Main navigation",
@@ -73,6 +74,12 @@ export const en = {
   "conn.noProxy.pick": "Choose No proxy",
   "conn.noProxy.pickFor": "Choose No proxy for {label}",
   "conn.test": "Test connection",
+  "conn.testing": "Testing…",
+  "conn.browse": "Browse buckets",
+  "conn.browseFor": "Browse the buckets of {label}",
+  "conn.removeTitle": "Remove this connection?",
+  "conn.removeText": "\"{label}\" is removed from this app: its keys are erased from the system keychain, and its pinned and recent places go with it. Nothing changes on the cluster.",
+  "conn.removeConfirm": "Remove connection",
   "conn.testFor": "Test the connection to {label}",
   "conn.ok": "Connected: the key is valid and its user owns {n} {n:bucket|buckets}.",
   "conn.okNoList": "Connected: the key is valid, but it may not list buckets. Give the connection a start path (bucket/folder/).",
@@ -191,7 +198,7 @@ export const en = {
 
   // ======== Browse: buckets, listing, search, selection, dialogs
   // Browse.tsx: sidebar
-  "browse.sidebar": "Connection, pinned places, buckets and recent places",
+  "browse.sidebar": "Connection, buckets, pinned places and recent places",
   "browse.browseAs": "Browse as user (uid)",
   "browse.usingKey": "Using key",
   "browse.usingKeyMine": "(your own).",
@@ -255,6 +262,7 @@ export const en = {
   "browse.createFolder": "Create folder",
   "browse.copyUrl": "Copy URL",
   "browse.copyUrlHint": "Tick exactly one object to copy its presigned URL",
+  "browse.deleteHint": "Tick the objects or folders to delete",
   "browse.deleteCount": "Delete ({n})",
   "browse.versioningChip": "Versioning: {status}",
   "browse.versioning.on": "On",
@@ -629,6 +637,10 @@ export const en = {
   "conn.duplicateLabel": "Another connection has this label. Tell them apart by their endpoint.",
   "conn.duplicateNew": "A saved connection already has this label. You can still save.",
   "recent.others": "Other connections ({n})",
+  "recent.showAll": "Show all {n}",
+  "recent.showFewer": "Show only the newest of {n}",
+  "sidebar.fold": "Collapse \"{title}\"",
+  "sidebar.unfold": "Expand \"{title}\"",
 
   // Audit log viewer (M10.4): read-only
   "app.audit": "Audit log",
@@ -684,6 +696,7 @@ export const vi: Record<keyof typeof en, string> = {
   "ui.details": "Chi tiết kỹ thuật",
   "ui.detailsCode": "Chi tiết kỹ thuật ({code})",
   "ui.typeToConfirm": "Gõ \"{text}\" để xác nhận",
+  "ui.working": "Đang thực hiện…",
 
   // Masthead, browse tabs, update notice (App.tsx, tabs.ts)
   "app.nav": "Điều hướng chính",
@@ -726,6 +739,12 @@ export const vi: Record<keyof typeof en, string> = {
   "conn.noProxy.pick": "Chọn Không dùng proxy",
   "conn.noProxy.pickFor": "Chọn Không dùng proxy cho {label}",
   "conn.test": "Kiểm tra kết nối",
+  "conn.testing": "Đang kiểm tra…",
+  "conn.browse": "Duyệt bucket",
+  "conn.browseFor": "Duyệt bucket của {label}",
+  "conn.removeTitle": "Xoá kết nối này?",
+  "conn.removeText": "\"{label}\" bị xoá khỏi app: key của nó bị xoá khỏi keychain của hệ thống, các vị trí đã ghim và gần đây của nó cũng mất theo. Trên cluster không có gì thay đổi.",
+  "conn.removeConfirm": "Xoá kết nối",
   "conn.testFor": "Kiểm tra kết nối tới {label}",
   "conn.ok": "Kết nối thành công: key hợp lệ, user của key sở hữu {n} bucket.",
   "conn.okNoList": "Kết nối thành công: key hợp lệ nhưng không được liệt kê bucket. Hãy đặt đường dẫn bắt đầu (bucket/thư-mục/) cho kết nối này.",
@@ -843,7 +862,7 @@ export const vi: Record<keyof typeof en, string> = {
   "error.unknown": "Thao tác không thành công.",
 
   // ======== Browse: buckets, listing, search, selection, dialogs
-  "browse.sidebar": "Kết nối, vị trí đã ghim, bucket và vị trí gần đây",
+  "browse.sidebar": "Kết nối, bucket, vị trí đã ghim và vị trí gần đây",
   "browse.browseAs": "Duyệt thay user (uid)",
   "browse.usingKey": "Đang dùng key",
   "browse.usingKeyMine": "của bạn.",
@@ -905,6 +924,7 @@ export const vi: Record<keyof typeof en, string> = {
   "browse.createFolder": "Tạo thư mục",
   "browse.copyUrl": "Sao chép URL",
   "browse.copyUrlHint": "Chọn đúng một object để sao chép presigned URL của nó",
+  "browse.deleteHint": "Chọn object hoặc thư mục cần xoá",
   "browse.deleteCount": "Xoá ({n})",
   "browse.versioningChip": "Versioning: {status}",
   "browse.versioning.on": "Bật",
@@ -1266,6 +1286,10 @@ export const vi: Record<keyof typeof en, string> = {
   "conn.duplicateLabel": "Một kết nối khác cũng mang tên này. Hãy phân biệt chúng bằng endpoint.",
   "conn.duplicateNew": "Đã có một kết nối mang tên này. Bạn vẫn lưu được.",
   "recent.others": "Kết nối khác ({n})",
+  "recent.showAll": "Hiện tất cả {n}",
+  "recent.showFewer": "Chỉ hiện mới nhất trong {n}",
+  "sidebar.fold": "Thu gọn \"{title}\"",
+  "sidebar.unfold": "Mở rộng \"{title}\"",
 
   // Audit log viewer (M10.4): read-only
   "app.audit": "Nhật ký thao tác",

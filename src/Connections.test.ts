@@ -8,7 +8,7 @@ import { splitPath, startPath } from "./paths";
 import { ClusterSelect, duplicateLabels, filterProfiles, SEARCH_ABOVE } from "./ui";
 
 const nothing = () => {};
-const render = (profiles: Profile[]) => renderToString(createElement(Connections, { profiles, onChanged: nothing, scale: 100, onScale: nothing }));
+const render = (profiles: Profile[]) => renderToString(createElement(Connections, { profiles, onChanged: nothing, scale: 100, onScale: nothing, onBrowse: nothing }));
 const saved: Profile = { id: "c1", label: "lab", endpoint: "http://rgw.example:7480", access_key: "AKIAEXAMPLE000000001" };
 
 test("the start path round-trips: typed, stored form, shown again in the saved connection's field, and read as the same place", () => {

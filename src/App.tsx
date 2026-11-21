@@ -85,6 +85,12 @@ export default function App() {
     rename: (place, label) => savePins(pins.map((pin) => (samePlace(pin.place, place) ? { ...pin, label } : pin)), "pin_rename", { place, label }),
     move: (place, to) => savePins(movePin(pins, place, to), "pin_move", { place, to }),
   };
+  // Sidebar sections folded to their heading, shared by every tab and saved like the pins.
+  const [folded, setFolded] = useState<string[]>([]);
+  function fold(section: string, now: boolean) {
+    setFolded((old) => [...old.filter((name) => name !== section), ...(now ? [section] : [])]);
+    invoke<string[]>("folded_set", { section, folded: now }).then(setFolded, () => {});
+  }
   // One task queue for every tab: a transfer keeps running when its tab is left or closed.
   const transfers = useTransfers();
   // A release newer than this build, found by the daily check; trouble checking is silent.
@@ -115,9 +121,10 @@ export default function App() {
 
   const reload = () =>
     // The saved tabs are a convenience: without them the app starts with its usual first tab.
-    Promise.all([invoke<Profile[]>("list_profiles"), invoke<Place[]>("recent_list"), invoke<Pin[]>("pin_list"), invoke<SavedTabs | null>("tabs_get").catch(() => null)])
-      .then(([list, recent, pinned, saved]) => {
+    Promise.all([invoke<Profile[]>("list_profiles"), invoke<Place[]>("recent_list"), invoke<Pin[]>("pin_list"), invoke<SavedTabs | null>("tabs_get").catch(() => null), invoke<string[]>("folded_get").catch(() => [])])
+      .then(([list, recent, pinned, saved, foldedNow]) => {
         setPins(pinned);
+        setFolded(foldedNow);
         // Nothing to browse yet: start where a connection can be added.
         if (profiles === null && list.length === 0) setPage("connections");
         setProfiles(list);
@@ -146,6 +153,15 @@ export default function App() {
   function openTab(start: Place) {
     const tab = newTab(start);
     setTabs((old) => [...old, tab]);
+    setActive(tab.id);
+    setPage("browse");
+  }
+  // From the Connections screen: browse that connection. A tab with nothing open yet is reused.
+  function browseConnection(clusterId: string) {
+    const idle = tabs.find((tab) => tab.id === active && !tab.at.bucket);
+    if (!idle) return openTab(nowhere(clusterId));
+    const tab = newTab(nowhere(clusterId));
+    setTabs((old) => old.map((other) => (other.id === idle.id ? tab : other)));
     setActive(tab.id);
     setPage("browse");
   }
@@ -295,7 +311,12 @@ export default function App() {
                   aria-selected={tab.id === active}
                   title={placeLabel(tab.at, profiles ?? [])}
                   onClick={() => setActive(tab.id)}
-                  onKeyDown={(e) => e.key === "Enter" && setActive(tab.id)}
+                  onKeyDown={(e) => {
+                    // Like any tab or button: Enter and Space (only on the tab itself, not on its close button).
+                    if ((e.key !== "Enter" && e.key !== " ") || e.target !== e.currentTarget) return;
+                    e.preventDefault();
+                    setActive(tab.id);
+                  }}
                   sx={{
                     display: "flex",
                     alignItems: "center",
@@ -411,6 +432,8 @@ export default function App() {
                           pinOps={pinOps}
                           onOpenTab={openTab}
                           onPinPath={setPinning}
+                          folded={folded}
+                          onFold={fold}
                         />
                       </Container>
                     </Box>
@@ -422,7 +445,7 @@ export default function App() {
             <Box sx={{ position: "absolute", inset: 0, overflow: "auto" }}>
               <Container maxWidth="lg" sx={{ py: 4, px: "40px !important" }}>
                 <ErrorAlert error={error} />
-                {page === "audit" ? <AuditLog /> : <Connections profiles={profiles ?? []} onChanged={reload} scale={scale} onScale={zoomTo} />}
+                {page === "audit" ? <AuditLog /> : <Connections profiles={profiles ?? []} onChanged={reload} scale={scale} onScale={zoomTo} onBrowse={browseConnection} />}
               </Container>
             </Box>
           )}

@@ -6,6 +6,7 @@ import {
   DialogContent,
   DialogTitle,
   FormControlLabel,
+  LinearProgress,
   Stack,
   Switch,
   TextField,
@@ -72,6 +73,7 @@ export function CreateBucketDialog({ clusterId, uid, open, onClose, onCreated }:
               control={<Switch checked={versioning} onChange={(e) => setVersioning(e.target.checked)} />}
               label={t("dialogs.versioningSwitch")}
             />
+            {busy && <LinearProgress aria-label={t("ui.working")} />}
             <ErrorAlert error={error} />
           </Stack>
         </DialogContent>
@@ -142,6 +144,7 @@ export function CreateFolderDialog({ clusterId, uid, bucket, prefix, open, onClo
               error={!!nameError}
               helperText={nameError ?? t("dialogs.folderNameHelp")}
             />
+            {busy && <LinearProgress aria-label={t("ui.working")} />}
             <ErrorAlert error={error} />
           </Stack>
         </DialogContent>

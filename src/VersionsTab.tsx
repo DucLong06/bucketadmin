@@ -122,6 +122,7 @@ export default function VersionsTab({ at, startTransfer, onChanged, versioning }
         title={t(pending?.kind === "restore" ? "versions.restoreTitle" : v?.delete_marker ? "versions.unmarkTitle" : "versions.deleteTitle")}
         text={confirmText}
         confirmLabel={t(pending?.kind === "restore" ? "versions.restore" : v?.delete_marker ? "versions.unmark" : "versions.deleteConfirm")}
+        tone={pending?.kind === "restore" ? "primary" : "error"}
         busy={busy}
         error={error}
         onConfirm={confirmed}

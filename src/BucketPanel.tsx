@@ -1,5 +1,5 @@
 import { type KeyboardEvent, type MouseEvent, useEffect, useRef, useState } from "react";
-import { Alert, Box, Button, InputAdornment, List, ListItemButton, ListItemText, Paper, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, InputAdornment, List, ListItemButton, ListItemText, Paper, Stack, TextField, Typography } from "@mui/material";
 import type { BrowseBucket } from "./api";
 import { t } from "./i18n";
 import { eyebrow, thinScroll, tokens } from "./theme";
@@ -7,8 +7,9 @@ import { visibleRange } from "./virtual";
 
 /** The filter field is only worth its row above this many buckets. */
 export const FILTER_ABOVE = 8;
-/** The list never grows past this: about 38 % of the window, and never under five rows. */
-export const LIST_MAX_HEIGHT = "max(200px, 38vh)";
+/** The list never grows past this: about 38 % of the window, never under five rows, and in a low
+ *  window (700 px) only as much as leaves the whole card, with its two buttons, above the fold. */
+export const LIST_MAX_HEIGHT = "clamp(200px, calc(100vh - 500px), 38vh)";
 
 /** Above this many rows the list only mounts the rows in view (and a few around them). */
 export const WINDOW_ABOVE = 100;
@@ -179,17 +180,16 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
           </Typography>
         )
       )}
-      <Box sx={{ px: 2, pb: 2 }}>
+      {/* One compact footer: in a 700 px window the whole card, both buttons included, stays above the fold. */}
+      <Stack spacing={1} sx={{ px: 2, pb: 2 }}>
         <Button size="small" variant="outlined" fullWidth onClick={onCreate}>
           {t("browse.createBucket")}
         </Button>
-      </Box>
-      <Box sx={{ px: 2, pt: 2, pb: 2, borderTop: 1, borderColor: "divider" }}>
         {/* For a key that may not list buckets this is the way in, so it is the filled button. */}
         <Button size="small" variant={bucketsError ? "contained" : "outlined"} fullWidth onClick={onPickPath} title={t("browse.openPathHelp")}>
           {t("browse.openPath")}
         </Button>
-      </Box>
+      </Stack>
     </Paper>
   );
 }

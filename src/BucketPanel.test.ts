@@ -44,7 +44,7 @@ const listTag = (html: string) => /<ul[^>]*aria-label="Bucket list"[^>]*>/.exec(
 
 test("100 buckets: the list has a height limit of its own and scrolls inside the card; header, filter and controls are outside it", () => {
   const html = panel({ buckets: many(100), current: "team-080-Data" });
-  expect(LIST_MAX_HEIGHT).toBe("max(200px, 38vh)");
+  expect(LIST_MAX_HEIGHT).toBe("clamp(200px, calc(100vh - 500px), 38vh)");
   expect(listTag(html)).toContain(`style="max-height:${LIST_MAX_HEIGHT}"`);
   // The scrolling itself and the thin themed bar come from the list's class.
   const cls = /class="([^"]*)"/.exec(listTag(html))?.[1].split(" ").find((c) => c.startsWith("css-")) ?? "";

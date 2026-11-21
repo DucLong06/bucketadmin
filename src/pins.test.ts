@@ -61,15 +61,15 @@ const profiles: Profile[] = [
   { id: "c2", label: "prod", endpoint: "http://rgw2.example:7480", access_key: "AK2" },
 ];
 const nothing = () => {};
-const render = (clusterId: string, list = pins) =>
-  renderToString(createElement(PinnedPanel, { pins: list, profiles, clusterId, onOpen: nothing, onOpenTab: nothing, ops: { toggle: nothing, rename: nothing, move: nothing } }));
+const render = (clusterId: string, list = pins, folded = false) =>
+  renderToString(createElement(PinnedPanel, { pins: list, profiles, clusterId, onOpen: nothing, onOpenTab: nothing, ops: { toggle: nothing, rename: nothing, move: nothing }, folded, onFold: nothing }));
 const text = (html: string) => html.replace(/<style[^>]*>.*?<\/style>/gs, " ").replace(/<[^>]*>/g, "|");
 
 test("the Pinned panel lists the current connection's pins first, the others under a divider, each with its full place as tooltip", () => {
   applyLang("en");
   const html = render("c1");
   const shown = text(html);
-  const order = ["Pinned", "logs/2026", "project A", "Other connections", "old archive", "media"].map((label) => shown.indexOf(`|${label}|`));
+  const order = [`Pinned · ${pins.length}`, "logs/2026", "project A", "Other connections", "old archive", "media"].map((label) => shown.indexOf(`|${label}|`));
   expect(order.every((position) => position >= 0), shown).toBe(true);
   expect(order).toEqual([...order].sort((a, b) => a - b));
   expect(html).toContain('title="lab · logs/2026"');
@@ -82,6 +82,13 @@ test("the Pinned panel lists the current connection's pins first, the others und
   // No divider without pins elsewhere; no panel without pins.
   expect(text(render("c1", pins.filter((p) => p.place.clusterId === "c1")))).not.toContain("Other connections");
   expect(render("c1", [])).toBe("");
+  // Folded: the heading (a button that says so) with the count, and no list.
+  expect(html).toContain('aria-expanded="true"');
+  const folded = render("c1", pins, true);
+  expect(folded).toContain('aria-expanded="false"');
+  expect(text(folded)).toContain(`|Pinned · ${pins.length}|`);
+  expect(folded).not.toContain('aria-label="Pinned places"');
+  expect(text(folded)).not.toContain("|logs/2026|");
   applyLang("vi");
-  expect(text(render("c1"))).toContain("|Đã ghim|");
+  expect(text(render("c1"))).toContain(`|Đã ghim · ${pins.length}|`);
 });

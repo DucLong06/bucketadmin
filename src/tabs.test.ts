@@ -16,6 +16,9 @@ test("titles and labels of a place", () => {
   const profiles = [{ id: "c1", label: "lab", endpoint: "http://h:1", access_key: "AK" }];
   expect(placeLabel(place("logs", "2026/"), profiles)).toBe("lab · logs/2026");
   expect(placeLabel(place("logs", "", "c1", "alice"), profiles)).toBe("lab · user alice · logs");
+  // In a list that is under the connection's name already.
+  expect(placeLabel(place("logs", "2026/"), profiles, false)).toBe("logs/2026");
+  expect(placeLabel(place("logs", "", "c1", "alice"), profiles, false)).toBe("user alice · logs");
   expect(placeLabel(place("logs", "", "gone"), profiles)).toBe("kết nối đã xoá · logs");
   applyLang("en");
   expect(tabTitle(place())).toBe("New tab");

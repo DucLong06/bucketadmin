@@ -263,6 +263,22 @@ fn set_lang(state: St<'_>, lang: String) -> Cmd<'_, String> {
     Ok(state.settings.change(|s| s.lang = lang)?.lang)
 }
 
+/// Sidebar sections the user folded to their heading ("pinned", "recent").
+#[tauri::command(async)]
+fn folded_get(state: St<'_>) -> Cmd<'_, Vec<String>> {
+    Ok(state.settings.get()?.folded())
+}
+
+/// Folds or unfolds one sidebar section and returns the folded ones.
+#[tauri::command(async)]
+fn folded_set(state: St<'_>, section: String, folded: bool) -> Cmd<'_, Vec<String>> {
+    let section = settings::valid_section(&section)?;
+    Ok(state
+        .settings
+        .change(|s| s.fold(&section, folded))?
+        .folded())
+}
+
 /// Colour theme of the UI: "dark" or "light".
 #[tauri::command(async)]
 fn get_theme(state: St<'_>) -> Cmd<'_, String> {
@@ -779,6 +795,8 @@ pub fn run() {
             set_lang,
             get_theme,
             set_theme,
+            folded_get,
+            folded_set,
             audit_list,
             endpoint_kind,
             test_s3,

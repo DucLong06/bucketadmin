@@ -357,10 +357,10 @@ function MediaView({ at, kind, name }: { at: ObjectAt; kind: PreviewKind; name: 
       <ErrorAlert error={error} />
       {url && kind === "image" && (
         <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-          <Button size="small" variant="outlined" onClick={() => zoomTo(Math.max(10, (zoom || 100) / 1.5))} aria-label={t("preview.zoomOut")}>
+          <Button size="small" variant="outlined" onClick={() => zoomTo(Math.max(10, (zoom || 100) / 1.5))} aria-label={t("preview.zoomOut")} title={t("preview.zoomOut")}>
             −
           </Button>
-          <Button size="small" variant="outlined" onClick={() => zoomTo(Math.min(1600, (zoom || 100) * 1.5))} aria-label={t("preview.zoomIn")}>
+          <Button size="small" variant="outlined" onClick={() => zoomTo(Math.min(1600, (zoom || 100) * 1.5))} aria-label={t("preview.zoomIn")} title={t("preview.zoomIn")}>
             +
           </Button>
           <Button size="small" onClick={() => zoomTo(100)}>

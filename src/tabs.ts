@@ -34,10 +34,11 @@ export function groupRecents(recents: Place[], clusterId: string) {
   return { here, elsewhere, collapsed: elsewhere.length > 0 && recents.length > RECENT_COLLAPSE_ABOVE };
 }
 
-/** Full description for tooltips and the recent list: "lab · logs/2026/11". */
-export function placeLabel(at: Place, profiles: Profile[]): string {
-  const connection = profiles.find((p) => p.id === at.clusterId)?.label ?? t("tabs.goneConnection");
-  return [connection, at.uid && t("common.userNamed", { uid: at.uid }), placePath(at)].filter(Boolean).join(" · ");
+/** Full description for tooltips and the recent list: "lab · logs/2026/11". Without `connection`
+ *  (a list that is under that connection's name already): "logs/2026/11". */
+export function placeLabel(at: Place, profiles: Profile[], connection = true): string {
+  const name = profiles.find((p) => p.id === at.clusterId)?.label ?? t("tabs.goneConnection");
+  return [connection && name, at.uid && t("common.userNamed", { uid: at.uid }), placePath(at)].filter(Boolean).join(" · ");
 }
 
 /** The open tabs as they are saved for the next start (backend `tabs_set` / `tabs_get`). */

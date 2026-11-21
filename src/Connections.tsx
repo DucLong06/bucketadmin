@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import { Alert, Box, Button, Chip, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { invoke, isInternal, maskKey, type EndpointKind, type Opened, type Profile, type Proxy } from "./api";
 import { endpointError } from "./endpoint";
@@ -6,14 +6,15 @@ import { t, type Key } from "./i18n";
 import { PathPicker } from "./PathPicker";
 import { startPath } from "./paths";
 import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
-import { duplicateLabels, ErrorAlert, filterProfiles, LangToggle, SEARCH_ABOVE, ThemeSwitch } from "./ui";
+import { ConfirmDialog, duplicateLabels, ErrorAlert, filterProfiles, LangToggle, SEARCH_ABOVE, ThemeSwitch } from "./ui";
 import { stepScale, UI_SCALES } from "./zoom";
 
 // Kept as data, not as text: what is on screen follows a change of language.
 type Outcome = { severity: "error"; text: string } | { severity: "success"; key: Key; vars?: Record<string, string | number> };
 
-const outcomeAlert = (o: Outcome, sx?: object) =>
-  o.severity === "error" ? <ErrorAlert error={o.text} sx={sx} /> : <Alert severity={o.severity} sx={sx}>{t(o.key, o.vars)}</Alert>;
+/** `action`: what the success leads to (a button at the end of the notice). */
+const outcomeAlert = (o: Outcome, sx?: object, action?: ReactNode) =>
+  o.severity === "error" ? <ErrorAlert error={o.text} sx={sx} /> : <Alert severity={o.severity} sx={sx} action={action}>{t(o.key, o.vars)}</Alert>;
 
 const emptyForm = { label: "", endpoint: "", accessKey: "", secretKey: "", startPath: "", adminAccessKey: "", adminSecretKey: "" };
 /** Keys and paths are the one place the UI uses a monospace face. */
@@ -109,9 +110,11 @@ type Props = {
   /** Size of the interface in percent, and how to ask for another one. */
   scale: number;
   onScale: (percent: number) => void;
+  /** Go and browse a saved connection. */
+  onBrowse: (id: string) => void;
 };
 
-export default function Connections({ profiles, onChanged, scale, onScale }: Props) {
+export default function Connections({ profiles, onChanged, scale, onScale, onBrowse }: Props) {
   const [form, setForm] = useState(emptyForm);
   // The new connection's own proxy choice; null = follow the app-wide setting.
   const [formProxy, setFormProxy] = useState<Proxy | null>(null);
@@ -141,6 +144,27 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
   const [formOutcome, setFormOutcome] = useState<Outcome | null>(null);
   const [rowOutcome, setRowOutcome] = useState<Record<string, Outcome>>({});
   const [busy, setBusy] = useState(false);
+  // What the form is busy with: the button that was pressed says so.
+  const [testing, setTesting] = useState(false);
+  // Saved connections whose test is under way, the one saved a moment ago, and the one asked to be removed.
+  const [testingRows, setTestingRows] = useState<string[]>([]);
+  const [savedId, setSavedId] = useState("");
+  const [removing, setRemoving] = useState<Profile | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  async function remove() {
+    if (!removing) return;
+    setRemoveBusy(true);
+    setRemoveError(null);
+    try {
+      await invoke("remove_profile", { id: removing.id });
+      setRemoving(null);
+      onChanged();
+    } catch (e) {
+      setRemoveError(String(e));
+    }
+    setRemoveBusy(false);
+  }
 
   const fail = (e: unknown) => setFormOutcome({ severity: "error", text: String(e) });
   const urlError = form.endpoint ? endpointError(form.endpoint) : null;
@@ -164,12 +188,15 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
 
   async function testForm() {
     setBusy(true);
+    setTesting(true);
+    setSavedId("");
     const { endpoint, accessKey, secretKey } = form;
     try {
       setFormOutcome(connected(await invoke<Opened>("test_s3", { endpoint, accessKey, secretKey, proxy: formProxy })));
     } catch (e) {
       fail(e);
     }
+    setTesting(false);
     setBusy(false);
   }
 
@@ -192,6 +219,7 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
       } finally {
         onChanged();
       }
+      setSavedId(saved.id);
       setFormOutcome({ severity: "success", key: "conn.saved", vars: { label: saved.label } });
     } catch (err) {
       fail(err);
@@ -200,6 +228,7 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
   }
 
   async function testSaved(id: string) {
+    setTestingRows((old) => [...old, id]);
     let outcome: Outcome;
     try {
       outcome = connected(await invoke<Opened>("browse_open", { clusterId: id, uid: "" }));
@@ -207,6 +236,7 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
       outcome = { severity: "error", text: String(e) };
     }
     setRowOutcome((prev) => ({ ...prev, [id]: outcome }));
+    setTestingRows((old) => old.filter((other) => other !== id));
   }
 
   const keySx = { htmlInput: { style: { fontFamily: "monospace" } } };
@@ -287,13 +317,23 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
           )}
           <Stack direction="row" spacing={1}>
             <Button variant="outlined" onClick={testForm} disabled={!canTest}>
-              {t("conn.test")}
+              {t(testing ? "conn.testing" : "conn.test")}
             </Button>
             <Button type="submit" variant="contained" disabled={!canTest || !adminReady || !!start.error || !form.label.trim()}>
               {t("common.save")}
             </Button>
           </Stack>
-          {formOutcome && outcomeAlert(formOutcome)}
+          {/* Saved: the next step is one click away. */}
+          {formOutcome &&
+            outcomeAlert(
+              formOutcome,
+              undefined,
+              formOutcome.severity === "success" && formOutcome.key === "conn.saved" && profiles.some((p) => p.id === savedId) && (
+                <Button color="inherit" size="small" onClick={() => onBrowse(savedId)}>
+                  {t("conn.browse")}
+                </Button>
+              ),
+            )}
         </Stack>
       </Paper>
 
@@ -346,14 +386,13 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
                   )}
                 </Typography>
               </Stack>
-              <Button onClick={() => testSaved(p.id)} aria-label={t("conn.testFor", { label: p.label })}>
-                {t("conn.test")}
+              <Button variant="outlined" onClick={() => onBrowse(p.id)} aria-label={t("conn.browseFor", { label: p.label })}>
+                {t("conn.browse")}
               </Button>
-              <Button
-                color="error"
-                onClick={() => invoke("remove_profile", { id: p.id }).then(onChanged).catch(fail)}
-                aria-label={t("conn.remove", { label: p.label })}
-              >
+              <Button onClick={() => testSaved(p.id)} disabled={testingRows.includes(p.id)} aria-label={t("conn.testFor", { label: p.label })}>
+                {t(testingRows.includes(p.id) ? "conn.testing" : "conn.test")}
+              </Button>
+              <Button color="error" onClick={() => setRemoving(p)} aria-label={t("conn.remove", { label: p.label })}>
                 {t("common.delete")}
               </Button>
             </Stack>
@@ -363,6 +402,20 @@ export default function Connections({ profiles, onChanged, scale, onScale }: Pro
           </Paper>
         ))}
       </Stack>
+
+      <ConfirmDialog
+        open={removing !== null}
+        title={t("conn.removeTitle")}
+        text={t("conn.removeText", { label: removing?.label ?? "" })}
+        confirmLabel={t("conn.removeConfirm")}
+        busy={removeBusy}
+        error={removeError}
+        onConfirm={remove}
+        onClose={() => {
+          setRemoving(null);
+          setRemoveError(null);
+        }}
+      />
 
       <Paper variant="outlined" sx={{ p: 3, mt: 4 }}>
         <Typography variant="h6" component="h2" gutterBottom>
