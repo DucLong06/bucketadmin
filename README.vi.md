@@ -98,8 +98,8 @@ App nói chuyện thẳng với endpoint S3 của RGW. Không cần cài gì lê
 Yêu cầu: Ubuntu 22.04 trở lên (amd64), có dịch vụ keyring (GNOME Keyring hoặc tương đương — mặc định có sẵn trên Ubuntu desktop).
 
 ```bash
-wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.3/bucketadmin_0.1.3_amd64.deb
-sudo apt install ./bucketadmin_0.1.3_amd64.deb
+wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.4/bucketadmin_0.1.4_amd64.deb
+sudo apt install ./bucketadmin_0.1.4_amd64.deb
 ```
 
 Các định dạng khác và các bản cũ: trang [Releases](https://github.com/DucLong06/bucketadmin/releases).
@@ -116,9 +116,10 @@ Gỡ: `sudo apt remove bucketadmin`. Dữ liệu của app nằm ở `~/.local/s
 **1. Thêm kết nối.** Mục **Kết nối** → **Thêm kết nối** → điền bốn ô bắt buộc: tên, endpoint (đã có sẵn `https://`; ví dụ
 `https://rgw.example.com` hoặc `http://rgw.example.com:7480`), access key và secret key của bạn → **Kiểm tra kết nối** (kết
 quả hiện ngay trong form) → **Lưu**. Nút Lưu chỉ bấm được khi đủ bốn ô, và cho biết ô nào còn thiếu trước tiên. Bước kiểm
-tra chỉ liệt kê bucket qua S3, nên key thường không có caps nào cũng dùng được. Đường dẫn bắt đầu, key admin và proxy riêng
-nằm trong phần **Nâng cao**, phần lớn kết nối không cần tới. Kết nối đã lưu có nút **Mở bucket**, **Sửa** (đường dẫn bắt
-đầu, proxy) và một trình đơn gồm Kiểm tra và Xoá.
+tra chỉ liệt kê bucket qua S3, nên key thường không có caps nào cũng dùng được. Đường dẫn bắt đầu, key admin, proxy riêng,
+**Region** (để trống = `us-east-1`, đúng với Ceph RGW) và **Địa chỉ kiểu path-style** (bật với Ceph RGW và hầu hết S3 tự
+host; tắt khi dùng kiểu virtual-host) nằm trong phần **Nâng cao**, phần lớn kết nối không cần tới. Kết nối đã lưu có nút
+**Mở bucket**, **Sửa** (đường dẫn bắt đầu, proxy, region và path-style) và một trình đơn gồm Kiểm tra và Xoá.
 
 **2. Browse.** Mục **Browse** → chọn một bucket. Bucket được chia sẻ cho bạn (S3 không liệt kê) thì mở theo đường dẫn ở ô
 **Mở đường dẫn** của cột bên trái.

@@ -106,8 +106,8 @@ Requirements: Ubuntu 22.04 or later (amd64) with a keyring service (GNOME Keyrin
 Ubuntu desktop).
 
 ```bash
-wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.3/bucketadmin_0.1.3_amd64.deb
-sudo apt install ./bucketadmin_0.1.3_amd64.deb
+wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.4/bucketadmin_0.1.4_amd64.deb
+sudo apt install ./bucketadmin_0.1.4_amd64.deb
 ```
 
 Other formats and older versions: the [Releases](https://github.com/DucLong06/bucketadmin/releases) page.
@@ -125,8 +125,10 @@ To play compressed video / audio in the preview, the machine needs GStreamer's c
 (`https://` is already there; for example `https://rgw.example.com` or `http://rgw.example.com:7480`), your access key and
 secret key → **Test connection** (the answer shows inside the form) → **Save**. Save stays disabled until the four fields
 are filled, and says which one comes first. The test only lists buckets over S3, so an ordinary key without any caps works.
-Start paths, an admin key and a proxy of its own are under **Advanced**, which most connections never need. A saved
-connection has **Browse buckets**, **Edit** (start paths, proxy) and a menu with Test and Delete.
+Start paths, an admin key, a proxy of its own, the **Region** (empty = `us-east-1`, right for Ceph RGW) and
+**Path-style addressing** (on for Ceph RGW and most self-hosted S3; off for virtual-host style) are under **Advanced**,
+which most connections never need. A saved connection has **Browse buckets**, **Edit** (start paths, proxy, region and
+path style) and a menu with Test and Delete.
 
 **2. Browse.** **Browse** → choose a bucket. A bucket that is shared with you (S3 does not list those) is opened by its path
 under **Open path** in the left column.

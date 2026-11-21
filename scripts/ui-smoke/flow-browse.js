@@ -174,6 +174,13 @@
     await waitFor(() => hasText(T("conn.ok", { n: 1 })), "connection test over S3, no admin caps needed");
     check(fits(), "Connections does not scroll sideways");
     await shot("01-connection");
+    // M13.3: Region (empty = us-east-1) and Path-style addressing (on) are in the Advanced group, under the proxy.
+    const advancedGroup = document.getElementById("conn-advanced");
+    const regionField = [...advancedGroup.querySelectorAll("input")].find((i) => i.placeholder === "us-east-1");
+    const pathStyle = advancedGroup.querySelector('input[type="checkbox"]');
+    check(regionField && regionField.value === "" && pathStyle && pathStyle.checked && hasText(T("conn.regionHelp")) && hasText(T("conn.pathStyleHelp")), "Advanced: Region empty and Path-style addressing on by default (the test above passed with them)");
+    pathStyle.closest("label").scrollIntoView({ block: "center" });
+    await shot("01b-connection-advanced");
     await click(T("common.save"));
     await waitFor(() => hasText(T("conn.saved", { label: "lab" })) && rowSays("lab", maskedMine), "connection saved; its row shows the host and the masked key");
     // The row's own settings are behind Edit; Test and Delete are in its menu.
