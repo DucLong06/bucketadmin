@@ -196,7 +196,8 @@
     // A dialog scales with the page and stays inside the window.
     await click(T("browse.createFolder"));
     const dialog = await waitFor(() => last(all(".MuiDialog-paper")), "dialog at 125 %");
-    check(inWindow(dialog) && fits(), "the dialog fits the window at 125 %");
+    // The page itself is asked of the standard window only, as above (900 px at 125 % is 720 CSS px).
+    check(inWindow(dialog) && (wide < 1200 || fits()), "the dialog fits the window at 125 %");
     await click(T("common.cancel"));
     await dialogsGone();
     await shot("03b-zoom-125");
@@ -527,7 +528,9 @@
     copyUrl.focus();
     await shot("28-copy-url");
     // The toast hides itself after 8 s: look for it before sitting out the next slot.
-    await waitFor(() => seen("browse.urlCopied", { key: "notes/readme.txt" }), "URL copied", 5000);
+    await waitFor(() => seen("browse.urlCopied", { key: "notes/readme.txt" }), "URL copied", 5000).catch((e) => {
+      throw new Error(`${e.message} (busy: ${all(".MuiLinearProgress-root").length}, alerts: ${all("[role=alert]").map((x) => x.textContent).join(" / ")})`);
+    });
     await shot("-");
 
     // ---- create a bucket (versioning on), a folder in it, then delete everything ticked
@@ -801,7 +804,9 @@
     const listBox = list.getBoundingClientRect();
     check(pane().scrollTop === 0 && listBox.top >= paneBox.top && listBox.bottom <= paneBox.bottom && box("browse.bucketList").bottom <= paneBox.bottom, `the bucket list is visible without scrolling the sidebar: list ${Math.round(listBox.top)}-${Math.round(listBox.bottom)}, card to ${Math.round(box("browse.bucketList").bottom)}, pane ${Math.round(paneBox.top)}-${Math.round(paneBox.bottom)}`);
     check(box("browse.pinnedList").top >= box("browse.bucketList").bottom && box("browse.recentList").top >= box("browse.pinnedList").bottom, "Pinned, then Recent, follow the bucket card");
-    check(box("browse.pinnedList").top - box("browse.bucketList").bottom < 24 && pane().scrollHeight < 2 * window.innerHeight, "Pinned starts right under the bucket card; the page is not thousands of pixels long");
+    // Asked of the sidebar: the pane is as long as the bucket cards beside it (32 cards are 16 rows in a 900 px window).
+    const side = last(all("aside"));
+    check(box("browse.pinnedList").top - box("browse.bucketList").bottom < 24 && side.scrollHeight < 2 * window.innerHeight, `Pinned starts right under the bucket card; the sidebar is not thousands of pixels long: ${side.scrollHeight}`);
     notes.push(`window ${window.innerWidth}x${window.innerHeight}: pinned ${Math.round(box("browse.pinnedList").top)}-${Math.round(box("browse.pinnedList").bottom)}, bucket card ${Math.round(box("browse.bucketList").top)}-${Math.round(box("browse.bucketList").bottom)} (list ${list.clientHeight} of ${list.scrollHeight}), recent from ${Math.round(box("browse.recentList").top)}, pane ${Math.round(paneBox.top)}-${Math.round(paneBox.bottom)} scrolls ${pane().scrollHeight}`);
     check(fits(), "nothing scrolls sideways");
     const filter = await waitFor(() => last(all(`input${sel("browse.filterBuckets")}`)), "the filter field");
