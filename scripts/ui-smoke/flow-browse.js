@@ -88,6 +88,15 @@
     const pinnedRows = () => pinnedButtons().map((row) => row.textContent.trim());
     const savedPins = async () => (await invoke("pin_list")).map((pin) => `${pin.place.bucket}/${pin.place.prefix}${pin.label ? `=${pin.label}` : ""}`).join(" | ");
     const panelOf = (key) => last(all(sel(key)))?.closest(".MuiPaper-root");
+    // M12.4: start path, admin key and proxy are in the form's Advanced group, closed until it is asked for
+    // (and then open for the rest of the run).
+    const openAdvanced = async () => {
+      if (!document.getElementById("conn-advanced")) await clickSel('[aria-controls="conn-advanced"]');
+      await waitFor(() => document.getElementById("conn-advanced"), "the Advanced group of the form");
+    };
+    const maskedMine = `${MINE.ak.slice(0, 4)}…${MINE.ak.slice(-4)}`;
+    // What a saved connection's row says (label, host, keys, start path).
+    const rowSays = (label, text) => all("li").some((row) => row.querySelector(sel("conn.more", { label })) && row.textContent.includes(text));
     const addConnection = async (label, key, startPath) => {
       await click(T("app.connections"));
       await type(T("conn.label"), label);
@@ -95,7 +104,10 @@
       await type(T("conn.accessKey"), key.ak);
       await type(T("conn.secretKey"), key.sk);
       // The form's own field: every saved connection below it has a start path field too.
-      if (startPath !== undefined) await type(T("conn.startPath"), startPath, first);
+      if (startPath !== undefined) {
+        await openAdvanced();
+        await type(T("conn.startPath"), startPath, first);
+      }
     };
     // The add-connection form is the first form of the Connections screen; every saved connection
     // below it has a "Test connection" button of its own, so the form's is asked for by position.
@@ -113,7 +125,7 @@
     check(all(".MuiChip-root").some((c) => c.textContent === T("app.update.badge", { tag: "v9.9.9" })), "update badge in the masthead");
     check(!button("Users") && !button("Buckets") && !button("Audit"), "no admin screens");
     await click(T("app.connections"));
-    const savedRows = () => all(starts("conn.remove")).length;
+    const savedRows = () => all(starts("conn.more")).length;
     await waitFor(() => all(sel("conn.countAria", { n: 20 })).length === 1 && savedRows() === 20 && hasText(T("conn.add")), "twenty saved connections, counted in a badge");
     // One picture with the badge (docs/images/update*.png); the later pictures do not show the canned release.
     await shot("00a-update-badge");
@@ -127,7 +139,7 @@
     await waitFor(() => savedRows() === 2 && flagged() === 2, "two connections share a label: both are listed and flagged");
     setValue(search, "SITE-1");
     await waitFor(() => savedRows() === 10 && flagged() === 0 && hasText(T("browse.filterCount", { n: 10, m: 20 })), "search by label, whatever the case: 10 of 20");
-    check(all(starts("conn.remove")).every((b) => b.closest("li").getBoundingClientRect().height >= 40) && search.getBoundingClientRect().height >= 23 && search.closest(".MuiInputBase-root").getBoundingClientRect().height >= 40, "rows and the search field keep the size floor");
+    check(all(starts("conn.more")).every((b) => b.closest("li").getBoundingClientRect().height >= 40) && search.getBoundingClientRect().height >= 23 && search.closest(".MuiInputBase-root").getBoundingClientRect().height >= 40, "rows and the search field keep the size floor");
     all("h2").find((h) => h.textContent === T("conn.savedList")).scrollIntoView({ block: "start" });
     check(fits(), "Connections with many rows does not scroll sideways");
     await shot("00-connections-many");
@@ -140,6 +152,9 @@
     themeSwitch.click();
     await waitFor(() => document.documentElement.dataset.theme === "dark" && !themeSwitch.checked, "and off again");
     all(".MuiContainer-root").forEach((c) => (c.parentElement.scrollTop = 0));
+    // M12.4: the endpoint starts with its scheme; Save is disabled and says which field comes first.
+    const saveTip = () => first(all("form")).querySelector("button[type=submit]").parentElement.title;
+    check((await field(T("conn.endpoint"))).value === "https://" && !button(T("common.save")) && saveTip() === T("conn.missing", { field: T("conn.label") }), `an empty form: Save is disabled and its tooltip names the first missing field (${saveTip()})`);
     await type(T("conn.label"), "lab");
     await type(T("conn.endpoint"), CFG.ENDPOINT);
     await type(T("conn.accessKey"), MINE.ak);
@@ -147,7 +162,11 @@
     // The lab is a private address: "no proxy" is suggested for it.
     await waitFor(() => hasText(T("conn.internalHint")), "no-proxy suggestion for a private endpoint");
     await click(T("conn.noProxy.pick"));
-    await waitFor(() => proxyOf(T("proxy.name.new")).value === "none", "suggestion taken");
+    await waitFor(() => !hasText(T("conn.internalHint")), "suggestion taken: the hint is gone");
+    check(first(all("form")).querySelector('[aria-controls="conn-advanced"]').getAttribute("aria-expanded") === "false" && !document.getElementById("conn-advanced"), "the Advanced group is closed on a first visit");
+    await openAdvanced();
+    check(proxyOf(T("proxy.name.new")).value === "none", "and the proxy choice in the Advanced group says so");
+    check(button(T("common.save")) && !saveTip(), "the four required fields are filled: Save is enabled and its tooltip is gone");
     await testForm();
     await waitFor(() => hasText(T("error.s3.SignatureDoesNotMatch")), "a wrong secret is named as such");
     await type(T("conn.secretKey"), MINE.sk);
@@ -156,7 +175,14 @@
     check(fits(), "Connections does not scroll sideways");
     await shot("01-connection");
     await click(T("common.save"));
-    await waitFor(() => hasText(T("conn.saved", { label: "lab" })) && proxyOf(T("proxy.name.of", { label: "lab" }))?.value === "none", "connection saved with its own proxy choice");
+    await waitFor(() => hasText(T("conn.saved", { label: "lab" })) && rowSays("lab", maskedMine), "connection saved; its row shows the host and the masked key");
+    // The row's own settings are behind Edit; Test and Delete are in its menu.
+    await clickSel(sel("conn.editFor", { label: "lab" }));
+    await waitFor(() => proxyOf(T("proxy.name.of", { label: "lab" }))?.value === "none", "saved with its own proxy choice");
+    await clickSel(sel("conn.editFor", { label: "lab" }));
+    await clickSel(sel("conn.more", { label: "lab" }));
+    await clickSel(sel("conn.testFor", { label: "lab" }));
+    await waitFor(() => rowSays("lab", T("conn.ok", { n: 1 })), "the saved connection's test, from its menu, answers in its row", 20000);
 
     // ---- Browse: the key's buckets as cards, then one bucket
     await click(T("app.browse"));
@@ -594,7 +620,7 @@
     await type(T("conn.endpoint"), CFG.ENDPOINT);
     await type(T("conn.accessKey"), RO.ak);
     await type(T("conn.secretKey"), RO.sk);
-    document.querySelector("form details").open = true;
+    await openAdvanced();
     await type(T("conn.adminAccessKey"), CFG.AK);
     check(!button(T("common.save")), "half an admin key cannot be saved");
     await type(T("conn.adminSecretKey"), CFG.SK);
@@ -738,9 +764,8 @@
     await testForm();
     await waitFor(() => formSays(T("conn.ok", { n: 0 })), "the scoped key connects (the lab lets every user list the buckets it owns: none)");
     await click(T("common.save"));
-    const startPathOf = (label) => document.querySelector(`input${sel("conn.startPathOf", { label })}`)?.value;
-    await waitFor(() => hasText(T("conn.saved", { label: "du-an" })) && startPathOf("du-an") === `${BUCKET}/notes/`, "saved; the start path reads back in its stored form");
-    check(startPathOf("lab") === "", "a connection without a start path shows an empty field");
+    await waitFor(() => hasText(T("conn.saved", { label: "du-an" })) && rowSays("du-an", `${BUCKET}/notes/`), "saved; the start path reads back in its stored form");
+    check(!rowSays("lab", `${BUCKET}/`), "a connection without a start path shows none");
     await click(T("app.browse"));
     await menusGone();
     press("t");
@@ -876,12 +901,13 @@
     // ---- remove every connection: their tabs and pins have nothing left to show
     await click(T("app.connections"));
     for (const label of ["chi-doc", "du-an", "no-list", "many", "lab"]) {
+      await clickSel(sel("conn.more", { label }));
       await clickSel(sel("conn.remove", { label }));
       // M11: a connection is not removed by one click; the dialog says what goes with it.
       await waitFor(() => hasText(T("conn.removeTitle")) && hasText(T("conn.removeText", { label })), `the removal of ${label} is asked about`);
       await click(T("conn.removeConfirm"));
       await dialogsGone();
-      await waitFor(() => !document.querySelector(sel("conn.remove", { label })), `connection ${label} removed`);
+      await waitFor(() => !document.querySelector(sel("conn.more", { label })), `connection ${label} removed`);
     }
     await waitFor(() => all(sel("conn.countAria", { n: 20 })).length === 1 && savedRows() === 20, "the flow's connections are removed; the seeded ones are left");
     check((await invoke("pin_list")).length === 0, "the pins of removed connections are gone");

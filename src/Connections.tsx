@@ -1,22 +1,54 @@
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
-import { Alert, Box, Button, Chip, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import { Alert, Box, Button, Chip, IconButton, Menu, MenuItem, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { invoke, isInternal, maskKey, type EndpointKind, type Opened, type Profile, type Proxy } from "./api";
 import { endpointError } from "./endpoint";
 import { t, type Key } from "./i18n";
 import { PathPicker } from "./PathPicker";
 import { startPath } from "./paths";
 import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
-import { ConfirmDialog, duplicateLabels, ErrorAlert, filterProfiles, LangToggle, SEARCH_ABOVE, ThemeSwitch } from "./ui";
+import { ConfirmDialog, duplicateLabels, ErrorAlert, filterProfiles, FoldHeading, LangToggle, SEARCH_ABOVE, ThemeSwitch } from "./ui";
 import { stepScale, UI_SCALES } from "./zoom";
 
 // Kept as data, not as text: what is on screen follows a change of language.
-type Outcome = { severity: "error"; text: string } | { severity: "success"; key: Key; vars?: Record<string, string | number> };
+type Outcome = { severity: "error"; text: string } | { severity: "success" | "warning"; key: Key; vars?: Record<string, string | number> };
 
-/** `action`: what the success leads to (a button at the end of the notice). */
-const outcomeAlert = (o: Outcome, sx?: object, action?: ReactNode) =>
+/** The answer of a test or a save, shown where it was asked for: green, amber (connected, but the key may
+ *  not list buckets) or red with S3's own code. `action`: what a success leads to (a button at the end). */
+export const outcomeAlert = (o: Outcome, sx?: object, action?: ReactNode) =>
   o.severity === "error" ? <ErrorAlert error={o.text} sx={sx} /> : <Alert severity={o.severity} sx={sx} action={action}>{t(o.key, o.vars)}</Alert>;
 
-const emptyForm = { label: "", endpoint: "", accessKey: "", secretKey: "", startPath: "", adminAccessKey: "", adminSecretKey: "" };
+// A new connection is almost always https: the scheme is there to type after.
+const emptyForm = { label: "", endpoint: "https://", accessKey: "", secretKey: "", startPath: "", adminAccessKey: "", adminSecretKey: "" };
+export type ConnectionForm = typeof emptyForm;
+/** The four fields a connection cannot do without, in the order of the form. */
+const REQUIRED: [keyof ConnectionForm, Key][] = [
+  ["label", "conn.label"],
+  ["endpoint", "conn.endpoint"],
+  ["accessKey", "conn.accessKey"],
+  ["secretKey", "conn.secretKey"],
+];
+/** Something was typed into the field (the prefilled scheme alone is nothing). */
+const given = (form: ConnectionForm, key: keyof ConnectionForm) => !!form[key].trim() && !(key === "endpoint" && /^https?:\/\/$/.test(form[key].trim()));
+/** Why the form cannot be saved yet, in the words of the Save button's tooltip: the first required field
+ *  that is still empty, else the first thing that is wrong; null when it can be saved. */
+export function saveBlocker(form: ConnectionForm): string | null {
+  const missing = REQUIRED.find(([key]) => !given(form, key));
+  if (missing) return t("conn.missing", { field: t(missing[1]) });
+  // The admin key is optional, but half of one is a mistake.
+  if (!!form.adminAccessKey.trim() !== !!form.adminSecretKey.trim()) return t("conn.adminHalf");
+  const start = startPath(form.startPath);
+  return endpointError(form.endpoint) ?? (start.error ? t(start.error) : null);
+}
+/** Whether the Advanced group of the form is open: remembered until the app is closed. */
+const ADVANCED_OPEN = "ba.conn.advanced";
+/** Host and port of an endpoint: what tells two connections apart at a glance (the whole URL is the tooltip). */
+const hostOf = (endpoint: string) => {
+  try {
+    return new URL(endpoint).host || endpoint;
+  } catch {
+    return endpoint;
+  }
+};
 /** Keys and paths are the one place the UI uses a monospace face. */
 const Mono = ({ children }: { children: string }) => (
   <Box component="span" sx={{ fontFamily: "monospace" }}>
@@ -85,8 +117,8 @@ function ProfileStartPath({ profile, onChanged, fail }: { profile: Profile; onCh
   useEffect(() => setDraft(saved), [saved]);
   const next = startPath(draft);
   return (
-    <Stack direction="row" spacing={1} sx={{ mt: 1.5, alignItems: "flex-start" }}>
-      {/* Asks nothing until it is typed in: every saved connection has one of these. */}
+    <Stack direction="row" spacing={1} sx={{ mt: 2, alignItems: "flex-start" }}>
+      {/* Asks nothing until it is typed in. */}
       <PathPicker clusterId={profile.id} lazy optional value={draft} onChange={setDraft} label={t("conn.startPath")} helperText={t("conn.startPathHelp")} ariaLabel={t("conn.startPathOf", { label: profile.label })} />
       <Button
         onClick={() => next.error || invoke("profile_set_start_path", { id: profile.id, startPath: next.path }).then(onChanged).catch(fail)}
@@ -99,8 +131,8 @@ function ProfileStartPath({ profile, onChanged, fail }: { profile: Profile; onCh
   );
 }
 // A key that is valid but may not list buckets is a working connection too: it opens the path it was given.
-const connected = (opened: Pick<Opened, "buckets" | "buckets_error">): Outcome =>
-  opened.buckets_error ? { severity: "success", key: "conn.okNoList" } : { severity: "success", key: "conn.ok", vars: { n: opened.buckets.length } };
+export const connected = (opened: Pick<Opened, "buckets" | "buckets_error">): Outcome =>
+  opened.buckets_error ? { severity: "warning", key: "conn.okNoList" } : { severity: "success", key: "conn.ok", vars: { n: opened.buckets.length } };
 
 /** The connections screen: the S3 endpoints the app browses, each with the user's own key
  *  (secret in the OS keychain), an optional admin key, and its proxy choice. */
@@ -116,6 +148,12 @@ type Props = {
 
 export default function Connections({ profiles, onChanged, scale, onScale, onBrowse }: Props) {
   const [form, setForm] = useState(emptyForm);
+  // First run: a card with one button; the form comes when it is asked for.
+  const [adding, setAdding] = useState(false);
+  const [advanced, setAdvanced] = useState(() => globalThis.sessionStorage?.getItem(ADVANCED_OPEN) === "1");
+  // The saved connection whose settings are open, and the one whose menu is.
+  const [editing, setEditing] = useState("");
+  const [menu, setMenu] = useState<{ anchor: HTMLElement; profile: Profile } | null>(null);
   // The new connection's own proxy choice; null = follow the app-wide setting.
   const [formProxy, setFormProxy] = useState<Proxy | null>(null);
   // The app-wide choice: as saved, and as being edited.
@@ -167,12 +205,14 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
   }
 
   const fail = (e: unknown) => setFormOutcome({ severity: "error", text: String(e) });
-  const urlError = form.endpoint ? endpointError(form.endpoint) : null;
-  // The admin key is optional, but half of one is a mistake.
-  const adminGiven = !!form.adminAccessKey.trim() || !!form.adminSecretKey;
-  const adminReady = !adminGiven || (!!form.adminAccessKey.trim() && !!form.adminSecretKey);
-  const canTest = !busy && !!form.endpoint && !urlError && !!form.accessKey && !!form.secretKey && proxyReady(formProxy);
+  const urlError = given(form, "endpoint") ? endpointError(form.endpoint) : null;
+  const adminGiven = !!form.adminAccessKey.trim() || !!form.adminSecretKey.trim();
+  const adminReady = !!form.adminAccessKey.trim() === !!form.adminSecretKey.trim();
+  const canTest = !busy && given(form, "endpoint") && !urlError && given(form, "accessKey") && given(form, "secretKey") && proxyReady(formProxy);
   const start = startPath(form.startPath);
+  const blocker = saveBlocker(form);
+  // Keys are pasted: a space or a line break around one is never part of it.
+  const keys = { accessKey: form.accessKey.trim(), secretKey: form.secretKey.trim() };
   const formKind = useEndpointKind(form.endpoint, formProxy === null || formProxy.mode === "auto");
 
   const field = (key: keyof typeof emptyForm, label: string, extra: object = {}) => (
@@ -190,9 +230,8 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
     setBusy(true);
     setTesting(true);
     setSavedId("");
-    const { endpoint, accessKey, secretKey } = form;
     try {
-      setFormOutcome(connected(await invoke<Opened>("test_s3", { endpoint, accessKey, secretKey, proxy: formProxy })));
+      setFormOutcome(connected(await invoke<Opened>("test_s3", { endpoint: form.endpoint.trim(), ...keys, proxy: formProxy })));
     } catch (e) {
       fail(e);
     }
@@ -203,11 +242,12 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
   async function save(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
-    const { label, endpoint, accessKey, secretKey } = form;
+    const { label, endpoint } = form;
+    const { accessKey, secretKey } = keys;
     try {
       // The profile's own key is the one given first. With an admin key, that one is the
       // profile's key and "my key" is saved next to it as the key browse sessions sign with.
-      const first = adminGiven ? { accessKey: form.adminAccessKey, secretKey: form.adminSecretKey } : { accessKey, secretKey };
+      const first = adminGiven ? { accessKey: form.adminAccessKey.trim(), secretKey: form.adminSecretKey.trim() } : keys;
       const saved = await invoke<Profile>("add_profile", { label, endpoint, ...first, startPath: start.error ? "" : start.path });
       setForm(emptyForm);
       setFormProxy(null);
@@ -265,44 +305,46 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
         {t("conn.intro")}
       </Typography>
 
+      {profiles.length === 0 && !adding ? (
+        // First run: what is needed, and one button.
+        <Paper variant="outlined" sx={{ p: 5, my: 4, mx: "auto", maxWidth: 520, textAlign: "center", borderRadius: "16px" }}>
+          <Typography variant="h5" component="h2" gutterBottom>
+            {t("conn.none")}
+          </Typography>
+          <Typography color="text.secondary" sx={{ mb: 3 }}>
+            {t("conn.emptyText")}
+          </Typography>
+          <Button variant="contained" size="large" onClick={() => setAdding(true)}>
+            {t("conn.add")}
+          </Button>
+        </Paper>
+      ) : (
       <Paper component="form" onSubmit={save} variant="outlined" sx={{ p: 3, mb: 4 }}>
         <Typography variant="h6" component="h2" gutterBottom>
           {t("conn.add")}
         </Typography>
         <Stack spacing={2}>
-          {/* Allowed, but said: the lists of the app show connections by label. */}
-          {field("label", t("conn.label"), { required: true, color: labelTaken ? "warning" : undefined, focused: labelTaken || undefined, helperText: labelTaken ? t("conn.duplicateNew") : undefined })}
-          {field("endpoint", t("conn.endpoint"), {
-            required: true,
-            placeholder: "http://host:7480",
-            error: !!urlError,
-            helperText: urlError ?? t("conn.endpointHelp"),
-          })}
-          {field("accessKey", t("conn.accessKey"), { required: true, autoComplete: "off", slotProps: keySx })}
-          {field("secretKey", t("conn.secretKey"), {
-            required: true,
-            type: "password",
-            autoComplete: "off",
-            helperText: t("conn.secretHelp"),
-          })}
-          {/* No connection yet, so nothing to ask S3: the picker only checks the text. */}
-          <PathPicker clusterId="" optional value={form.startPath} onChange={(startPath) => setForm({ ...form, startPath })} label={t("conn.startPath")} helperText={t("conn.startPathHelp")} />
-          <details>
-            <summary>{t("conn.adminKey")}</summary>
-            <Stack spacing={2} sx={{ mt: 2 }}>
-              <Typography variant="body2" color="text.secondary">
-                {t("conn.adminHelp")}
-              </Typography>
-              {field("adminAccessKey", t("conn.adminAccessKey"), { autoComplete: "off", slotProps: keySx })}
-              {field("adminSecretKey", t("conn.adminSecretKey"), {
-                type: "password",
-                autoComplete: "off",
-                error: !adminReady,
-                helperText: adminReady ? undefined : t("conn.adminHalf"),
-              })}
-            </Stack>
-          </details>
-          <ProxyPicker value={formProxy} onChange={setFormProxy} inherit name={t("proxy.name.new")} />
+          <Typography variant="overline" color="text.secondary" component="p" sx={{ mb: -1 }}>
+            {t("conn.required")}
+          </Typography>
+          {/* Two columns where there is room for them; one below that. */}
+          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", md: "repeat(2, minmax(0, 1fr))" }, gap: 2, alignItems: "start" }}>
+            {/* Allowed, but said: the lists of the app show connections by label. */}
+            {field("label", t("conn.label"), { required: true, autoFocus: adding, color: labelTaken ? "warning" : undefined, focused: labelTaken || undefined, helperText: labelTaken ? t("conn.duplicateNew") : t("conn.labelHelp") })}
+            {field("endpoint", t("conn.endpoint"), {
+              required: true,
+              error: !!urlError,
+              helperText: urlError ?? t("conn.endpointHelp"),
+              slotProps: { htmlInput: { spellCheck: false } },
+            })}
+            {field("accessKey", t("conn.accessKey"), { required: true, autoComplete: "off", slotProps: keySx })}
+            {field("secretKey", t("conn.secretKey"), {
+              required: true,
+              type: "password",
+              autoComplete: "off",
+              helperText: t("conn.secretHelp"),
+            })}
+          </Box>
           {isInternal(formKind) && (
             <Alert
               severity="info"
@@ -315,15 +357,59 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
               {t("conn.internalHint")}
             </Alert>
           )}
-          <Stack direction="row" spacing={1}>
+          {/* What most connections never need: one click away, and it stays open once it was opened. */}
+          <Box sx={{ border: 1, borderColor: "divider", borderRadius: "16px" }}>
+            <FoldHeading
+              title={t("conn.advanced")}
+              open={advanced}
+              controls="conn-advanced"
+              onToggle={() => {
+                globalThis.sessionStorage?.setItem(ADVANCED_OPEN, advanced ? "0" : "1");
+                setAdvanced(!advanced);
+              }}
+            />
+            {!advanced && (
+              <Typography variant="body2" color="text.secondary" sx={{ px: 2, pb: 1.5, mt: -0.5 }}>
+                {t("conn.advancedHint")}
+              </Typography>
+            )}
+            {advanced && (
+              <Stack id="conn-advanced" spacing={2} sx={{ px: 2, pb: 2 }}>
+                {/* No connection yet, so nothing to ask S3: the picker only checks the text. */}
+                <PathPicker clusterId="" optional value={form.startPath} onChange={(startPath) => setForm({ ...form, startPath })} label={t("conn.startPath")} helperText={t("conn.startPathHelp")} />
+                <Typography variant="body2" color="text.secondary">
+                  <strong>{t("conn.adminKey")}</strong> — {t("conn.adminHelp")}
+                </Typography>
+                <Box sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", md: "repeat(2, minmax(0, 1fr))" }, gap: 2, alignItems: "start" }}>
+                  {field("adminAccessKey", t("conn.adminAccessKey"), { autoComplete: "off", slotProps: keySx })}
+                  {field("adminSecretKey", t("conn.adminSecretKey"), {
+                    type: "password",
+                    autoComplete: "off",
+                    error: !adminReady,
+                    helperText: adminReady ? undefined : t("conn.adminHalf"),
+                  })}
+                </Box>
+                <ProxyPicker value={formProxy} onChange={setFormProxy} inherit name={t("proxy.name.new")} />
+              </Stack>
+            )}
+          </Box>
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
             <Button variant="outlined" onClick={testForm} disabled={!canTest}>
               {t(testing ? "conn.testing" : "conn.test")}
             </Button>
-            <Button type="submit" variant="contained" disabled={!canTest || !adminReady || !!start.error || !form.label.trim()}>
-              {t("common.save")}
-            </Button>
+            {/* A disabled button says nothing by itself: the wrapper carries why. */}
+            <span title={blocker ?? undefined}>
+              <Button type="submit" variant="contained" disabled={busy || !!blocker || !proxyReady(formProxy)}>
+                {t("common.save")}
+              </Button>
+            </span>
+            {blocker && (
+              <Typography variant="caption" color="text.secondary" role="status">
+                {blocker}
+              </Typography>
+            )}
           </Stack>
-          {/* Saved: the next step is one click away. */}
+          {/* The answer of the test stays here, in the form. Saved: the next step is one click away. */}
           {formOutcome &&
             outcomeAlert(
               formOutcome,
@@ -336,7 +422,9 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
             )}
         </Stack>
       </Paper>
+      )}
 
+      {profiles.length > 0 && (
       <Stack direction="row" sx={{ alignItems: "center", gap: 1.5, mb: 1.5, flexWrap: "wrap" }}>
         <Typography variant="h6" component="h2">
           {t("conn.savedList")}
@@ -363,21 +451,23 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
           />
         )}
       </Stack>
-      {profiles.length === 0 && <Typography color="text.secondary">{t("conn.none")}</Typography>}
+      )}
       {profiles.length > 0 && listed.length === 0 && <Typography color="text.secondary">{t("conn.noMatch")}</Typography>}
       <Stack spacing={1.5} component="ul" sx={{ listStyle: "none", p: 0, m: 0 }}>
         {listed.map((p) => (
           <Paper key={p.id} component="li" variant="outlined" sx={{ p: 2.5 }}>
             <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
               <Stack sx={{ flexGrow: 1, minWidth: 0 }}>
-                <Typography sx={{ fontWeight: 600 }}>{p.label}</Typography>
+                <Typography noWrap title={p.label} sx={{ fontWeight: 600 }}>
+                  {p.label}
+                </Typography>
                 {isRepeated(p.label) && (
                   <Typography variant="caption" color="warning.main" role="note">
                     {t("conn.duplicateLabel")}
                   </Typography>
                 )}
-                <Typography variant="body2" color="text.secondary" noWrap>
-                  <Mono>{p.endpoint}</Mono> · {t("conn.myKey")} <Mono>{maskKey(p.browse_access_key ?? p.access_key)}</Mono>
+                <Typography variant="body2" color="text.secondary" noWrap title={p.endpoint}>
+                  <Mono>{hostOf(p.endpoint)}</Mono> · {t("conn.myKey")} <Mono>{maskKey(p.browse_access_key ?? p.access_key)}</Mono>
                   {p.browse_access_key && p.browse_access_key !== p.access_key && (
                     <>
                       {" "}
@@ -385,23 +475,61 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
                     </>
                   )}
                 </Typography>
+                {p.start_path && (
+                  <Typography variant="body2" color="text.secondary" noWrap title={p.start_path}>
+                    {t("conn.startsAt")} <Mono>{p.start_path}</Mono>
+                  </Typography>
+                )}
+                {testingRows.includes(p.id) && (
+                  <Typography variant="caption" color="text.secondary" role="status">
+                    {t("conn.testing")}
+                  </Typography>
+                )}
               </Stack>
-              <Button variant="outlined" onClick={() => onBrowse(p.id)} aria-label={t("conn.browseFor", { label: p.label })}>
+              <Button variant="contained" onClick={() => onBrowse(p.id)} aria-label={t("conn.browseFor", { label: p.label })} sx={{ flexShrink: 0 }}>
                 {t("conn.browse")}
               </Button>
-              <Button onClick={() => testSaved(p.id)} disabled={testingRows.includes(p.id)} aria-label={t("conn.testFor", { label: p.label })}>
-                {t(testingRows.includes(p.id) ? "conn.testing" : "conn.test")}
+              <Button onClick={() => setEditing(editing === p.id ? "" : p.id)} aria-expanded={editing === p.id} aria-label={t("conn.editFor", { label: p.label })} sx={{ flexShrink: 0 }}>
+                {t(editing === p.id ? "common.close" : "conn.edit")}
               </Button>
-              <Button color="error" onClick={() => setRemoving(p)} aria-label={t("conn.remove", { label: p.label })}>
-                {t("common.delete")}
-              </Button>
+              <IconButton aria-label={t("conn.more", { label: p.label })} title={t("conn.more", { label: p.label })} aria-haspopup="menu" onClick={(e) => setMenu({ anchor: e.currentTarget, profile: p })} sx={{ width: 40, height: 40, flexShrink: 0 }}>
+                ⋯
+              </IconButton>
             </Stack>
-            <ProfileStartPath profile={p} onChanged={onChanged} fail={fail} />
-            <ProfileProxy profile={p} onChanged={onChanged} fail={fail} />
+            {editing === p.id && (
+              <>
+                <ProfileStartPath profile={p} onChanged={onChanged} fail={fail} />
+                <ProfileProxy profile={p} onChanged={onChanged} fail={fail} />
+              </>
+            )}
             {rowOutcome[p.id] && outcomeAlert(rowOutcome[p.id], { mt: 1 })}
           </Paper>
         ))}
       </Stack>
+
+      {/* The rest of what a saved connection can do: one menu, shared by the rows. */}
+      <Menu anchorEl={menu?.anchor} open={menu !== null} onClose={() => setMenu(null)}>
+        <MenuItem
+          disabled={!!menu && testingRows.includes(menu.profile.id)}
+          aria-label={menu ? t("conn.testFor", { label: menu.profile.label }) : undefined}
+          onClick={() => {
+            if (menu) testSaved(menu.profile.id);
+            setMenu(null);
+          }}
+        >
+          {t("conn.test")}
+        </MenuItem>
+        <MenuItem
+          aria-label={menu ? t("conn.remove", { label: menu.profile.label }) : undefined}
+          onClick={() => {
+            setRemoving(menu?.profile ?? null);
+            setMenu(null);
+          }}
+          sx={{ color: "error.main" }}
+        >
+          {t("common.delete")}
+        </MenuItem>
+      </Menu>
 
       <ConfirmDialog
         open={removing !== null}

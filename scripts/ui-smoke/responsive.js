@@ -24,6 +24,9 @@
     };
     const addConnection = async (label, key) => {
       await click(T("app.connections"));
+      // First run: the screen is one card with one button; the form comes with it.
+      const add = await waitFor(() => button(T("conn.add")) || all("form").length, "the Connections screen");
+      if (add.click) add.click();
       await type(T("conn.label"), label);
       await type(T("conn.endpoint"), CFG.ENDPOINT);
       await type(T("conn.accessKey"), key.ak);
@@ -35,6 +38,7 @@
       await waitFor(() => hasText(T("conn.saved", { label })), `connection ${label} saved`, 20000);
     };
     const removeConnection = async (label) => {
+      await clickSel(sel("conn.more", { label }));
       await clickSel(sel("conn.remove", { label }));
       await click(T("conn.removeConfirm"));
       await dialogsGone();
@@ -156,7 +160,7 @@
     await click(T("app.connections"));
     await removeConnection("lab");
     await removeConnection("many");
-    await waitFor(() => !document.querySelector(sel("conn.remove", { label: "many" })), "the connections removed");
+    await waitFor(() => !document.querySelector(sel("conn.more", { label: "many" })) && button(T("conn.add")), "the connections removed: the first-run card is back");
     await say(`${WIDTHS.length * SCALES.length} cells, ${problems.length} problems`);
     if (problems.length) throw new Error(`${problems.length} problems, the first: ${problems[0]}`);
     banner(`RESPONSIVE DONE: ${WIDTHS.length * SCALES.length} cells, late: [${late.join(", ")}]`, late.length ? "#fc6" : "#8f8");
