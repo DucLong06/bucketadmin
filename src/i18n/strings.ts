@@ -638,6 +638,7 @@ export const en = {
   "pins.add": "Pin a path…",
   "pins.addTitle": "Pin a path",
   "pins.addSubmit": "Pin",
+  "pins.needConnection": "Add a connection first",
   "pins.addHere": "Pin a path on this connection",
 
   // Theme (M10.2): dark or light, an explicit choice
@@ -1305,6 +1306,7 @@ export const vi: Record<keyof typeof en, string> = {
   "pins.add": "Ghim một đường dẫn…",
   "pins.addTitle": "Ghim một đường dẫn",
   "pins.addSubmit": "Ghim",
+  "pins.needConnection": "Hãy thêm một kết nối trước",
   "pins.addHere": "Ghim một đường dẫn trên kết nối này",
 
   // Theme (M10.2): dark or light, an explicit choice
