@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useContext, useMemo, useState } from "react";
+import { createContext, type FocusEventHandler, type KeyboardEvent, type ReactNode, useContext, useMemo, useState } from "react";
 import {
   Alert,
   Autocomplete,
@@ -11,6 +11,7 @@ import {
   DialogTitle,
   FormControlLabel,
   IconButton,
+  InputAdornment,
   LinearProgress,
   Stack,
   Switch,
@@ -162,6 +163,60 @@ export function LangToggle() {
 export function ThemeSwitch() {
   const mode = useMode();
   return <FormControlLabel sx={{ minHeight: 40, mr: 0 }} control={<Switch checked={mode === "light"} onChange={(_, on) => setMode(on ? "light" : "dark")} />} label={t("settings.lightTheme")} />;
+}
+
+type ListFilterProps = {
+  value: string;
+  onChange: (text: string) => void;
+  /** Also the field's accessible name. */
+  placeholder: string;
+  /** Rows left by the filter, and rows there are: shown as "3 of 12" while something is typed. */
+  shown: number;
+  total: number;
+  /** Tooltip: what the field matches and which keys it takes. */
+  hint?: string;
+  /** Keys the list itself handles (arrows, Enter); Esc is the field's own. */
+  onKeyDown?: (e: KeyboardEvent) => void;
+  onFocus?: FocusEventHandler;
+  onBlur?: FocusEventHandler;
+  autoFocus?: boolean;
+};
+
+/** The filter field of a list (buckets, pinned places, recent places): one look, Esc clears it, and while
+ *  something is typed it says how many rows are left. The list decides what a match is. */
+export function ListFilter({ value, onChange, placeholder, shown, total, hint = t("list.filterHint"), onKeyDown, onFocus, onBlur, autoFocus }: ListFilterProps) {
+  return (
+    <TextField
+      placeholder={placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key !== "Escape" || !value) return onKeyDown?.(e);
+        // The first Esc clears the filter; only the next one reaches a menu or a dialog around the field.
+        e.preventDefault();
+        e.stopPropagation();
+        onChange("");
+      }}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      size="small"
+      fullWidth
+      autoFocus={autoFocus}
+      title={hint}
+      slotProps={{
+        htmlInput: { "aria-label": placeholder, spellCheck: false },
+        input: {
+          endAdornment: value.trim() && (
+            <InputAdornment position="end">
+              <Typography variant="caption" color="text.secondary" aria-live="polite" sx={{ whiteSpace: "nowrap" }}>
+                {t("browse.filterCount", { n: shown, m: total })}
+              </Typography>
+            </InputAdornment>
+          ),
+        },
+      }}
+    />
+  );
 }
 
 /** A pushpin: filled for a place that is pinned, an outline for one that could be. */

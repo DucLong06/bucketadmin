@@ -339,7 +339,8 @@
       .map((cell) => /^\d{4}-\d\d-\d\d (\d\d:\d\d)$/.exec(cell.textContent.trim()))
       .find(Boolean);
     // (Column headers are shown in capitals by a style, so their own text is compared, not what is painted.)
-    const labelled = all("[role=columnheader]").some((h) => h.textContent === T("browse.col.modified", { tz: "UTC+7" }));
+    // M12.2: the heading is short enough for a 900 px window; the zone is its tooltip and one caption under the list.
+    const labelled = all("[role=columnheader]").some((h) => h.textContent === T("browse.col.modified") && h.querySelector("[title]")?.title === T("browse.col.modifiedTip", { tz: "UTC+7" })) && hasText(T("browse.timesIn", { tz: "UTC+7" }));
     check(labelled && modified && apart(secondsOfDay(`${modified[1]}:00`)) < 300, `last-modified ${modified?.[0]} is the time in Vietnam`);
     await shot("17-upload-done");
     await openObject("bin/upload-20m.bin");

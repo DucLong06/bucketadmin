@@ -1,15 +1,17 @@
 import { type KeyboardEvent, type MouseEvent, useEffect, useRef, useState } from "react";
-import { Alert, Box, Button, InputAdornment, List, ListItemButton, ListItemText, Paper, Stack, TextField, Typography } from "@mui/material";
+import { Alert, Box, Button, List, ListItemButton, ListItemText, Paper, Stack, Typography } from "@mui/material";
 import type { BrowseBucket } from "./api";
 import { t } from "./i18n";
 import { eyebrow, thinScroll, tokens } from "./theme";
+import { ListFilter } from "./ui";
 import { visibleRange } from "./virtual";
 
-/** The filter field is only worth its row above this many buckets. */
-export const FILTER_ABOVE = 8;
-/** The list never grows past this: about 38 % of the window, never under five rows, and in a low
- *  window (700 px) only as much as leaves the whole card, with its two buttons, above the fold. */
-export const LIST_MAX_HEIGHT = "clamp(200px, calc(100vh - 500px), 38vh)";
+/** The filter field is there from this many buckets on: whenever there is anything to filter. */
+export const FILTER_FROM = 2;
+/** The list never grows past this: about 38 % of the window, never under two rows, and otherwise as much
+ *  as leaves the whole card, with its controls, in view: the height of the pane (App measures it; it ends
+ *  where the task panel begins) less what else the sidebar holds (Browse says how much; less in a low window). */
+export const LIST_MAX_HEIGHT = "clamp(80px, calc(var(--ba-pane-h, calc(100vh - 121px)) - var(--ba-side-rest, 379px)), 38vh)";
 
 /** Above this many rows the list only mounts the rows in view (and a few around them). */
 export const WINDOW_ABOVE = 100;
@@ -68,7 +70,7 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
   };
   // The highlight is the filter field's cursor in the list: shown while that field has the keyboard.
   const [filtering, setFiltering] = useState(false);
-  const filterable = buckets.length > FILTER_ABOVE;
+  const filterable = buckets.length >= FILTER_FROM;
   const shown = filterable ? filterBuckets(buckets, filter) : buckets;
   const list = useRef<HTMLUListElement | null>(null);
   // A long list is windowed: rows of a known height, placed by two spacers, so 5000 buckets cost what 30 do.
@@ -91,10 +93,8 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
   }, [active, current, shown.length]);
 
   function onFilterKey(e: KeyboardEvent) {
-    if (e.key === "Escape") {
-      setFilter("");
-      setHighlight(0);
-    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    // (Esc is the field's own: it clears the filter.)
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       const next = moveHighlight(cursor.current, e.key, shown.length);
       setHighlight(next);
       // The highlighted row stays in view while the arrow keys walk the list.
@@ -106,40 +106,29 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
     e.preventDefault();
   }
   return (
-    <Paper variant="outlined" sx={{ borderRadius: "16px" }}>
+    <Paper variant="outlined" data-testid="bucket-card" sx={{ borderRadius: "16px" }}>
       <Typography component="h2" sx={{ ...eyebrow, color: "text.secondary", px: 2, pt: 2, pb: filterable ? 1 : 0 }}>
         {bucketsError ? title : t("browse.bucketsCount", { title, n: buckets.length })}
       </Typography>
       {filterable && (
         <Box sx={{ px: 1.5 }}>
-          <TextField
+          {/* The first thing in the card the keyboard reaches. */}
+          <ListFilter
             placeholder={t("browse.filterBuckets")}
+            hint={t("browse.filterBucketsHint")}
             value={filter}
-            onChange={(e) => {
-              setFilter(e.target.value);
+            onChange={(text) => {
+              setFilter(text);
               setHighlight(0);
               // Another list: from its top.
               if (list.current) list.current.scrollTop = 0;
               setScrollTop(0);
             }}
+            shown={shown.length}
+            total={buckets.length}
             onKeyDown={onFilterKey}
             onFocus={() => setFiltering(true)}
             onBlur={() => setFiltering(false)}
-            size="small"
-            fullWidth
-            title={t("browse.filterBucketsHint")}
-            slotProps={{
-              htmlInput: { "aria-label": t("browse.filterBuckets"), spellCheck: false },
-              input: {
-                endAdornment: filter.trim() && (
-                  <InputAdornment position="end">
-                    <Typography variant="caption" color="text.secondary" aria-live="polite" sx={{ whiteSpace: "nowrap" }}>
-                      {t("browse.filterCount", { n: shown.length, m: buckets.length })}
-                    </Typography>
-                  </InputAdornment>
-                ),
-              },
-            }}
           />
         </Box>
       )}

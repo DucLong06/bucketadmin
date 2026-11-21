@@ -44,7 +44,7 @@ import { eyebrow, thinScroll, tokens } from "./theme";
 import type { StartTransfer } from "./transfers";
 import { explain } from "./errors";
 import { t, type Key } from "./i18n";
-import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, FoldHeading, PinToggle, useAction } from "./ui";
+import { CallerContext, ClusterSelect, ConfirmDialog, copyText, ErrorAlert, FoldHeading, ListFilter, PinToggle, useAction } from "./ui";
 import { VirtualTable, type Column } from "./virtual";
 
 type Props = {
@@ -74,6 +74,13 @@ type Props = {
 };
 /** Recent places the sidebar lists before "show all": the card stays a glance, the buckets stay the main thing. */
 export const RECENT_IN_SIDEBAR = 5;
+/** The whole list ("show all") gets a filter field above this many places. */
+export const RECENT_FILTER_ABOVE = 8;
+/** The layout's breakpoints, in CSS px (the zoom setting narrows the page), decided here and used by the app
+ *  shell too. NARROW: the date column goes and the paddings tighten. SHORT (a low window, or a big zoom): the
+ *  heights tighten, so the bucket card stays whole in view. `roomy` and `tight` below are the two older steps. */
+export const NARROW = "@media (max-width:859px)";
+export const SHORT = "@media (max-height:559px)";
 /** `uid` is empty while browsing with the caller's own saved key. */
 type Session = { uid: string; access_key: string; buckets: BrowseBucket[]; buckets_error: string | null };
 type Row = { folder: string } | { object: ObjectEntry };
@@ -102,9 +109,9 @@ function useTableHeight() {
   }, []);
   return height;
 }
-// The whole heading as a tooltip: a narrow column cuts it short.
-const th = (text: string) => (
-  <Box component="span" title={text} sx={{ ...eyebrow, color: "text.secondary" }}>
+// The whole heading (or more than it: the time zone) as a tooltip: a narrow column cuts it short.
+const th = (text: string, tip = text) => (
+  <Box component="span" title={tip} sx={{ ...eyebrow, color: "text.secondary" }}>
     {text}
   </Box>
 );
@@ -121,6 +128,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const roomy = useMediaQuery("(min-width:1150px)");
   // A 900 px window: the size and date columns give the name the room they can spare.
   const tight = useMediaQuery("(max-width:999px)");
+  // Under 860 px (900 px at 110 % and up): the date stays in the object's properties, the name keeps its room.
+  const narrow = useMediaQuery(NARROW);
   useEffect(() => {
     // The tab's connection was removed (or there was none yet): fall back to the first one.
     if (!profiles.some((p) => p.id === clusterId)) setClusterId(profiles[0]?.id ?? "");
@@ -153,6 +162,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const [picking, setPicking] = useState(false);
   // The sidebar's Recent card shows every place, not only the newest few (this tab, until it is closed).
   const [recentAll, setRecentAll] = useState(false);
+  const [recentFilter, setRecentFilter] = useState("");
   const [typedPath, setTypedPath] = useState("");
   const inlinePath = useRef<HTMLInputElement | null>(null);
   // The last listing was refused by S3 (AccessDenied): the error gains the way out.
@@ -472,7 +482,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
         ),
     },
     { header: th(t("browse.col.size")), width: tight ? "100px" : "110px", align: "right", cell: (r) => ("object" in r && !r.object.deleted ? formatBytes(r.object.size) : "—") },
-    { header: th(t("browse.col.modified", { tz: TZ })), width: tight ? "156px" : "190px", cell: (r) => ("object" in r ? vnTime(r.object.last_modified) : "") },
+    // The zone is said once under the list and in the heading's tooltip, not in every heading.
+    ...(narrow ? [] : [{ header: th(t("browse.col.modified"), t("browse.col.modifiedTip", { tz: TZ })), width: tight ? "156px" : "190px", cell: (r: Row) => ("object" in r ? vnTime(r.object.last_modified) : "") }]),
     // The owner is in the object's properties; the concept's table stops at the storage class.
     // A narrow page (a 1100 px window, or 125 % zoom) drops that column rather than scroll sideways; the properties keep it.
     ...(roomy ? [{ header: th(t("browse.col.storageClass")), width: "140px", cell: (r: Row) => ("object" in r ? r.object.storage_class : "") }] : []),
@@ -493,7 +504,13 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   // The sidebar's recent places: this connection's first, then the others; the newest few until "show all".
   const recentGroups = groupRecents(recents, clusterId);
   const recentOrdered = [...recentGroups.here, ...recentGroups.elsewhere];
-  const recentRows = recentAll ? recentOrdered : recentOrdered.slice(0, RECENT_IN_SIDEBAR);
+  // The whole list is filtered by what a row says: connection, user, path.
+  const recentFilterable = recentAll && recentOrdered.length > RECENT_FILTER_ABOVE;
+  const recentWanted = recentFilterable ? recentFilter.trim().toLowerCase() : "";
+  const recentKept = (place: Place) => !recentWanted || placeLabel(place, profiles).toLowerCase().includes(recentWanted);
+  const recentHere = recentGroups.here.filter(recentKept);
+  const recentListed = [...recentHere, ...recentGroups.elsewhere.filter(recentKept)];
+  const recentRows = recentAll ? recentListed : recentListed.slice(0, RECENT_IN_SIDEBAR);
   const recentFolded = folded.includes("recent");
   const card = { borderRadius: "16px" };
   // What the context menu offers for the row under the pointer.
@@ -506,8 +523,28 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   };
   return (
     <CallerContext.Provider value={access?.uid ?? ""}>
-      <Box sx={{ display: "grid", gridTemplateColumns: "264px minmax(0, 1fr)", gap: 3, alignItems: "start" }}>
-        <Stack component="aside" spacing={2} aria-label={t("browse.sidebar")}>
+      <Box sx={{ display: "grid", gridTemplateColumns: `${narrow ? 200 : tight ? 232 : 264}px minmax(0, 1fr)`, gap: narrow ? 2 : 3, alignItems: "start" }}>
+        {/* The sidebar keeps to the height of the pane (which ends where the task panel begins) and scrolls
+            inside itself: no card of it is ever behind the task panel, wherever the object list is scrolled to. */}
+        <Stack
+          component="aside"
+          spacing={2}
+          useFlexGap
+          aria-label={t("browse.sidebar")}
+          sx={{
+            position: "sticky",
+            top: 0,
+            maxHeight: "calc(var(--ba-pane-h, 100vh) - 24px)",
+            ...thinScroll,
+            overflowX: "hidden",
+            // Room for the focus rings the scroll box would cut.
+            p: "4px",
+            m: "-4px",
+            // What the sidebar holds besides the bucket list (see LIST_MAX_HEIGHT in BucketPanel).
+            "--ba-side-rest": canBrowseAs ? "435px" : "379px",
+            [SHORT]: { maxHeight: "calc(var(--ba-pane-h, 100vh) - 12px)", gap: 1, "--ba-side-rest": canBrowseAs ? "316px" : "260px" },
+          }}
+        >
           <ClusterSelect profiles={profiles} value={clusterId} onChange={setClusterId} />
           {canBrowseAs && (
             <Stack
@@ -527,7 +564,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
             </Stack>
           )}
           {session && (
-            <Typography variant="body2" color="text.secondary">
+            // A low window keeps its room for the buckets; the key is on the Connections screen too.
+            <Typography variant="body2" color="text.secondary" sx={{ [SHORT]: { display: session.uid ? undefined : "none" } }}>
               {t("browse.usingKey")}{" "}
               <Box component="span" sx={{ fontFamily: tokens.mono, fontSize: 14 }}>
                 {maskKey(session.access_key)}
@@ -585,11 +623,21 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               />
               {!recentFolded && (
                 <>
+                  {recentFilterable && (
+                    <Box sx={{ px: 1.5, pb: 1 }}>
+                      <ListFilter placeholder={t("recent.filter")} value={recentFilter} onChange={setRecentFilter} shown={recentListed.length} total={recentOrdered.length} />
+                    </Box>
+                  )}
+                  {recentListed.length === 0 && (
+                    <Typography variant="body2" color="text.secondary" sx={{ px: 2, pb: 1.5 }}>
+                      {t("list.filterNone")}
+                    </Typography>
+                  )}
                   {/* Every place: the list scrolls inside the card, so the column does not grow with it. */}
                   <List dense id={`recent-${clusterId}`} aria-label={t("browse.recentList")} style={{ maxHeight: 336 }} sx={{ ...thinScroll, pt: 0 }}>
                     {recentRows.map((place, i) => [
                       // Grouped like the pins: this connection's places, then the others under a divider.
-                      i === recentGroups.here.length && (
+                      i === recentHere.length && (
                         <Divider key="others" component="li" textAlign="left" sx={{ my: 0.5, fontSize: 12.5, color: "text.secondary" }}>
                           {t("browse.pinsElsewhere")}
                         </Divider>
@@ -703,7 +751,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                     {t("browse.eyebrow", { label })}
                   </Typography>
                   <Stack direction="row" sx={{ alignItems: "center", gap: 1 }}>
-                  <Breadcrumbs aria-label={t("browse.path")} separator="/" sx={{ minWidth: 0, fontFamily: tokens.serif, fontSize: 29, fontWeight: 600, lineHeight: 1.25, "& .MuiBreadcrumbs-separator": { color: "divider" } }}>
+                  <Breadcrumbs aria-label={t("browse.path")} separator="/" sx={{ minWidth: 0, fontFamily: tokens.serif, fontSize: 29, fontWeight: 600, lineHeight: 1.25, "& .MuiBreadcrumbs-separator": { color: "divider" }, "& button": { overflowWrap: "anywhere", textAlign: "left" } }}>
                     <Link component="button" underline="none" color={crumbs.length ? "text.secondary" : "text.primary"} onClick={() => load(bucket, "", null)} sx={{ font: "inherit" }}>
                       {bucket}
                     </Link>
@@ -729,7 +777,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                     />
                   </Stack>
                 </Box>
-                <Stack direction="row" spacing={1}>
+                <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
                   <Button variant="contained" onClick={async () => upload(await invoke<string[]>("browse_pick_upload", { title: t("browse.pickUploadTitle") }))}>
                     {t("common.upload")}
                   </Button>
@@ -774,14 +822,14 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                   {t("browse.refresh")}
                 </Button>
                 <Box sx={{ flexGrow: 1 }} />
-                <Stack component="form" onSubmit={search} direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                <Stack component="form" onSubmit={search} direction="row" spacing={1} sx={{ alignItems: "center", maxWidth: "100%" }}>
                   <TextField
                     label={t("browse.searchLabel")}
                     placeholder="*.parquet"
                     value={pattern}
                     onChange={(e) => setPattern(e.target.value)}
                     size="small"
-                    sx={{ width: 340 }}
+                    sx={{ width: 340, minWidth: 0, flexShrink: 1 }}
                     title={t("browse.searchHint", { results: SEARCH_RESULTS, seconds: SEARCH_SECONDS })}
                     slotProps={{ inputLabel: { shrink: true } }}
                   />
@@ -819,7 +867,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
               {listing && !found && (
                 <Stack direction="row" spacing={2} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
                   <Typography variant="body2" color="text.secondary">
-                    {t(listing.next_token ? "browse.loadedMore" : "browse.loaded", { folders: listing.prefixes.length, objects: objects.length })} {t("browse.dropHint")}
+                    {t(listing.next_token ? "browse.loadedMore" : "browse.loaded", { folders: listing.prefixes.length, objects: objects.length })} {t("browse.dropHint")} {t("browse.timesIn", { tz: TZ })}
                   </Typography>
                   {listing.next_token && (
                     <Button size="small" variant="outlined" disabled={busy} onClick={() => load(bucket, prefix, listing.next_token)}>

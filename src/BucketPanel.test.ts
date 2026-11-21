@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { beforeEach, expect, test } from "vitest";
-import BucketPanel, { filterBuckets, LIST_MAX_HEIGHT, moveHighlight, WINDOW_ABOVE } from "./BucketPanel";
+import BucketPanel, { FILTER_FROM, filterBuckets, LIST_MAX_HEIGHT, moveHighlight, WINDOW_ABOVE } from "./BucketPanel";
 import { applyLang, t } from "./i18n";
 
 const nothing = () => {};
@@ -44,7 +44,8 @@ const listTag = (html: string) => /<ul[^>]*aria-label="Bucket list"[^>]*>/.exec(
 
 test("100 buckets: the list has a height limit of its own and scrolls inside the card; header, filter and controls are outside it", () => {
   const html = panel({ buckets: many(100), current: "team-080-Data" });
-  expect(LIST_MAX_HEIGHT).toBe("clamp(200px, calc(100vh - 500px), 38vh)");
+  // With the pane at its usual height (the window less 121 px of app bar and tab strip) this is the M11 limit, 100vh - 500px.
+  expect(LIST_MAX_HEIGHT).toBe("clamp(80px, calc(var(--ba-pane-h, calc(100vh - 121px)) - var(--ba-side-rest, 379px)), 38vh)");
   expect(listTag(html)).toContain(`style="max-height:${LIST_MAX_HEIGHT}"`);
   // The scrolling itself and the thin themed bar come from the list's class.
   const cls = /class="([^"]*)"/.exec(listTag(html))?.[1].split(" ").find((c) => c.startsWith("css-")) ?? "";
@@ -88,9 +89,14 @@ test("500 buckets: only the rows in view are mounted, the rest is two spacers; h
   expect(hits.map((b) => b.name)).toEqual(Array.from({ length: 10 }, (_, i) => `team-49${i}-Data`));
 });
 
-test("the filter field appears above 8 buckets only; the header counts the buckets", () => {
-  expect(panel({ buckets: many(8) })).not.toContain("Filter buckets…");
-  expect(panel({ buckets: many(9) })).toContain("Filter buckets…");
+test("the filter field is there from 2 buckets on (whenever there is anything to filter); the header counts the buckets", () => {
+  expect(FILTER_FROM).toBe(2);
+  expect(panel({ buckets: many(1) })).not.toContain("Filter buckets…");
+  expect(panel({ buckets: many(2) })).toContain('placeholder="Filter buckets…"');
+  // The first thing of the card the keyboard reaches: no button or link comes before it.
+  const card = panel({ buckets: many(2) });
+  expect(card.slice(0, card.indexOf('placeholder="Filter buckets…"'))).not.toMatch(/<button|<a |tabindex="0"/);
+  expect(panel({ buckets: [], bucketsError: "AccessDenied" })).not.toContain("Filter buckets…");
   expect(text(panel({ buckets: many(8) }))).toContain("Your buckets · 8");
   expect(text(panel({ buckets: [] }))).toContain("Your buckets · 0");
   // Not counted when the key may not list them: there is no number to show.

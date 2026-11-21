@@ -17,6 +17,12 @@ export const isPinned = (pins: Pin[], place: Place) => pins.some((pin) => samePl
 export const defaultLabel = placePath;
 export const pinLabel = (pin: Pin) => pin.label || defaultLabel(pin.place);
 
+/** Pins whose name or path contains `text`, whatever the case. */
+export const filterPins = (pins: Pin[], text: string): Pin[] => {
+  const wanted = text.trim().toLowerCase();
+  return wanted ? pins.filter((pin) => [pin.label, placePath(pin.place)].some((field) => field.toLowerCase().includes(wanted))) : pins;
+};
+
 /** The list after a click on the pin toggle of `place`: unpinned when it was pinned, else added last. */
 export const togglePin = (pins: Pin[], place: Place, now: number): Pin[] =>
   isPinned(pins, place) ? pins.filter((pin) => !samePlace(pin.place, place)) : [...pins, { place, label: "", added: now }];

@@ -292,6 +292,27 @@ fn set_theme(window: tauri::WebviewWindow, state: St<'_>, theme: String) -> Cmd<
     Ok(state.settings.change(|s| s.theme = theme)?.theme)
 }
 
+/// Debug builds only (the responsive pass of the UI smoke): the window at a given size, and a line
+/// on stdout. A release build refuses both.
+#[tauri::command]
+fn dev_set_size(window: tauri::WebviewWindow, width: f64, height: f64) -> Result<(), String> {
+    if !cfg!(debug_assertions) {
+        return Err("debug builds only".into());
+    }
+    window
+        .set_size(tauri::LogicalSize::new(width, height))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn dev_log(line: String) -> Result<(), String> {
+    if !cfg!(debug_assertions) {
+        return Err("debug builds only".into());
+    }
+    println!("{line}");
+    Ok(())
+}
+
 /// What the window shows where the page has drawn nothing yet: the theme's page colour
 /// (`bg` of the palettes in src/theme.ts), so a start in either theme never flashes the other.
 fn apply_theme(window: &tauri::WebviewWindow, theme: &str) {
@@ -791,6 +812,8 @@ pub fn run() {
             network_set,
             get_ui_scale,
             set_ui_scale,
+            dev_set_size,
+            dev_log,
             get_lang,
             set_lang,
             get_theme,

@@ -112,7 +112,7 @@ export function TaskPanel({ tasks }: { tasks: ReturnType<typeof useTransfers> })
     <>
       {items.length > 0 && (
         // Bottom of the window, shared by every tab; a long queue scrolls inside its own box.
-        <Paper variant="outlined" square sx={{ px: 2, py: 1, flexShrink: 0, maxHeight: 168, overflow: "auto", borderWidth: "1px 0 0" }} aria-label={t("tasks.title")}>
+        <Paper variant="outlined" square sx={{ px: 2, py: 1, flexShrink: 0, maxHeight: "min(168px, 30vh)", overflow: "auto", borderWidth: "1px 0 0" }} aria-label={t("tasks.title")}>
           <Stack direction="row" sx={{ alignItems: "center", mb: 1 }}>
             <Typography variant="subtitle2" component="h2" sx={{ flexGrow: 1 }}>
               {t("tasks.header", { running: count("running"), queued: count("queued"), max: MAX_RUNNING, tz: TZ })}

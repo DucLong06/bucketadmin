@@ -1,11 +1,14 @@
 import { type MouseEvent, useState } from "react";
-import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, List, ListItemButton, ListItemIcon, ListItemText, Menu, MenuItem, Paper, TextField, IconButton } from "@mui/material";
+import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Divider, List, ListItemButton, ListItemIcon, ListItemText, Menu, MenuItem, Paper, TextField, IconButton, Typography } from "@mui/material";
 import type { Profile } from "./api";
 import { t } from "./i18n";
-import { defaultLabel, orderPins, pinLabel, type Pin, type PinOps } from "./pins";
+import { defaultLabel, filterPins, orderPins, pinLabel, type Pin, type PinOps } from "./pins";
 import { placeLabel, type Place } from "./tabs";
 import { thinScroll, tokens } from "./theme";
-import { FoldHeading, PinIcon } from "./ui";
+import { FoldHeading, ListFilter, PinIcon } from "./ui";
+
+/** The card gets a filter field above this many rows. */
+export const PINS_FILTER_ABOVE = 5;
 
 type Props = {
   pins: Pin[];
@@ -32,8 +35,14 @@ export default function PinnedPanel({ pins, profiles, clusterId, onOpen, onOpenT
   const [menu, setMenu] = useState<{ pin: Pin; index: number; x: number; y: number } | null>(null);
   const [renaming, setRenaming] = useState<Pin | null>(null);
   const [name, setName] = useState("");
+  // The filter belongs to this tab and is not saved.
+  const [filter, setFilter] = useState("");
   if (pins.length === 0) return null;
-  const { here, elsewhere } = orderPins(pins, clusterId);
+  const filterable = pins.length > PINS_FILTER_ABOVE;
+  // Filtered after ordering: a pin keeps its position in the whole list (moving it up or down means that list).
+  const matching = new Set(filterable ? filterPins(pins, filter) : pins);
+  const ordered = orderPins(pins, clusterId);
+  const [here, elsewhere] = [ordered.here, ordered.elsewhere].map((group) => group.filter(({ pin }) => matching.has(pin)));
   const pick = (action: (pin: Pin, index: number) => void) => () => {
     if (menu) action(menu.pin, menu.index);
     setMenu(null);
@@ -73,6 +82,16 @@ export default function PinnedPanel({ pins, profiles, clusterId, onOpen, onOpenT
           )
         }
       />
+      {!folded && filterable && (
+        <Box sx={{ px: 1.5, pb: 1 }}>
+          <ListFilter placeholder={t("pins.filter")} value={filter} onChange={setFilter} shown={matching.size} total={pins.length} />
+        </Box>
+      )}
+      {!folded && matching.size === 0 && (
+        <Typography variant="body2" color="text.secondary" sx={{ px: 2, pb: 1.5 }}>
+          {t("list.filterNone")}
+        </Typography>
+      )}
       {!folded && (
         <List dense id="pinned-list" aria-label={t("browse.pinnedList")} style={{ maxHeight: 216 }} sx={{ ...thinScroll, pt: 0 }}>
           {here.map((entry) => row(entry, true))}
