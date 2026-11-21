@@ -126,7 +126,13 @@ impl S3 {
                     bucket: bucket.to_string(),
                     prefix: prefix.to_string(),
                     children: folders
-                        .map(|p| p[typed.min(p.len())..].trim_end_matches('/').to_string())
+                        // `get`: a server that answers with another prefix must not panic the slice.
+                        .map(|p| {
+                            p.get(typed..)
+                                .unwrap_or(p)
+                                .trim_end_matches('/')
+                                .to_string()
+                        })
                         .filter(|name| !name.is_empty())
                         .collect(),
                 }
