@@ -471,7 +471,20 @@
     await menusGone(); // the shortcuts are off while a menu, dialog or sheet is open
     press("w");
     await waitFor(() => tabs().length === 1 && objectLink("notes/readme.txt"), "back to one tab");
-    check(all(`${sel("browse.recentList")} [role=button]`).length >= 4, "the sidebar lists recent places too");
+    const recentRows = () => all(`${sel("browse.recentList")} [role=button]`).length;
+    check(recentRows() >= 4 && recentRows() <= 5, `the sidebar lists the newest recent places too: ${recentRows()}`);
+    // M11: the Recent card folds to its heading, and the choice is written to settings.json (shared by every tab).
+    const recentHeading = () => last(all("aside h2 button[aria-expanded]").filter((b) => b.textContent.startsWith(T("browse.recent"))));
+    recentHeading().click();
+    await waitFor(() => recentRows() === 0 && recentHeading().getAttribute("aria-expanded") === "false", "Recent folded to its heading");
+    let foldedSaved = [];
+    for (let i = 0; i < 30 && foldedSaved.join() !== "recent"; i++) {
+      await sleep(100);
+      foldedSaved = await invoke("folded_get");
+    }
+    check(foldedSaved.join() === "recent", `the folded section is in settings.json: [${foldedSaved}]`);
+    recentHeading().click();
+    await waitFor(() => recentRows() >= 4, "and unfolded again");
 
     // ---- delete from the right-click menu, and undo it
     rightClick(await rowOf("notes/config.json"));
@@ -783,18 +796,17 @@
     check(list.scrollHeight > list.clientHeight && list.clientHeight <= limit + 1 && getComputedStyle(list).overflowY === "auto", `the list scrolls inside its card: ${list.clientHeight} of ${list.scrollHeight} px, limit ${limit}`);
     const box = (key) => panelOf(key).getBoundingClientRect();
     const paneBox = pane().getBoundingClientRect();
-    check(box("browse.pinnedList").bottom <= paneBox.bottom && box("browse.pinnedList").bottom <= box("browse.bucketList").top, "the Pinned panel is on screen, above the buckets");
-    // The buckets no longer decide how far away the rest is: the Recent panel starts right under the bucket card.
-    check(box("browse.recentList").top - box("browse.bucketList").bottom < 24 && pane().scrollHeight < 2 * window.innerHeight, "Recent follows the bucket card; the page is not thousands of pixels long");
+    // M11 (the sidebar at a small window): right after connecting, with nothing scrolled, the bucket list is in view,
+    // whole, with the buttons of its card; Pinned and Recent come after it and never push it down.
+    const listBox = list.getBoundingClientRect();
+    check(pane().scrollTop === 0 && listBox.top >= paneBox.top && listBox.bottom <= paneBox.bottom && box("browse.bucketList").bottom <= paneBox.bottom, `the bucket list is visible without scrolling the sidebar: list ${Math.round(listBox.top)}-${Math.round(listBox.bottom)}, card to ${Math.round(box("browse.bucketList").bottom)}, pane ${Math.round(paneBox.top)}-${Math.round(paneBox.bottom)}`);
+    check(box("browse.pinnedList").top >= box("browse.bucketList").bottom && box("browse.recentList").top >= box("browse.pinnedList").bottom, "Pinned, then Recent, follow the bucket card");
+    check(box("browse.pinnedList").top - box("browse.bucketList").bottom < 24 && pane().scrollHeight < 2 * window.innerHeight, "Pinned starts right under the bucket card; the page is not thousands of pixels long");
     notes.push(`window ${window.innerWidth}x${window.innerHeight}: pinned ${Math.round(box("browse.pinnedList").top)}-${Math.round(box("browse.pinnedList").bottom)}, bucket card ${Math.round(box("browse.bucketList").top)}-${Math.round(box("browse.bucketList").bottom)} (list ${list.clientHeight} of ${list.scrollHeight}), recent from ${Math.round(box("browse.recentList").top)}, pane ${Math.round(paneBox.top)}-${Math.round(paneBox.bottom)} scrolls ${pane().scrollHeight}`);
     check(fits(), "nothing scrolls sideways");
     const filter = await waitFor(() => last(all(`input${sel("browse.filterBuckets")}`)), "the filter field");
-    // For the picture: the whole bucket card in view (the pane scrolls; the list scrolls inside the card).
-    pane().scrollTop = box("browse.bucketList").top - paneBox.top - 12;
-    list.scrollTop = 6 * 40;
+    // For the picture: as it is right after connecting, nothing scrolled.
     await shot("42-buckets-many");
-    pane().scrollTop = 0;
-    list.scrollTop = 0;
     filter.focus();
     setValue(filter, "MANY-1");
     await waitFor(() => all(bucketButtons).length === 10 && hasText(T("browse.filterCount", { n: 10, m: MANY })), "a case-insensitive filter: 10 of 32");
@@ -859,6 +871,10 @@
     await click(T("app.connections"));
     for (const label of ["chi-doc", "du-an", "no-list", "many", "lab"]) {
       await clickSel(sel("conn.remove", { label }));
+      // M11: a connection is not removed by one click; the dialog says what goes with it.
+      await waitFor(() => hasText(T("conn.removeTitle")) && hasText(T("conn.removeText", { label })), `the removal of ${label} is asked about`);
+      await click(T("conn.removeConfirm"));
+      await dialogsGone();
       await waitFor(() => !document.querySelector(sel("conn.remove", { label })), `connection ${label} removed`);
     }
     await waitFor(() => all(sel("conn.countAria", { n: 20 })).length === 1 && savedRows() === 20, "the flow's connections are removed; the seeded ones are left");
