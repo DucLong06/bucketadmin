@@ -614,6 +614,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                     if (sideTyped.error) return;
                     load(sideTyped.bucket, sideTyped.prefix, null);
                     setSidePath("");
+                    // Like an address bar after Enter: the field lets go, so its dropdown does not open again over the card.
+                    sideField.current?.blur();
                   }}
                 >
                   <PathPicker

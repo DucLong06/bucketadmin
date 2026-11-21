@@ -316,6 +316,8 @@ export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quiet
     if (e.key === "Escape") return setClosed(true);
     // Shift+Tab leaves the field as it does anywhere.
     if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
+    // Tab completes what is being typed; in an empty field it moves on (tabbing through the sidebar must not fill it).
+    if (e.key === "Tab" && !view.value.trim()) return;
     const act = suggestKey(e.key, suggestions(view.value, probe, chips, buckets), cursor.current, e.currentTarget.selectionStart === e.currentTarget.value.length);
     if (!act) return;
     e.preventDefault();
