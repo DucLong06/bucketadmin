@@ -388,10 +388,27 @@ export default function App() {
               {/* With the type-ahead field the keyboard starts in it, not on the first item. */}
               <Menu anchorEl={pinMenu} open={pinMenu !== null} onClose={() => setPinMenu(null)} autoFocus={!pinMenuFilterable} slotProps={{ list: { "aria-label": t("app.pinned.list") } }}>
                 {pinMenuFilterable && (
-                  // Typing is for the field (a menu would jump to the item that starts with the letter); Esc and the arrow down are the menu's.
-                  <Box component="li" role="presentation" sx={{ px: 1.5, pb: 1, minWidth: 300 }} onKeyDown={(e) => e.key !== "Escape" && e.key !== "ArrowDown" && e.stopPropagation()}>
+                  // Typing is for the field (a menu would jump to the item that starts with the letter); Esc is the menu's.
+                  <Box
+                    component="li"
+                    role="presentation"
+                    sx={{ px: 1.5, pb: 1, minWidth: 300 }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") return;
+                      e.stopPropagation();
+                      if (e.key !== "ArrowDown") return;
+                      // The arrow down leaves the field for the first item (the menu itself would start from the item it had last).
+                      e.preventDefault();
+                      e.currentTarget.parentElement?.querySelector<HTMLElement>('[role=menuitem]:not([aria-disabled="true"])')?.focus();
+                    }}
+                  >
                     <ListFilter placeholder={t("pins.filter")} value={pinMenuFilter} onChange={setPinMenuFilter} shown={pinMenuRows.length} total={knownPins.length} autoFocus />
                   </Box>
+                )}
+                {pinMenuFilterable && pinMenuRows.length === 0 && (
+                  <MenuItem disabled sx={{ whiteSpace: "normal", maxWidth: 340 }}>
+                    {t("list.filterNone")}
+                  </MenuItem>
                 )}
                 {knownPins.length === 0 && (
                   <MenuItem disabled sx={{ whiteSpace: "normal", maxWidth: 340 }}>
