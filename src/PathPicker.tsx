@@ -188,7 +188,8 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
       )}
       <TextField
         label={label}
-        placeholder={t("browse.openPathSample")}
+        // The sidebar's field is narrow (a 1100 px window at 150 %): a sample that fits; the tooltip has the whole one.
+        placeholder={t(dropdown ? "browse.openPathShort" : "browse.openPathSample")}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onFocus={onFocus}

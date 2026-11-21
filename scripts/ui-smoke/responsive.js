@@ -48,6 +48,17 @@
       return r.left >= -0.5 && r.top >= -0.5 && r.right <= page.clientWidth + 0.5 && r.bottom <= page.clientHeight + 0.5;
     };
     const problems = [];
+    // How wide a text is in an input's own font, and how much room the input has for it.
+    const pen = document.createElement("canvas").getContext("2d");
+    const textWidth = (input, text) => {
+      pen.font = getComputedStyle(input).font;
+      return pen.measureText(text).width;
+    };
+    const textRoom = (input) => input.clientWidth - parseFloat(getComputedStyle(input).paddingLeft) - parseFloat(getComputedStyle(input).paddingRight);
+    // What lookAtBrowse measured of the path field's sample, for the line each cell prints.
+    let samples = [];
+    // The width the whole sample ("bucket/folder/") would need there: what the short one is for.
+    let longSample = 0;
     // Every screen: nothing scrolls sideways (the page, the pane of a view, a dialog), and a heading that is cut short has a tooltip.
     function look(where) {
       const bad = (what) => problems.push(`${where}: ${what}`);
@@ -66,6 +77,15 @@
       if (!side || !inView(side)) bad("the sidebar is not wholly in view");
       if (!card || !inView(card)) bad(`the bucket card is not wholly in view (it ends at ${card ? Math.round(card.getBoundingClientRect().bottom) : "?"} of ${page.clientHeight} px)`);
       if (![button(T("app.pinned")), button(T("app.recent")), last(all(sel("tabs.new")))].every((b) => b && inView(b))) bad("the tab bar pushes its buttons out of the window");
+      // The sample in the sidebar's path field is read whole: its text, in the field's own font, fits the room the input has.
+      const path = last(all("aside input").filter((i) => i.placeholder === T("browse.openPathShort")));
+      if (!path) bad("the sidebar has no Open-path field with the short sample");
+      else {
+        const [need, room] = [textWidth(path, path.placeholder), textRoom(path)];
+        if (need > room) bad(`the sample "${path.placeholder}" of the Open-path field is cut short (${Math.ceil(need)} in ${Math.floor(room)} px)`);
+        samples.push(`${Math.ceil(need)} of ${Math.floor(room)} px`);
+        longSample = Math.ceil(textWidth(path, T("browse.openPathSample")));
+      }
       for (const list of all('[role="table"]')) {
         list.scrollLeft = 8;
         if (list.scrollLeft !== 0) bad(`the object list scrolls sideways (${list.scrollWidth} in ${list.clientWidth} px)`);
@@ -107,6 +127,7 @@
       await waitFor(() => Math.abs(window.innerWidth - w) <= 2 && Math.abs(window.innerHeight - h) <= 2, `a ${width}x${HEIGHT} window at ${scale} % to be ${w}x${h} CSS px (it is ${window.innerWidth}x${window.innerHeight})`);
       const name = `${width}x${HEIGHT} at ${scale} %`;
       const before = problems.length;
+      samples = [];
       tabs()[0].click();
       await waitFor(() => connectionShown() === "lab", "the first tab");
       await sleep(300); // the media queries and the measured pane follow the resize
@@ -128,7 +149,7 @@
       look(`${name}, Connections`);
       await click(T("app.browse"));
       const found = problems.slice(before);
-      await say(`${name} (${window.innerWidth}x${window.innerHeight} CSS px): ${found.length ? found.join("; ") : "ok"}`);
+      await say(`${name} (${window.innerWidth}x${window.innerHeight} CSS px): ${found.length ? found.join("; ") : "ok"}; path sample "${T("browse.openPathShort")}" ${samples.join(", ") || "not measured"} (the long one: ${longSample} px)`);
     }
     // One slot of the shared clock per width (the shell counts the `shot` lines of this file, so no loop around them).
     for (const scale of SCALES) await cell(WIDTHS[0], scale);
