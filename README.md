@@ -183,6 +183,8 @@ The cluster administration screens (users, keys, caps, quotas, onboarding from C
   tag; a notice appears only when that release is newer than the version you run. The request carries none of your data;
   when GitHub cannot be reached the app silently skips it.
 
+![A newer release: the badge in the top bar (the release, v9.9.9, is a canned answer of the test run)](docs/images/update.png)
+
 Every CSP directive and the handling of presigned URLs in detail: [docs/SECURITY.md](docs/SECURITY.md) ([Tiếng Việt](docs/SECURITY.vi.md)).
 
 ## Troubleshooting

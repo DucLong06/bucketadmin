@@ -111,13 +111,14 @@
     await waitFor(() => button(T("app.connections")), "the app", 30000);
     await waitFor(() => seen("app.update.toast", { tag: "v9.9.9" }) && button(T("app.update.open")), "update toast");
     check(all(".MuiChip-root").some((c) => c.textContent === T("app.update.badge", { tag: "v9.9.9" })), "update badge in the masthead");
-    // The badge is checked above; it is canned, so the pictures (the README ones come from this run) do not show it.
-    // visibility, not display: the masthead keeps its width for the "does not scroll sideways" checks.
-    document.head.appendChild(document.createElement("style")).textContent = '.MuiChip-root[title*="v9.9.9"] { visibility: hidden; }';
     check(!button("Users") && !button("Buckets") && !button("Audit"), "no admin screens");
     await click(T("app.connections"));
     const savedRows = () => all(starts("conn.remove")).length;
     await waitFor(() => all(sel("conn.countAria", { n: 20 })).length === 1 && savedRows() === 20 && hasText(T("conn.add")), "twenty saved connections, counted in a badge");
+    // One picture with the badge (docs/images/update*.png); the later pictures do not show the canned release.
+    await shot("00a-update-badge");
+    // visibility, not display: the masthead keeps its width for the "does not scroll sideways" checks.
+    document.head.appendChild(document.createElement("style")).textContent = '.MuiChip-root[title*="v9.9.9"] { visibility: hidden; }';
     const search = await waitFor(() => last(all(`input${sel("conn.search")}`)), "the search field of the saved connections");
     setValue(search, "s3-07.");
     await waitFor(() => savedRows() === 1 && hasText(T("browse.filterCount", { n: 1, m: 20 })), "search by a part of the endpoint");

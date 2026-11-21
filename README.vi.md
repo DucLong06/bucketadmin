@@ -175,6 +175,8 @@ Các màn hình quản trị cụm (user, key, caps, quota, onboarding từ CSV)
   chỉ báo khi release đó mới hơn bản bạn đang chạy. Request không mang dữ liệu nào của bạn; không tới được GitHub thì app im
   lặng bỏ qua.
 
+![Có bản mới: huy hiệu trên thanh trên cùng (bản v9.9.9 là câu trả lời giả của lần chạy kiểm thử)](docs/images/update.vi.png)
+
 Chi tiết từng directive của CSP và cách xử lý presigned URL: [docs/SECURITY.vi.md](docs/SECURITY.vi.md) ([English](docs/SECURITY.md)).
 
 ## Lỗi thường gặp
