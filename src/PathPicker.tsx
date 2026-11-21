@@ -193,7 +193,6 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
         onChange={(e) => onChange(e.target.value)}
         onFocus={onFocus}
         onBlur={onBlur}
-        onKeyDown={onKeyDown}
         size="small"
         fullWidth
         autoFocus={autoFocus}
@@ -203,7 +202,8 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
         helperText={wrong && split.error ? t(split.error) : dropdown ? undefined : (helperText ?? t("browse.openPathHelp"))}
         inputRef={inputRef}
         slotProps={{
-          htmlInput: { style: { fontFamily: tokens.mono }, spellCheck: false, autoComplete: "off", "aria-label": ariaLabel, required: !optional },
+          // On the input, not the TextField (whose root is a div): the handler reads the caret.
+          htmlInput: { style: { fontFamily: tokens.mono }, spellCheck: false, autoComplete: "off", "aria-label": ariaLabel, required: !optional, onKeyDown },
           inputLabel: { shrink: true },
           input: action ? { sx: { pr: 0.5 }, endAdornment: action } : undefined,
         }}

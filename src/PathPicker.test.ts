@@ -124,6 +124,8 @@ test("Tab and → complete the highlighted row and the next level is asked about
   // The view hands the keys of its field to whoever holds the highlight.
   const keys: string[] = [];
   const field = elements(PathPickerView({ value: "media/sc", onChange: () => {}, label: "Open path", chips: [], probe: null, dropdown: { open: true, highlight: 0 }, onKeyDown: (e) => keys.push(e.key) })).find((e) => e.props.label === "Open path");
-  (field?.props.onKeyDown as (e: unknown) => void)({ key: "Tab" });
+  // On the input itself: the TextField's root is a div, where the handler's caret check threw (no real Tab took a row).
+  expect(field?.props.onKeyDown).toBeUndefined();
+  ((field?.props.slotProps as { htmlInput: { onKeyDown: (e: unknown) => void } }).htmlInput.onKeyDown)({ key: "Tab" });
   expect(keys).toEqual(["Tab"]);
 });
