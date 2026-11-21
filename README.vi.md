@@ -10,8 +10,7 @@ App nói chuyện thẳng với endpoint S3 của RGW. Không cần cài gì lê
 
 ![Duyệt bucket với nhiều tab](docs/images/browse.vi.png)
 
-Ảnh trong tài liệu này chụp từ bài smoke test chạy với một cụm thử nghiệm; huy hiệu "Có bản mới v9.9.9" là câu trả lời giả lập
-của bài test cho phần kiểm tra bản mới.
+Ảnh trong tài liệu này chụp từ bài smoke test chạy với một cụm thử nghiệm.
 
 ## Tính năng
 
@@ -58,7 +57,11 @@ của bài test cho phần kiểm tra bản mới.
 - Mọi thay đổi bạn làm (upload, xoá, đổi ACL…) được ghi vào một audit log cục bộ (SQLite, `audit.db` trong thư mục dữ liệu của
   app); log không bao giờ chứa secret hay presigned URL.
 
+![Giao diện sáng](docs/images/browse.light.vi.png)
+
 ![Thêm kết nối](docs/images/connection.vi.png)
+
+![Nhiều kết nối đã lưu: có số đếm và ô tìm](docs/images/connections-many.vi.png)
 
 ![Xem trước Parquet](docs/images/parquet.vi.png)
 

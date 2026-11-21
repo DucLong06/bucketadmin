@@ -11,8 +11,7 @@ needed.
 
 ![Browsing a bucket in several tabs](docs/images/browse.png)
 
-The pictures in this document come from the smoke test, run against a test cluster; the "New version v9.9.9" badge is the
-canned answer that test gives the update check.
+The pictures in this document come from the smoke test, run against a test cluster.
 
 ## Features
 
@@ -65,7 +64,11 @@ canned answer that test gives the update check.
 - Every change you make (upload, delete, ACL change…) is written to a local audit log (SQLite, `audit.db` in the app's data
   folder); the log never holds a secret or a presigned URL.
 
+![The light theme](docs/images/browse.light.png)
+
 ![Adding a connection](docs/images/connection.png)
+
+![Many saved connections: a count and a search field](docs/images/connections-many.png)
 
 ![Parquet preview](docs/images/parquet.png)
 

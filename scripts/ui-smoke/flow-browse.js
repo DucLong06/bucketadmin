@@ -76,7 +76,12 @@
       // Type-ahead: the label is typed, the matching choice (label, endpoint under it) is clicked.
       f.focus();
       setValue(f, label);
-      (await waitFor(() => all("[role=option]").find((o) => o.textContent.trim().startsWith(label)), `connection ${label} among the choices`)).click();
+      // A connection saved a moment ago arrives with the next reload of the profiles, and that reload puts the
+      // field back to the connection in use: the label is typed again until its choice is there.
+      (await waitFor(() => {
+        if (connectionField().value !== label) setValue(connectionField(), label);
+        return all("[role=option]").find((o) => o.textContent.trim().startsWith(label));
+      }, `connection ${label} among the choices`)).click();
       await waitFor(() => connectionShown() === label && all("[role=option]").length === 0, `connection ${label} chosen`);
     };
     const bucketRow = (name) => all(bucketButtons).find((row) => row.textContent.trim() === name);
@@ -107,6 +112,9 @@
     await waitFor(() => button(T("app.connections")), "the app", 30000);
     await waitFor(() => seen("app.update.toast", { tag: "v9.9.9" }) && button(T("app.update.open")), "update toast");
     check(all(".MuiChip-root").some((c) => c.textContent === T("app.update.badge", { tag: "v9.9.9" })), "update badge in the masthead");
+    // The badge is checked above; it is canned, so the pictures (the README ones come from this run) do not show it.
+    // visibility, not display: the masthead keeps its width for the "does not scroll sideways" checks.
+    document.head.appendChild(document.createElement("style")).textContent = '.MuiChip-root[title*="v9.9.9"] { visibility: hidden; }';
     check(!button("Users") && !button("Buckets") && !button("Audit"), "no admin screens");
     await click(T("app.connections"));
     const savedRows = () => all(starts("conn.remove")).length;
@@ -670,9 +678,9 @@
     await waitFor(() => connectionShown() === "lab" && objectLink("notes/readme.txt"), "the first tab, in the pinned folder");
     // The app bar's Pinned menu lists them too; a place that is open is shown in its tab.
     await click(T("app.pinned"));
-    await waitFor(() => menuItems().join(" | ") === [`daily notes · lab · ${BUCKET}/notes`, `lab · ${BUCKET}/media`, `lab · ${BUCKET}`].join(" | "), "the Pinned menu of the app bar");
+    await waitFor(() => menuItems().join(" | ") === [T("pins.add"), `daily notes · lab · ${BUCKET}/notes`, `lab · ${BUCKET}/media`, `lab · ${BUCKET}`].join(" | "), "the Pinned menu of the app bar: pin a path, then the pins");
     check(fits() && inWindow(last(all(".MuiMenu-paper"))), "the Pinned menu fits the window");
-    first(all("[role=menuitem]")).click();
+    all("[role=menuitem]")[1].click();
     await waitFor(() => menuItems().length === 0 && tabs().length === 2 && objectLink("notes/readme.txt"), "an open place is not opened twice");
     check(fits(), "Browse with the Pinned panel does not scroll sideways");
     await shot("37-pinned");
@@ -837,7 +845,7 @@
     await click(T("app.menu"));
     await clickSel("[role=menuitem]:last-child");
     const auditRows = () => all(`table${sel("audit.table")} tbody tr`);
-    await waitFor(() => auditRows().length >= 10 && hasText(T("audit.col.time", { tz: "UTC+7" })), "the audit log lists what the flow did", 20000);
+    await waitFor(() => auditRows().length >= 10 && all("th").some((h) => h.textContent === T("audit.col.time", { tz: "UTC+7" })), "the audit log lists what the flow did", 20000);
     check(auditRows().every((r) => r.getBoundingClientRect().height >= 40), "audit rows keep the size floor");
     check(!button(T("common.delete")) && !hasText("CSV") && fits(), "no delete or export, nothing scrolls sideways");
     const auditFilter = await waitFor(() => last(all(`input${sel("audit.filter")}`)), "the audit filter");
