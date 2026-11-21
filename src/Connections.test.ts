@@ -44,6 +44,10 @@ test("Save stays disabled until the four required fields are filled, and its too
   expect(saveBlocker({ ...filled, endpoint: "s3.example.com" })).toBe(t("endpoint.url"));
   expect(saveBlocker({ ...filled, adminAccessKey: "ADMIN" })).toBe(t("conn.adminHalf"));
   expect(saveBlocker({ ...filled, startPath: "my bucket/x" })).toBe(t("paths.bucketSpace"));
+  // A proxy of its own without a URL blocks too, and is named (its field may be folded away in Advanced).
+  expect(saveBlocker(filled, { mode: "custom", url: " " })).toBe("Still to fill in: Proxy URL");
+  expect(saveBlocker(filled, { mode: "custom", url: "http://proxy.example.com:3128" })).toBeNull();
+  expect(saveBlocker(filled, { mode: "none" })).toBeNull();
   // On screen: the empty form's Save button is disabled, inside a wrapper that says why.
   const html = render([saved]);
   expect(saveButton(html)?.[1]).toBe("Still to fill in: Display name");

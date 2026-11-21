@@ -33,13 +33,14 @@ const REQUIRED: [keyof ConnectionForm, Key][] = [
 const given = (form: ConnectionForm, key: keyof ConnectionForm) => !!form[key].trim() && !(key === "endpoint" && /^https?:\/\/$/.test(form[key].trim()));
 /** Why the form cannot be saved yet, in the words of the Save button's tooltip: the first required field
  *  that is still empty, else the first thing that is wrong; null when it can be saved. */
-export function saveBlocker(form: ConnectionForm): string | null {
+export function saveBlocker(form: ConnectionForm, proxy: Proxy | null = null): string | null {
   const missing = REQUIRED.find(([key]) => !given(form, key));
   if (missing) return t("conn.missing", { field: t(missing[1]) });
   // The admin key is optional, but half of one is a mistake.
   if (!!form.adminAccessKey.trim() !== !!form.adminSecretKey.trim()) return t("conn.adminHalf");
   const start = startPath(form.startPath);
-  return endpointError(form.endpoint) ?? (start.error ? t(start.error) : null);
+  // (A proxy of its own without a usable URL: said here too, the Advanced group may be closed.)
+  return endpointError(form.endpoint) ?? (start.error ? t(start.error) : proxyReady(proxy) ? null : t("conn.missing", { field: t("proxy.url") }));
 }
 /** Whether the Advanced group of the form is open: remembered until the app is closed. */
 const ADVANCED_OPEN = "ba.conn.advanced";
@@ -147,8 +148,9 @@ export function StartPaths({ value, onChange, typed, onTyped, ariaLabel, options
       filterSelectedOptions
       value={value}
       inputValue={typed}
-      // After Enter the field empties itself: not while what it holds was refused.
-      onInputChange={(_, text, reason) => (reason === "reset" && wrong) || onTyped(text)}
+      // After Enter the field empties itself (reason "createOption", which MUI's type leaves out): not while what
+      // it holds was refused. Typing and the clear button always go through.
+      onInputChange={(_, text, reason) => (reason !== "input" && reason !== "clear" && wrong) || onTyped(text)}
       onChange={(_, next) => {
         const chips = chipsAfter(value, next);
         if (chips) onChange(chips);
@@ -286,7 +288,7 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
   const adminGiven = !!form.adminAccessKey.trim() || !!form.adminSecretKey.trim();
   const adminReady = !!form.adminAccessKey.trim() === !!form.adminSecretKey.trim();
   const canTest = !busy && given(form, "endpoint") && !urlError && given(form, "accessKey") && given(form, "secretKey") && proxyReady(formProxy);
-  const blocker = saveBlocker(form);
+  const blocker = saveBlocker(form, formProxy);
   // Keys are pasted: a space or a line break around one is never part of it.
   const keys = { accessKey: form.accessKey.trim(), secretKey: form.secretKey.trim() };
   const formKind = useEndpointKind(form.endpoint, formProxy === null || formProxy.mode === "auto");
@@ -477,7 +479,7 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
             </Button>
             {/* A disabled button says nothing by itself: the wrapper carries why. */}
             <span title={blocker ?? undefined}>
-              <Button type="submit" variant="contained" disabled={busy || !!blocker || !proxyReady(formProxy)}>
+              <Button type="submit" variant="contained" disabled={busy || !!blocker}>
                 {t("common.save")}
               </Button>
             </span>
