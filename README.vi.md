@@ -19,14 +19,18 @@ App nói chuyện thẳng với endpoint S3 của RGW. Không cần cài gì lê
   không dùng proxy, hoặc một proxy tự nhập; endpoint nội bộ được gợi ý "Không dùng proxy".
 - **Nhiều tab**: mỗi tab ở một vị trí (kết nối + bucket + thư mục) và giữ nguyên danh sách, vị trí cuộn, các dòng đang chọn khi
   bạn sang tab khác (phím tắt: xem mục Phím tắt). Các tab đang mở sẽ hiện lại khi mở app lần sau.
-- **Mở đường dẫn**: gõ `bucket` hoặc `bucket/thư-mục/` để tới thẳng nơi đó, kể cả khi key của bạn chỉ được liệt kê đúng một
-  thư mục; mỗi kết nối có thể có một đường dẫn bắt đầu tự mở (xem Quyền theo thư mục).
+- **Mở đường dẫn**: một ô nằm ngay trong khung bucket ở cột bên trái. Gõ `bucket` hoặc `bucket/thư-mục/`, app gợi ý từng cấp
+  trong danh sách xổ xuống dưới ô: các bucket bắt đầu bằng phần đã gõ, rồi các thư mục S3 liệt kê tại đó. `Tab` hoặc `→` lấy
+  dòng đang chọn, `Enter` để mở. Dùng được cả khi key của bạn chỉ được liệt kê đúng một thư mục; mỗi kết nối có thể có các
+  đường dẫn bắt đầu, đường dẫn đầu tiên tự mở (xem Quyền theo thư mục).
 - **Đã ghim**: đánh dấu bucket và thư mục sâu bên trong, bấm một lần là tới, nằm ở cột bên trái và trên thanh ứng dụng, nhớ
   qua các lần mở app (xem Vị trí đã ghim).
-- **Danh sách bucket**: key sở hữu bao nhiêu bucket thì danh sách vẫn cao cố định và cuộn bên trong khung; trên 8 bucket có ô
-  lọc (`↑` `↓` di chuyển, `Enter` mở, `Esc` bỏ lọc), tiêu đề hiện số bucket.
+- **Danh sách bucket**: key sở hữu bao nhiêu bucket thì danh sách vẫn cao cố định và cuộn bên trong khung; từ 2 bucket trở
+  lên có ô lọc (`↑` `↓` di chuyển, `Enter` mở, `Esc` bỏ lọc), tiêu đề hiện số bucket.
+- **Danh sách nào cũng lọc được**: khung Đã ghim (trên 5 vị trí, theo tên hoặc đường dẫn), danh sách Gần đây đầy đủ (trên 8)
+  và trình đơn Đã ghim trên thanh app (trên 8) có cùng ô lọc như danh sách bucket: `Esc` để bỏ lọc, có số đếm "3 / 12".
 - **Bộ chọn đường dẫn cho thấy quyền của bạn**: Mở đường dẫn, ghim một đường dẫn gõ tay và đường dẫn bắt đầu của kết nối dùng
-  chung một bộ chọn. Nó hiện "Đường dẫn bạn dùng được" (đường dẫn bắt đầu, vị trí đã ghim, vị trí gần đây và, nếu key được đọc,
+  chung một bộ chọn. Nó hiện "Đường dẫn của bạn" (các đường dẫn bắt đầu, vị trí đã ghim, vị trí gần đây và, nếu key được đọc,
   phần bucket policy cấp) và, khi bạn gõ, các thư mục mà S3 liệt kê đúng tại đường dẫn đó, bấm một lần để đi sâu hơn. Khi key
   không được liệt kê ở đó, một gợi ý màu hổ phách báo như vậy; đường dẫn vẫn mở được. App không bao giờ liệt kê phía trên
   phần bạn đã gõ.
@@ -50,7 +54,11 @@ App nói chuyện thẳng với endpoint S3 của RGW. Không cần cài gì lê
   "Hiện object đã xoá" rồi khôi phục trong mục Phiên bản); bucket không bật thì app cảnh báo đỏ trước khi xoá.
 - **Sao chép URL**: presigned URL 15 phút của object, vào thẳng clipboard; thời hạn khác thì đặt trong mục Thuộc tính.
 - Tìm kiếm đệ quy có giới hạn (`*.parquet`, `logs/2026-*`…).
-- Mọi thời gian hiển thị theo giờ Việt Nam (UTC+7), ở cả hai ngôn ngữ.
+- Mọi thời gian hiển thị theo giờ Việt Nam (UTC+7), ở cả hai ngôn ngữ; múi giờ được ghi một lần dưới danh sách và trong chú
+  thích của tiêu đề cột "Sửa lần cuối".
+- **Vừa với cửa sổ nhỏ**: đã kiểm tra từ 900 đến 1920 px bề ngang, ở cỡ 100, 125 và 150%. Không có gì phải cuộn ngang; ở cửa
+  sổ hẹp danh sách bỏ cột ngày sửa và storage class (vẫn có trong phần thuộc tính của object), còn cột bên trái tự cuộn bên
+  trong, phía trên khung Tác vụ.
 - **Cài đặt chung** (cuối màn hình Kết nối): proxy cho cả app; cỡ giao diện với bộ nút `A- 100% A+` (80, 90, 100, 110, 125,
   150%) phóng to hay thu nhỏ toàn bộ app như zoom của trình duyệt và được nhớ cho lần mở sau; ngôn ngữ `VI | EN` đổi ngay,
   không cần mở lại app. Lần đầu app theo ngôn ngữ của hệ thống.
@@ -58,6 +66,8 @@ App nói chuyện thẳng với endpoint S3 của RGW. Không cần cài gì lê
   app); log không bao giờ chứa secret hay presigned URL.
 
 ![Giao diện sáng](docs/images/browse.light.vi.png)
+
+![Lần đầu mở app: chưa có kết nối](docs/images/connection-empty.vi.png)
 
 ![Thêm kết nối](docs/images/connection.vi.png)
 
@@ -79,6 +89,10 @@ App nói chuyện thẳng với endpoint S3 của RGW. Không cần cài gì lê
 
 ![Giao diện ở cỡ 125%](docs/images/zoom.vi.png)
 
+![Cửa sổ 900 px](docs/images/responsive-900.vi.png)
+
+![Cửa sổ 1920 px](docs/images/responsive-1920.vi.png)
+
 ## Cài đặt
 
 Yêu cầu: Ubuntu 22.04 trở lên (amd64), có dịch vụ keyring (GNOME Keyring hoặc tương đương — mặc định có sẵn trên Ubuntu desktop).
@@ -99,9 +113,12 @@ Gỡ: `sudo apt remove bucketadmin`. Dữ liệu của app nằm ở `~/.local/s
 
 ## Bắt đầu nhanh
 
-**1. Thêm kết nối.** Mục **Kết nối** → điền tên, endpoint (ví dụ `https://rgw.example.com` hoặc `http://rgw.example.com:7480`),
-access key và secret key của bạn → **Kiểm tra kết nối** → **Lưu**. Bước kiểm tra chỉ liệt kê bucket qua S3, nên key thường
-không có caps nào cũng dùng được.
+**1. Thêm kết nối.** Mục **Kết nối** → **Thêm kết nối** → điền bốn ô bắt buộc: tên, endpoint (đã có sẵn `https://`; ví dụ
+`https://rgw.example.com` hoặc `http://rgw.example.com:7480`), access key và secret key của bạn → **Kiểm tra kết nối** (kết
+quả hiện ngay trong form) → **Lưu**. Nút Lưu chỉ bấm được khi đủ bốn ô, và cho biết ô nào còn thiếu trước tiên. Bước kiểm
+tra chỉ liệt kê bucket qua S3, nên key thường không có caps nào cũng dùng được. Đường dẫn bắt đầu, key admin và proxy riêng
+nằm trong phần **Nâng cao**, phần lớn kết nối không cần tới. Kết nối đã lưu có nút **Mở bucket**, **Sửa** (đường dẫn bắt
+đầu, proxy) và một trình đơn gồm Kiểm tra và Xoá.
 
 **2. Browse.** Mục **Browse** → chọn một bucket. Bucket được chia sẻ cho bạn (S3 không liệt kê) thì mở theo đường dẫn ở ô
 **Mở đường dẫn** của cột bên trái.
@@ -119,8 +136,10 @@ thường key không được liệt kê bucket. Với key như vậy:
 - **Mở đường dẫn** (cột bên trái của mục Browse) nhận `bucket` hoặc `bucket/thư-mục/…` và tới đúng nơi đó. `s3://bucket/thư-mục/`
   hay có dấu `/` ở đầu cũng như nhau; đường dẫn của một file (`bucket/thư-mục/report.csv`) thì mở thư mục chứa file. Thư mục
   có tên giống tên file (`v1.2`) thì cần dấu `/` ở cuối.
-- **Đường dẫn bắt đầu** (ô không bắt buộc của kết nối, sửa được cả với kết nối đã lưu): `team-bucket/project-a/` tự mở mỗi khi
-  mở kết nối đó, ở mọi tab mới.
+- **Đường dẫn bắt đầu** (không bắt buộc, trong phần Nâng cao của form; với kết nối đã lưu thì bấm Sửa): gõ
+  `team-bucket/project-a/` rồi nhấn `Enter` để thêm thành một thẻ, `×` để bỏ; một kết nối có thể có nhiều đường dẫn. Đường
+  dẫn đầu tiên tự mở mỗi khi mở kết nối đó, ở mọi tab mới. Tất cả đều được gợi ý ở mục "Đường dẫn của bạn" của bộ chọn
+  đường dẫn và là những dòng đầu của khung Đã ghim, dưới vạch "Từ kết nối".
 - Khi key không được liệt kê bucket, khung bucket nói rõ điều đó thay vì báo lỗi, và con trỏ đã nằm sẵn trong ô Mở đường dẫn.
   "Kiểm tra kết nối" vẫn đạt với key như vậy và nhắc bạn đặt đường dẫn bắt đầu.
 - Thanh đường dẫn vẫn đi ngược lên được. Phía trên thư mục của bạn, S3 trả lời "không có quyền"; thông báo khi đó chỉ lại về
@@ -142,7 +161,7 @@ Ghim những nơi bạn dùng hằng ngày: một bucket, hoặc một thư mụ
 
 ### Key admin (không bắt buộc)
 
-Khi thêm kết nối có thể nhập thêm một key admin. App chỉ dùng nó cho hai việc, và không bao giờ dùng nó để ký request S3:
+Khi thêm kết nối có thể nhập thêm một key admin (trong phần Nâng cao). App chỉ dùng nó cho hai việc, và không bao giờ dùng nó để ký request S3:
 
 | Việc | Caps cần ở key admin |
 |---|---|

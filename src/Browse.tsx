@@ -544,6 +544,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
             // Room for the focus rings the scroll box would cut.
             p: "4px",
             m: "-4px",
+            // The connection field has a width floor for other screens; here it is as wide as the column, less the scroll bar.
+            "& > .MuiTextField-root, & > .MuiAutocomplete-root": { minWidth: 0 },
             // What the sidebar holds besides the bucket list (see LIST_MAX_HEIGHT in BucketPanel).
             "--ba-side-rest": canBrowseAs ? "451px" : "395px",
             [SHORT]: { maxHeight: "calc(var(--ba-pane-h, 100vh) - 12px)", gap: 1, "--ba-side-rest": canBrowseAs ? "332px" : "276px" },
