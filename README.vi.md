@@ -225,8 +225,8 @@ npm ci
 npm run tauri dev                      # chạy app ở chế độ phát triển
 npm test && npm run build              # test và build frontend
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-scripts/build-deb.sh 0.1.3~dev1        # đóng gói deb
-scripts/render-gate.sh bucketadmin_0.1.3~dev1_amd64.deb   # kiểm tra gói vừa build có hiện giao diện thật
+scripts/build-deb.sh 0.1.4~dev1        # đóng gói deb
+scripts/render-gate.sh bucketadmin_0.1.4~dev1_amd64.deb   # kiểm tra gói vừa build có hiện giao diện thật
 python3 scripts/gen-icons.py           # render lại bộ icon từ src-tauri/icons/icon.svg (cần google-chrome, Pillow)
 ```
 

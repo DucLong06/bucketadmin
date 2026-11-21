@@ -234,8 +234,8 @@ npm ci
 npm run tauri dev                      # run the app in development mode
 npm test && npm run build              # test and build the frontend
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-scripts/build-deb.sh 0.1.3~dev1        # build the deb
-scripts/render-gate.sh bucketadmin_0.1.3~dev1_amd64.deb   # check that the package just built shows the real interface
+scripts/build-deb.sh 0.1.4~dev1        # build the deb
+scripts/render-gate.sh bucketadmin_0.1.4~dev1_amd64.deb   # check that the package just built shows the real interface
 python3 scripts/gen-icons.py           # render the icon set again from src-tauri/icons/icon.svg (needs google-chrome, Pillow)
 ```
 
