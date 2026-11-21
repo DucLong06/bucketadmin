@@ -137,6 +137,8 @@ Ghim những nơi bạn dùng hằng ngày: một bucket, hoặc một thư mụ
   Bấm là mở trong tab hiện tại; `Ctrl`+bấm hoặc nút chuột giữa thì mở tab mới.
 - Chuột phải vào một vị trí đã ghim để mở trong tab mới, đổi tên, bỏ ghim, chuyển lên hoặc chuyển xuống. Tối đa 100 vị trí.
 - Nút **Đã ghim** cạnh Gần đây trên thanh ứng dụng liệt kê 15 vị trí đầu, dùng được ở mọi nơi trong app.
+- Ở cột bên trái, danh sách bucket đứng đầu; khung **Đã ghim** và **Gần đây** nằm dưới nó. Bấm vào tiêu đề của một khung để
+  thu khung về đúng một dòng đó (nhớ qua các lần mở app); Gần đây hiện 5 vị trí mới nhất cho tới khi bấm "Hiện tất cả".
 
 ### Key admin (không bắt buộc)
 

@@ -144,6 +144,8 @@ Pin what you use every day: a bucket, or a folder any number of levels down.
   connections under a divider. A click opens the place in the current tab; `Ctrl`+click or the middle button opens a new tab.
 - Right-click a pin to open it in a new tab, rename it, unpin it, or move it up or down. Up to 100 pins are kept.
 - The **Pinned** button next to Recent in the app bar lists the first 15 from anywhere in the app.
+- In the left column the bucket list comes first; the **Pinned** and **Recent** cards follow it. A click on a card's heading
+  folds the card to that one line (remembered between runs), and Recent shows the 5 newest places until "Show all".
 
 ### Admin key (optional)
 
