@@ -2,9 +2,9 @@ import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { expect, test } from "vitest";
 import type { Profile } from "./api";
-import Connections, { connected, outcomeAlert, saveBlocker, type ConnectionForm } from "./Connections";
+import Connections, { chipsAfter, connected, outcomeAlert, saveBlocker, StartPaths, type ConnectionForm } from "./Connections";
 import { applyLang, t } from "./i18n";
-import { splitPath, startPath } from "./paths";
+import { addStartPath, splitPath, startPath } from "./paths";
 import { ClusterSelect, duplicateLabels, filterProfiles, SEARCH_ABOVE } from "./ui";
 
 const nothing = () => {};
@@ -18,8 +18,8 @@ test("the start path round-trips: typed, stored form, shown again on the saved c
   expect(sent).toEqual({ path: "team-bucket/project-a/" });
   if (sent.error) return;
   // The profile as `list_profiles` gives it back, on the Connections screen.
-  const html = render([{ ...saved, start_path: sent.path }]);
-  expect(text(html)).toMatch(/starts at\s+team-bucket\/project-a\//);
+  const html = render([{ ...saved, start_paths: [sent.path, "logs"] }]);
+  expect(text(html)).toMatch(/starts at\s+team-bucket\/project-a\/\s+·\s+logs/);
   // And where Browse lands with it.
   expect(splitPath(sent.path)).toEqual({ bucket: "team-bucket", prefix: "project-a/" });
 });
@@ -59,7 +59,7 @@ test("Required is always open; Advanced (start path, admin key, proxy) is collap
   for (const label of ["Display name", "Endpoint", "My access key", "My secret key"]) expect(html).toContain(`${label}`);
   expect(text(html)).toContain("Required");
   expect(html).toMatch(/<button[^>]*aria-expanded="false"[^>]*aria-controls="conn-advanced"/);
-  expect(html).not.toContain("Start path (optional)");
+  expect(html).not.toContain("Start paths (optional)");
   expect(html).not.toContain("Admin access key");
   // Opened once in this run of the app: open the next time the screen is shown.
   const kept: Record<string, string> = { "ba.conn.advanced": "1" };
@@ -67,8 +67,8 @@ test("Required is always open; Advanced (start path, admin key, proxy) is collap
   try {
     const open = render([saved]);
     expect(open).toMatch(/<button[^>]*aria-expanded="true"[^>]*aria-controls="conn-advanced"/);
-    expect(open).toContain("Start path (optional)");
-    expect(open).toContain("Opened automatically on connect, e.g. team-bucket/project-a/");
+    expect(open).toContain("Start paths (optional)");
+    expect(open).toContain("Enter adds a path, e.g. team-bucket/project-a/. The first one opens on connect");
     expect(open).toContain("Admin access key");
     applyLang("vi");
     expect(render([saved])).toContain(t("conn.startPath"));
@@ -113,6 +113,32 @@ test("first run: a centred card with one button and what is needed; a saved row 
   // Delete and Test are in the menu, the per-connection settings behind Edit.
   expect(row).not.toContain(t("conn.remove", { label: "lab" }));
   expect(row).not.toContain(t("conn.saveProxy"));
+});
+
+// ---- M12.5: several start paths, as chips
+
+test("the start paths are a chip input: Enter adds what is typed in its stored form, × removes, a repeat or a non-path adds nothing", () => {
+  applyLang("en");
+  // What Enter (or picking a suggestion) does: the chip input reports the list with the raw text at its end.
+  expect(chipsAfter([], [" s3://team-bucket/project-a "])).toEqual(["team-bucket/project-a/"]);
+  expect(chipsAfter(["team-bucket/project-a/"], ["team-bucket/project-a/", "logs/"])).toEqual(["team-bucket/project-a/", "logs"]);
+  // The same place typed another way is not a second chip; a text that cannot be a path changes nothing.
+  expect(chipsAfter(["logs"], ["logs", "/logs/"])).toEqual(["logs"]);
+  expect(chipsAfter(["logs"], ["logs", "my bucket/x"])).toBeNull();
+  // What × on a chip (or Backspace) does: the list comes back shorter.
+  expect(chipsAfter(["a", "b/c/"], ["b/c/"])).toEqual(["b/c/"]);
+  expect(chipsAfter(["a"], [])).toEqual([]);
+  // Text still in the field when Save is pressed counts as the last chip.
+  expect(addStartPath(["a"], "b/c")).toEqual({ paths: ["a", "b/c/"] });
+  expect(addStartPath(["a"], "  ")).toEqual({ paths: ["a"] });
+  expect(addStartPath(["a"], "..")).toEqual({ error: "paths.dots" });
+  // On screen: one chip per path, each with its ×; a refused text says why under the field.
+  const input = (typed: string) => renderToString(createElement(StartPaths, { value: ["team-bucket/project-a/", "logs"], onChange: nothing, typed, onTyped: nothing }));
+  expect([...input("").matchAll(/class="[^"]*MuiChip-label[^"]*">([^<]*)</g)].map((chip) => chip[1])).toEqual(["team-bucket/project-a/", "logs"]);
+  expect(input("").match(/class="[^"]*MuiChip-deleteIcon/g)).toHaveLength(2);
+  expect(input("")).toContain("Start paths (optional)");
+  expect(text(input("my bucket/x"))).toContain(t("paths.bucketSpace"));
+  expect(text(input(""))).not.toContain(t("paths.bucketSpace"));
 });
 
 const fake = (n: number, label = `site-${String(n).padStart(2, "0")}`): Profile => ({ id: `f${n}`, label, endpoint: `http://s3-${n}.example.invalid:7480`, access_key: `AKIAEXAMPLE0000000${String(n).padStart(2, "0")}` });

@@ -33,6 +33,8 @@ export NAMES="$(grep -oE 'await shot\("[^"]+"\)' "$FLOW_JS" | sed -E 's/.*"(.*)"
 ENTER_AT="06-csv 28-copy-url"
 # Slots at which the shell presses a real Ctrl+D (a synthetic key event does not prove a shortcut).
 CTRL_D_AT="38-ctrl-d"
+# Slots at which the shell presses a real Tab: the path field of the bucket card takes its highlighted suggestion.
+TAB_AT="38a-path-suggest"
 # Debug builds take GitHub's "latest release" answer from here: the flow sees a newer release.
 export BUCKETADMIN_DEV_UPDATE='{"tag_name":"v9.9.9","html_url":"https://github.com/DucLong06/bucketadmin/releases/tag/v9.9.9"}'
 # Files the flow uploads, and where its downloads go. Native file dialogs cannot be driven
@@ -110,6 +112,11 @@ for name in $NAMES; do
     # A presigned URL is a credential: only its path is printed, never the signature.
     echo "clipboard after a real Enter at $name: ${clip%%\?*}$([[ "$clip" == *X-Amz-Signature=* ]] && echo "?… (presigned, X-Amz-Expires=$(printf '%s' "$clip" | grep -o 'X-Amz-Expires=[0-9]*' | cut -d= -f2))")"
     shot "${name}-copied"
+  fi
+  if [[ " $TAB_AT " == *" $name "* ]]; then
+    # M12.5: a real Tab in the path field takes the highlighted suggestion (and does not leave the field).
+    xdotool key Tab; sleep 0.8
+    shot "${name}-pressed"
   fi
   if [[ " $CTRL_D_AT " == *" $name "* ]]; then
     xdotool key ctrl+d; sleep 0.8

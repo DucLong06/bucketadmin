@@ -2,29 +2,30 @@ import { createElement, isValidElement, type ReactElement, type ReactNode } from
 import { renderToString } from "react-dom/server";
 import { beforeEach, expect, test } from "vitest";
 import { applyLang, t } from "./i18n";
-import { accessChips, appendChild, PathPickerView, type Probe } from "./PathPicker";
+import { accessChips, appendChild, PathPickerView, suggestions, suggestKey, type Probe } from "./PathPicker";
 
 beforeEach(() => applyLang("en"));
 
 const at = (bucket: string, prefix = "", clusterId = "c1", uid = "") => ({ clusterId, uid, bucket, prefix });
 const pin = (bucket: string, prefix = "", clusterId = "c1") => ({ place: at(bucket, prefix, clusterId), label: "", added: 0 });
 const known = {
-  startPath: "team/reports/",
+  startPaths: ["team/reports/", "team/drafts/"],
   pins: [pin("logs", "2026/"), pin("team", "reports/"), pin("elsewhere", "", "c2")],
   recents: [at("media"), at("logs", "2026/"), at("other", "", "c1", "someone"), at("", "")],
   policy: { media: ["", "scoped/"], logs: ["2026/"] },
 };
 
-test("chips come in the order start path, pins, recent places, policy; a path is shown once, under its first source", () => {
+test("chips come in the order start paths (all of them), pins, recent places, policy; a path is shown once, under its first source", () => {
   expect(accessChips(known, "c1")).toEqual([
     { path: "team/reports/", source: "start" },
+    { path: "team/drafts/", source: "start" },
     { path: "logs/2026/", source: "pin" },
     { path: "media", source: "recent" },
     { path: "media/scoped/", source: "policy" },
   ]);
   // Another user's key: the start path belongs to the connection's own key, and so do its places.
   expect(accessChips({ ...known, policy: {} }, "c1", "someone")).toEqual([{ path: "other", source: "recent" }]);
-  expect(accessChips({ ...known, startPath: undefined, policy: {} }, "c2")).toEqual([{ path: "elsewhere", source: "pin" }]);
+  expect(accessChips({ ...known, startPaths: undefined, policy: {} }, "c2")).toEqual([{ path: "elsewhere", source: "pin" }]);
 });
 
 const view = (probe: Probe | null, onChange: (path: string) => void = () => {}) => ({ value: "media/sc", onChange, label: t("browse.openPath"), chips: accessChips(known, "c1"), probe });
@@ -32,9 +33,13 @@ const html = (probe: Probe | null) => renderToString(createElement(PathPickerVie
 
 test("the chips render in that order, each with the icon of its source", () => {
   const sources = [...html(null).matchAll(/data-source="(\w+)"/g)].map((m) => m[1]);
-  expect(sources).toEqual(["start", "pin", "recent", "policy"]);
+  expect(sources).toEqual(["start", "start", "pin", "recent", "policy"]);
   const labels = [...html(null).matchAll(/aria-label="Use the path ([^"]*)"/g)].map((m) => m[1]);
-  expect(labels).toEqual(["team/reports/", "logs/2026/", "media", "media/scoped/"]);
+  expect(labels).toEqual(["team/reports/", "team/drafts/", "logs/2026/", "media", "media/scoped/"]);
+  // M12.5: the caption says whose they are.
+  expect(html(null)).toContain("Your paths");
+  applyLang("vi");
+  expect(html(null)).toContain("Đường dẫn của bạn");
 });
 
 test("a refused listing is an amber hint, not an error, in both languages", () => {
@@ -68,4 +73,57 @@ test("clicking a suggested folder appends it to what is typed up to the last sla
   const chip = elements(tree).find((e) => e.props["aria-label"] === "Use the path logs/2026/");
   (chip?.props.onClick as () => void)();
   expect(typed).toEqual(["media/scoped/sub2/", "logs/2026/"]);
+});
+
+// ---- M12.5: the sidebar's form of the picker, a field with the suggestions in a dropdown under it
+
+const chips = accessChips(known, "c1");
+const drop = (value: string, probe: Probe | null, open = true) =>
+  renderToString(createElement(PathPickerView, { value, onChange: () => {}, label: t("browse.openPath"), chips, probe, dropdown: { open, highlight: 0, buckets: ["media", "metrics", "logs"] } }));
+const rowsOf = (markup: string) => [...markup.matchAll(/role="listitem"[^>]*aria-label="([^"]*)"|aria-label="([^"]*)"[^>]*role="listitem"/g)].map((m) => m[1] ?? m[2]);
+
+test("the dropdown shows the folders S3 lists at the typed path, then the known places that contain it; only while it is open", () => {
+  const listed: Probe = { status: "ok", bucket: "media", prefix: "", children: ["raw", "tmp"] };
+  const open = drop("media/", listed);
+  expect(rowsOf(open)).toEqual(["Go into the folder raw", "Go into the folder tmp", "Use the path media/scoped/"]);
+  // Rows, not chips; the first one is the highlighted one, and each says where it comes from.
+  expect(open).not.toContain("MuiChip");
+  expect(open.match(/class="[^"]*Mui-focusVisible/g)).toHaveLength(1);
+  expect([...open.matchAll(/data-source="(\w+)"/g)].map((m) => m[1])).toEqual(["folder", "folder", "policy"]);
+  expect(rowsOf(drop("media/", listed, false))).toEqual([]);
+  // Nothing typed: every known place, the start paths first.
+  expect(suggestions("", null, chips).map((row) => row.path)).toEqual(["team/reports/", "team/drafts/", "logs/2026/", "media", "media/scoped/"]);
+  // A bucket's name half typed: the listed buckets that start with it, then the known places that contain it.
+  expect(suggestions("me", null, chips, ["media", "metrics", "logs"]).map((row) => `${row.source} ${row.path}`)).toEqual(["bucket media/", "bucket metrics/", "recent media", "policy media/scoped/"]);
+  // A row that would change nothing is not offered; s3:// and a leading slash are not part of what is typed.
+  expect(suggestions("s3://media", null, chips, ["media"]).map((row) => row.path)).toEqual(["media/", "media/scoped/"]);
+  // A refused listing: the amber hint, no rows of folders, and nothing in red.
+  const denied = drop("media/secret/", { status: "denied" });
+  expect(denied).toContain(t("pathPicker.deniedHint"));
+  expect(denied).not.toMatch(/MuiAlert-[a-zA-Z]*[eE]rror/);
+  expect(rowsOf(denied)).toEqual([]);
+});
+
+test("Tab and → complete the highlighted row and the next level is asked about; the arrows move; Enter is not the rows' key", () => {
+  const rows = suggestions("media/sc", { status: "ok", bucket: "media", prefix: "sc", children: ["scoped", "scratch"] }, []);
+  expect(rows.map((row) => row.path)).toEqual(["media/scoped/", "media/scratch/"]);
+  expect(suggestKey("Tab", rows, 0)).toEqual({ value: "media/scoped/" });
+  expect(suggestKey("ArrowDown", rows, 0)).toEqual({ highlight: 1 });
+  expect(suggestKey("ArrowDown", rows, 1)).toEqual({ highlight: 1 });
+  expect(suggestKey("ArrowUp", rows, 1)).toEqual({ highlight: 0 });
+  expect(suggestKey("Tab", rows, 1)).toEqual({ value: "media/scratch/" });
+  // → completes only with the caret at the end of the text; elsewhere it moves the caret.
+  expect(suggestKey("ArrowRight", rows, 0, true)).toEqual({ value: "media/scoped/" });
+  expect(suggestKey("ArrowRight", rows, 0, false)).toBeNull();
+  // Enter opens what is typed (the form's business); with no rows Tab moves on to the next control.
+  expect(suggestKey("Enter", rows, 0)).toBeNull();
+  expect(suggestKey("Tab", [], 0)).toBeNull();
+  // The completed segment is the new typed path: its own folders are the next rows.
+  const deeper = suggestions("media/scoped/", { status: "ok", bucket: "media", prefix: "scoped/", children: ["sub"] }, []);
+  expect(suggestKey("Tab", deeper, 0)).toEqual({ value: "media/scoped/sub/" });
+  // The view hands the keys of its field to whoever holds the highlight.
+  const keys: string[] = [];
+  const field = elements(PathPickerView({ value: "media/sc", onChange: () => {}, label: "Open path", chips: [], probe: null, dropdown: { open: true, highlight: 0 }, onKeyDown: (e) => keys.push(e.key) })).find((e) => e.props.label === "Open path");
+  (field?.props.onKeyDown as (e: unknown) => void)({ key: "Tab" });
+  expect(keys).toEqual(["Tab"]);
 });

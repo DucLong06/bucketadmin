@@ -1,10 +1,11 @@
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
-import { Alert, Box, Button, Chip, IconButton, Menu, MenuItem, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import { type FormEvent, type ReactNode, useContext, useEffect, useState } from "react";
+import { Alert, Autocomplete, Box, Button, Chip, IconButton, Menu, MenuItem, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { invoke, isInternal, maskKey, type EndpointKind, type Opened, type Profile, type Proxy } from "./api";
 import { endpointError } from "./endpoint";
 import { t, type Key } from "./i18n";
-import { PathPicker } from "./PathPicker";
-import { startPath } from "./paths";
+import { AccessContext, accessChips } from "./PathPicker";
+import { addStartPath, startPath } from "./paths";
+import { tokens } from "./theme";
 import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
 import { ConfirmDialog, duplicateLabels, ErrorAlert, filterProfiles, FoldHeading, LangToggle, SEARCH_ABOVE, ThemeSwitch } from "./ui";
 import { stepScale, UI_SCALES } from "./zoom";
@@ -18,6 +19,7 @@ export const outcomeAlert = (o: Outcome, sx?: object, action?: ReactNode) =>
   o.severity === "error" ? <ErrorAlert error={o.text} sx={sx} /> : <Alert severity={o.severity} sx={sx} action={action}>{t(o.key, o.vars)}</Alert>;
 
 // A new connection is almost always https: the scheme is there to type after.
+// (`startPath`: what is typed into the start paths' field and not yet a chip; `startPaths`: the chips.)
 const emptyForm = { label: "", endpoint: "https://", accessKey: "", secretKey: "", startPath: "", adminAccessKey: "", adminSecretKey: "" };
 export type ConnectionForm = typeof emptyForm;
 /** The four fields a connection cannot do without, in the order of the form. */
@@ -110,20 +112,94 @@ function ProfileProxy({ profile, onChanged, fail }: { profile: Profile; onChange
     </Stack>
   );
 }
-/** One saved connection's start path: where its sessions land (for a key that may only list one folder). */
+/** The chips after the chip input reports `next`: one fewer (a chip's ×, or Backspace), or one more, the
+ *  text that was typed or picked, in its stored form. null: that text cannot be a path, nothing changes. */
+export const chipsAfter = (chips: string[], next: string[]): string[] | null => {
+  if (next.length <= chips.length) return next;
+  const added = addStartPath(chips, next[next.length - 1]);
+  return added.error ? null : added.paths;
+};
+
+type StartPathsProps = {
+  /** The chips: start paths in their stored form. */
+  value: string[];
+  onChange: (paths: string[]) => void;
+  /** What is typed and not yet a chip (saved with the chips all the same). */
+  typed: string;
+  onTyped: (text: string) => void;
+  /** Accessible name of the input when the label alone does not tell fields apart. */
+  ariaLabel?: string;
+  /** Places to pick from (the connection's pinned and recent ones). */
+  options?: string[];
+};
+
+/** The start paths of a connection as chips: Enter adds what is typed, × removes a chip. A text that
+ *  cannot be a path is said under the field and stays text. */
+export function StartPaths({ value, onChange, typed, onTyped, ariaLabel, options = [] }: StartPathsProps) {
+  const wrong = startPath(typed).error;
+  return (
+    <Autocomplete
+      multiple
+      freeSolo
+      fullWidth
+      size="small"
+      options={options}
+      filterSelectedOptions
+      value={value}
+      inputValue={typed}
+      // After Enter the field empties itself: not while what it holds was refused.
+      onInputChange={(_, text, reason) => (reason === "reset" && wrong) || onTyped(text)}
+      onChange={(_, next) => {
+        const chips = chipsAfter(value, next);
+        if (chips) onChange(chips);
+      }}
+      slotProps={{ chip: { sx: { fontFamily: tokens.mono, fontSize: 13.5 } } }}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={t("conn.startPath")}
+          placeholder={value.length ? undefined : t("browse.openPathSample")}
+          error={!!wrong}
+          helperText={wrong ? t(wrong) : t("conn.startPathHelp")}
+          slotProps={{ ...params.slotProps, inputLabel: { ...params.slotProps.inputLabel, shrink: true }, htmlInput: { ...params.slotProps.htmlInput, "aria-label": ariaLabel, spellCheck: false, style: { fontFamily: tokens.mono } } }}
+        />
+      )}
+    />
+  );
+}
+
+/** One saved connection's start paths: where its key works; its sessions land at the first. */
 function ProfileStartPath({ profile, onChanged, fail }: { profile: Profile; onChanged: () => void; fail: (e: unknown) => void }) {
-  const saved = profile.start_path ?? "";
+  const saved = profile.start_paths ?? [];
   const [draft, setDraft] = useState(saved);
-  useEffect(() => setDraft(saved), [saved]);
-  const next = startPath(draft);
+  const [typed, setTyped] = useState("");
+  useEffect(() => setDraft(saved), [saved.join("\n")]);
+  const { pins, recents } = useContext(AccessContext);
+  // What is still text counts as the last chip.
+  const next = addStartPath(draft, typed);
   return (
     <Stack direction="row" spacing={1} sx={{ mt: 2, alignItems: "flex-start" }}>
-      {/* Asks nothing until it is typed in. */}
-      <PathPicker clusterId={profile.id} lazy optional value={draft} onChange={setDraft} label={t("conn.startPath")} helperText={t("conn.startPathHelp")} ariaLabel={t("conn.startPathOf", { label: profile.label })} />
+      <StartPaths
+        value={draft}
+        onChange={setDraft}
+        typed={typed}
+        onTyped={setTyped}
+        ariaLabel={t("conn.startPathOf", { label: profile.label })}
+        options={accessChips({ pins, recents, policy: {} }, profile.id).map((chip) => chip.path)}
+      />
       <Button
-        onClick={() => next.error || invoke("profile_set_start_path", { id: profile.id, startPath: next.path }).then(onChanged).catch(fail)}
-        disabled={!!next.error || next.path === saved}
+        onClick={() =>
+          next.error ||
+          invoke("profile_set_start_paths", { id: profile.id, startPaths: next.paths })
+            .then(() => {
+              setTyped("");
+              onChanged();
+            })
+            .catch(fail)
+        }
+        disabled={!!next.error || next.paths.join("\n") === saved.join("\n")}
         aria-label={t("conn.saveStartPathFor", { label: profile.label })}
+        sx={{ flexShrink: 0 }}
       >
         {t("conn.saveStartPath")}
       </Button>
@@ -148,6 +224,7 @@ type Props = {
 
 export default function Connections({ profiles, onChanged, scale, onScale, onBrowse }: Props) {
   const [form, setForm] = useState(emptyForm);
+  const [startPaths, setStartPaths] = useState<string[]>([]);
   // First run: a card with one button; the form comes when it is asked for.
   const [adding, setAdding] = useState(false);
   const [advanced, setAdvanced] = useState(() => globalThis.sessionStorage?.getItem(ADVANCED_OPEN) === "1");
@@ -209,7 +286,6 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
   const adminGiven = !!form.adminAccessKey.trim() || !!form.adminSecretKey.trim();
   const adminReady = !!form.adminAccessKey.trim() === !!form.adminSecretKey.trim();
   const canTest = !busy && given(form, "endpoint") && !urlError && given(form, "accessKey") && given(form, "secretKey") && proxyReady(formProxy);
-  const start = startPath(form.startPath);
   const blocker = saveBlocker(form);
   // Keys are pasted: a space or a line break around one is never part of it.
   const keys = { accessKey: form.accessKey.trim(), secretKey: form.secretKey.trim() };
@@ -248,8 +324,11 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
       // The profile's own key is the one given first. With an admin key, that one is the
       // profile's key and "my key" is saved next to it as the key browse sessions sign with.
       const first = adminGiven ? { accessKey: form.adminAccessKey.trim(), secretKey: form.adminSecretKey.trim() } : keys;
-      const saved = await invoke<Profile>("add_profile", { label, endpoint, ...first, startPath: start.error ? "" : start.path });
+      // What is still text in the start paths' field counts as the last chip (Save is disabled while it cannot be one).
+      const paths = addStartPath(startPaths, form.startPath);
+      const saved = await invoke<Profile>("add_profile", { label, endpoint, ...first, startPaths: paths.error ? startPaths : paths.paths });
       setForm(emptyForm);
+      setStartPaths([]);
       setFormProxy(null);
       // The connection exists from here on. If one of these fails, it is still listed and
       // the error says why: remove it and add it again.
@@ -375,8 +454,7 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
             )}
             {advanced && (
               <Stack id="conn-advanced" spacing={2} sx={{ px: 2, pb: 2 }}>
-                {/* No connection yet, so nothing to ask S3: the picker only checks the text. */}
-                <PathPicker clusterId="" optional value={form.startPath} onChange={(startPath) => setForm({ ...form, startPath })} label={t("conn.startPath")} helperText={t("conn.startPathHelp")} />
+                <StartPaths value={startPaths} onChange={setStartPaths} typed={form.startPath} onTyped={(startPath) => setForm({ ...form, startPath })} />
                 <Typography variant="body2" color="text.secondary">
                   <strong>{t("conn.adminKey")}</strong> — {t("conn.adminHelp")}
                 </Typography>
@@ -475,9 +553,9 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
                     </>
                   )}
                 </Typography>
-                {p.start_path && (
-                  <Typography variant="body2" color="text.secondary" noWrap title={p.start_path}>
-                    {t("conn.startsAt")} <Mono>{p.start_path}</Mono>
+                {!!p.start_paths?.length && (
+                  <Typography variant="body2" color="text.secondary" noWrap title={p.start_paths.join("\n")}>
+                    {t("conn.startsAt")} <Mono>{p.start_paths.join("  ·  ")}</Mono>
                   </Typography>
                 )}
                 {testingRows.includes(p.id) && (

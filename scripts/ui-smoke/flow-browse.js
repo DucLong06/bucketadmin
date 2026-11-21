@@ -642,10 +642,11 @@
     await waitFor(() => hasText(T("browse.usingKeyOfUser", { uid: OWNER })) && all(bucketButtons).length === 2, "browsing with the owner's key", 20000);
     await click(T("browse.backToMyKey"));
     await waitFor(() => hasText(T("browse.usingKeyMine")) && hasText(T("browse.noBuckets")), "back on my own key", 20000);
-    await click(T("browse.openPath"));
-    await type(T("browse.openPath"), BUCKET);
-    (await field(T("browse.openPath"))).form.requestSubmit();
-    await dialogsGone();
+    // M12.5: the path is typed into the field of the bucket card itself.
+    const sidePath = await field(T("browse.openPath"));
+    setValue(sidePath, BUCKET);
+    sidePath.form.requestSubmit();
+    await waitFor(() => sidePath.value === "", "the path field empties once its path is opened");
     await waitFor(() => hasText(loaded(4, 0)), "the read-only user can list");
     await click(T("common.upload"));
     await waitFor(() => hasText(T("error.s3.AccessDenied")), "upload refused for the read-only user", 30000);
@@ -739,21 +740,41 @@
     press("d");
     await waitFor(() => pinnedRows().length === 3, "and it is unpinned again");
 
-    // ---- M10.1 the path picker: known places as chips, and the folders S3 lists at the typed path
+    // ---- M10.1 / M12.5 the path picker is the field of the bucket card: known places, and the folders S3
+    // lists at the typed path, are rows in a dropdown under it
     const chipPaths = () => all(`${sel("pathPicker.chips")} [role=listitem]`).map((c) => c.textContent.trim());
     const children = () => all(`${sel("pathPicker.children")} [role=listitem]`);
-    await click(T("browse.openPath"));
     const picker = await field(T("browse.openPath"));
-    await waitFor(() => document.activeElement === picker, "the picker opens with the keyboard in its field");
-    check([`${BUCKET}/notes/`, `${BUCKET}/media/`, BUCKET].every((path) => chipPaths().includes(path)) && all(`${sel("pathPicker.chips")} [data-source=pin]`).length === 3, `pins and recent places are chips: ${chipPaths().join(" ")}`);
+    check(chipPaths().length === 0 && children().length === 0, "no dropdown until the field has the keyboard");
+    picker.focus();
+    await waitFor(() => document.activeElement === picker && chipPaths().length > 0, "with the keyboard in the field its dropdown opens");
+    check([`${BUCKET}/notes/`, `${BUCKET}/media/`, BUCKET].every((path) => chipPaths().includes(path)) && all(`${sel("pathPicker.chips")} [data-source=pin]`).length === 3, `pins and recent places are rows of it: ${chipPaths().join(" ")}`);
+    // A bucket's name half typed: the listed buckets that start with it.
+    setValue(picker, BUCKET.slice(0, 5));
+    await waitFor(() => children().some((c) => c.textContent.trim() === `${BUCKET}/`), "a half-typed name suggests the bucket");
     setValue(picker, BUCKET);
     await waitFor(() => children().length === 4, "the bucket's folders are suggested", 15000);
+    const firstFolder = children()[0].textContent.trim();
+    check(children()[0].classList.contains("Mui-focusVisible"), "the first row is the highlighted one");
+    // Tab, pressed for real by the shell after this picture, takes that row; the next level is asked about.
+    picker.setSelectionRange(picker.value.length, picker.value.length);
+    await shot("38a-path-suggest");
+    await waitFor(() => picker.value === `${BUCKET}/${firstFolder}/` && document.activeElement === picker, `a real Tab completes the highlighted folder (${picker.value}) and stays in the field`, 15000);
+    // The arrow down and the arrow right, as the page sees them: the second row, completed.
+    setValue(picker, BUCKET);
+    await waitFor(() => children().length === 4, "the folders again", 15000);
+    const secondFolder = children()[1].textContent.trim();
+    picker.setSelectionRange(picker.value.length, picker.value.length);
+    for (const key of ["ArrowDown", "ArrowRight"]) picker.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    await waitFor(() => picker.value === `${BUCKET}/${secondFolder}/`, `arrow down, then arrow right, complete the second folder (${picker.value})`);
+    setValue(picker, BUCKET);
+    await waitFor(() => children().length === 4, "the folders once more", 15000);
     children().find((c) => c.textContent.trim() === "media").click();
     await waitFor(() => picker.value === `${BUCKET}/media/` && children().length < 4, "a click on a folder appends it, and the new path is asked about", 15000);
     check(paneErrors() === 0, "no error on the way");
+    check(fits(), "the open dropdown does not scroll the page sideways");
     await shot("38b-path-picker");
     picker.form.requestSubmit();
-    await dialogsGone();
     await waitFor(() => objectLink("media/icon.png"), "the picked path opens", 20000);
 
     // ---- M9.1 a key that was granted one folder: start path, the refused root, Open path
@@ -772,15 +793,18 @@
     await waitFor(() => tabs().length === 3 && hasText(T("browse.chooseBucket")), "a new tab");
     await useConnection("du-an");
     await waitFor(() => objectLink("notes/readme.txt") && hasText(loaded(0, 3)) && tabs()[2].textContent.includes("notes"), "the connection lands at its start path", 20000);
-    check(pinnedRows().length === 3 && all(`${sel("browse.pinnedList")} [role=separator]`).length === 1, "another connection's pins are listed under a divider");
+    // M12.5: the connection's start path is the first row of the Pinned card, under "From the connection".
+    const separators = () => all(`${sel("browse.pinnedList")} [role=separator]`).map((d) => d.textContent.trim());
+    check(pinnedRows().length === 4 && pinnedRows()[0] === `${BUCKET}/notes/` && pinnedButtons()[0].querySelector("[data-source=start]"), `the start path is the first row of the Pinned card: ${pinnedRows().join(" | ")}`);
+    check(separators().join(" | ") === [T("pins.fromConnection"), T("browse.pinsElsewhere")].join(" | "), `the start path and another connection's pins are each under a divider: ${separators().join(" | ")}`);
     // Above the granted folder S3 refuses; the error says what to do and leads to the field.
     await click(BUCKET);
     await waitFor(() => paneErrors() === 1 && pane().innerText.includes(T("error.s3.AccessDenied")) && hasText(T("browse.deniedHint")), "the bucket root is refused, with the way out");
     await shot("39-scoped-denied");
     await click(T("browse.openPath"));
     const pathField = await field(T("browse.openPath"));
-    await waitFor(() => document.activeElement === pathField, "the hint opens the path picker, keyboard in its field");
-    check(chipPaths()[0] === `${BUCKET}/notes/` && all(`${sel("pathPicker.chips")} [role=listitem]`)[0].querySelector("[data-source=start]"), `the connection's start path is the first chip: ${chipPaths().join(" ")}`);
+    await waitFor(() => document.activeElement === pathField && !pathField.closest(".MuiDialog-root") && chipPaths().length > 0, "the hint leads to the path field of the bucket card, keyboard in it");
+    check(chipPaths()[0] === `${BUCKET}/notes/` && all(`${sel("pathPicker.chips")} [role=listitem]`)[0].querySelector("[data-source=start]"), `the connection's start path is the first row: ${chipPaths().join(" ")}`);
     setValue(pathField, "bad bucket/x");
     await waitFor(() => hasText(T("paths.bucketSpace")), "a path that cannot be one says why");
     // Only the bucket typed: its root is refused. An amber hint; the path can still be submitted.
@@ -790,7 +814,6 @@
     await shot("39b-picker-denied");
     setValue(pathField, `s3://${BUCKET}/notes/readme.txt`);
     pathField.form.requestSubmit();
-    await dialogsGone();
     await waitFor(() => objectLink("notes/readme.txt") && hasText(loaded(0, 3)) && paneErrors() === 0 && !hasText(T("browse.deniedHint")), "a file's path opens the folder the file is in", 20000);
     check(fits(), "nothing scrolls sideways");
     await shot("40-scoped-path");
@@ -807,7 +830,12 @@
     check(paneErrors() === 0 && !hasText(T("browse.noBuckets")), "no error, and not the empty-list text");
     // No bucket list to choose from: the path picker is on the page itself, with the keyboard.
     const inline = await field(T("browse.openPath"));
-    await waitFor(() => document.activeElement === inline && !inline.closest(".MuiDialog-root"), "the path picker on the page has the keyboard");
+    await waitFor(() => document.activeElement === inline && !inline.closest(".MuiDialog-root") && !inline.closest("aside"), "the path picker on the page has the keyboard");
+    // M12.5: a bucket's name half typed by a key that cannot list buckets: nothing is said, in amber or otherwise.
+    setValue(inline, BUCKET.slice(0, 5));
+    await sleep(2500);
+    check(!hasText(T("pathPicker.deniedHint")) && !pane().innerText.includes(piece("pathPicker.error")) && paneErrors() === 0, "a half-typed bucket name is probed silently");
+    setValue(inline, "");
     await shot("41-no-list");
 
     // ---- M9.2 many buckets: a list of bounded height with a filter

@@ -3,10 +3,11 @@ import { renderToString } from "react-dom/server";
 import { beforeEach, expect, test } from "vitest";
 import BucketPanel, { FILTER_FROM, filterBuckets, LIST_MAX_HEIGHT, moveHighlight, WINDOW_ABOVE } from "./BucketPanel";
 import { applyLang, t } from "./i18n";
+import { PathPicker } from "./PathPicker";
 
 const nothing = () => {};
 const panel = (props: Partial<Parameters<typeof BucketPanel>[0]>) =>
-  renderToString(createElement(BucketPanel, { title: "Your buckets", buckets: [], bucketsError: null, current: "", active: true, onOpen: nothing, onCreate: nothing, onPickPath: nothing, ...props }));
+  renderToString(createElement(BucketPanel, { title: "Your buckets", buckets: [], bucketsError: null, current: "", active: true, onOpen: nothing, onCreate: nothing, pathEntry: createElement(PathPicker, { dropdown: true, clusterId: "", value: "", onChange: nothing, label: t("browse.openPath"), optional: true }), ...props }));
 // Text as a user reads it: tags dropped, entities of the apostrophes and quotes put back.
 const text = (html: string) => html.replace(/<style[^>]*>.*?<\/style>/gs, " ").replace(/<[^>]*>/g, " ").replaceAll("&quot;", '"').replaceAll("&#x27;", "'");
 
@@ -17,10 +18,10 @@ test("a key that may not list buckets gets a notice instead of the empty-list te
   expect(denied).toContain("This key may not list buckets — open a path directly below or use a pinned place");
   expect(denied).not.toContain(t("browse.noBuckets"));
   expect(denied).toContain(t("browse.openPath"));
-  // The way to the path picker is the filled button here; what it is for is its tooltip.
-  expect(panel({ bucketsError: "AccessDenied" })).toContain('title="Bucket or bucket/folder/ — use this when you may only list one folder"');
-  expect(panel({ bucketsError: "AccessDenied" })).toMatch(/MuiButton-contained[^>]*>Open path/);
-  expect(panel({})).toMatch(/MuiButton-outlined[^>]*>Open path/);
+  // M12.5: the way in is the path field itself, in the card; what it is for, and its keys, are its tooltip.
+  expect(panel({ bucketsError: "AccessDenied" })).toContain('title="Bucket or bucket/folder/ — use this when you may only list one folder. Tab or → takes the highlighted row, Enter opens"');
+  expect(panel({})).toMatch(/<label[^>]*>Open path<\/label>/);
+  expect(panel({})).not.toMatch(/<button[^>]*>Open path/);
   // Not an error: the notice is an info alert.
   expect(panel({ bucketsError: "AccessDenied" })).toMatch(/MuiAlert-[a-zA-Z]*[iI]nfo/);
   expect(panel({ bucketsError: "AccessDenied" })).not.toMatch(/MuiAlert-[a-zA-Z]*[eE]rror/);
@@ -44,8 +45,9 @@ const listTag = (html: string) => /<ul[^>]*aria-label="Bucket list"[^>]*>/.exec(
 
 test("100 buckets: the list has a height limit of its own and scrolls inside the card; header, filter and controls are outside it", () => {
   const html = panel({ buckets: many(100), current: "team-080-Data" });
-  // With the pane at its usual height (the window less 121 px of app bar and tab strip) this is the M11 limit, 100vh - 500px.
-  expect(LIST_MAX_HEIGHT).toBe("clamp(80px, calc(var(--ba-pane-h, calc(100vh - 121px)) - var(--ba-side-rest, 379px)), 38vh)");
+  // With the pane at its usual height (the window less 121 px of app bar and tab strip) this is 100vh - 516px:
+  // the M11 limit less the 16 px the path field is taller than the button it replaced.
+  expect(LIST_MAX_HEIGHT).toBe("clamp(80px, calc(var(--ba-pane-h, calc(100vh - 121px)) - var(--ba-side-rest, 395px)), 38vh)");
   expect(listTag(html)).toContain(`style="max-height:${LIST_MAX_HEIGHT}"`);
   // The scrolling itself and the thin themed bar come from the list's class.
   const cls = /class="([^"]*)"/.exec(listTag(html))?.[1].split(" ").find((c) => c.startsWith("css-")) ?? "";

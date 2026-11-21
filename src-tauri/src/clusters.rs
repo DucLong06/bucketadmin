@@ -27,10 +27,43 @@ pub struct ClusterProfile {
     /// This cluster's own proxy choice; absent = follow the app-wide setting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy: Option<Proxy>,
-    /// Where a session on this connection lands: `bucket` or `bucket/prefix/`; empty = nowhere
-    /// in particular. For a key that may only list one folder of a bucket.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub start_path: String,
+    /// Where this connection's key works: each `bucket` or `bucket/prefix/`. A session lands at
+    /// the first one; all of them are offered wherever a path is picked. For a key that may only
+    /// list some folders. Files written before M12 have one `start_path` string: read as a list of one.
+    #[serde(
+        default,
+        alias = "start_path",
+        deserialize_with = "one_or_many",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub start_paths: Vec<String>,
+}
+
+fn one_or_many<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match OneOrMany::deserialize(d)? {
+        OneOrMany::One(path) if path.is_empty() => Vec::new(),
+        OneOrMany::One(path) => vec![path],
+        OneOrMany::Many(paths) => paths,
+    })
+}
+
+/// Start paths as they are stored: each one normalised, empty ones and repeats dropped (the
+/// first of two stays where it is). One path that cannot be one refuses the whole list.
+pub fn normalize_start_paths(paths: &[String]) -> Result<Vec<String>, String> {
+    let mut kept = Vec::new();
+    for path in paths {
+        let path = normalize_start_path(path)?;
+        if !path.is_empty() && !kept.contains(&path) {
+            kept.push(path);
+        }
+    }
+    Ok(kept)
 }
 
 /// A start path as it is stored: `bucket` or `bucket/prefix/`, or empty for none. Accepts what
@@ -181,7 +214,7 @@ impl<S: SecretStore> ProfileStore<S> {
             browse_access_key: None,
             plain_user: false,
             proxy: None,
-            start_path: String::new(),
+            start_paths: Vec::new(),
         })?;
         let _guard = self.lock.lock().map_err(|e| e.to_string())?;
         let mut profiles = self.read()?;
@@ -262,11 +295,11 @@ impl<S: SecretStore> ProfileStore<S> {
         })
     }
 
-    /// Sets (or, with an empty path, clears) where a session on this connection lands.
-    pub fn set_start_path(&self, id: &str, path: &str) -> Result<ClusterProfile, String> {
-        let path = normalize_start_path(path)?;
+    /// Sets (or, with an empty list, clears) the connection's start paths; a session lands at the first.
+    pub fn set_start_paths(&self, id: &str, paths: &[String]) -> Result<ClusterProfile, String> {
+        let paths = normalize_start_paths(paths)?;
         self.change(id, |profile| {
-            profile.start_path = path;
+            profile.start_paths = paths;
             Ok(())
         })
     }
@@ -345,7 +378,7 @@ fn validated(mut p: ClusterProfile) -> Result<ClusterProfile, String> {
     p.label = p.label.trim().to_string();
     p.endpoint = p.endpoint.trim().trim_end_matches('/').to_string();
     p.access_key = p.access_key.trim().to_string();
-    p.start_path = normalize_start_path(&p.start_path)?;
+    p.start_paths = normalize_start_paths(&p.start_paths)?;
     if p.label.is_empty() {
         return Err("label is required".into());
     }
@@ -450,7 +483,7 @@ pub(crate) mod tests {
             browse_access_key: None,
             plain_user: false,
             proxy: None,
-            start_path: String::new(),
+            start_paths: Vec::new(),
         };
         assert!(store.update(ghost, Some("SK")).is_err());
         assert!(secrets.0.lock().unwrap().is_empty());
@@ -595,7 +628,10 @@ pub(crate) mod tests {
         let listed = ProfileStore::new(dir.clone(), &secrets).list().unwrap();
         assert_eq!(listed[0].browse_access_key, None);
         assert!(!listed[0].plain_user);
-        assert_eq!(listed[0].start_path, "", "a file from before M9 has none");
+        assert!(
+            listed[0].start_paths.is_empty(),
+            "a file from before M9 has none"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -628,27 +664,66 @@ pub(crate) mod tests {
         let store = ProfileStore::new(dir.clone(), &secrets);
         let p = store.add("lab", "http://h:1", "AK", "SK").unwrap();
         let file = || std::fs::read_to_string(dir.join("profiles.json")).unwrap();
+        let paths = |typed: &[&str]| typed.iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert!(!file().contains("start_path"), "none set, nothing written");
-        let saved = store.set_start_path(&p.id, " s3://team-bucket/project-a ");
-        assert_eq!(saved.unwrap().start_path, "team-bucket/project-a/");
+        // Each entry is normalised; an empty one and a repeat (same stored form) are dropped.
+        let typed = paths(&[
+            " s3://team-bucket/project-a ",
+            "",
+            "logs",
+            "/team-bucket/project-a/",
+            "logs/",
+        ]);
+        let saved = store.set_start_paths(&p.id, &typed).unwrap();
+        assert_eq!(saved.start_paths, ["team-bucket/project-a/", "logs"]);
         let reopened = ProfileStore::new(dir.clone(), &secrets).list().unwrap();
-        assert_eq!(reopened[0].start_path, "team-bucket/project-a/");
-        assert!(store.set_start_path(&p.id, "team-bucket/../x").is_err());
+        assert_eq!(reopened[0].start_paths, ["team-bucket/project-a/", "logs"]);
+        let refused = store.set_start_paths(&p.id, &paths(&["ok-bucket", "team-bucket/../x"]));
+        assert!(refused.is_err(), "one bad path refuses the list");
         assert_eq!(
-            store.list().unwrap()[0].start_path,
-            "team-bucket/project-a/",
-            "a refused path changes nothing"
+            store.list().unwrap()[0].start_paths,
+            ["team-bucket/project-a/", "logs"],
+            "a refused list changes nothing"
         );
         // The whole-profile update normalises it the same way.
         let edited = ClusterProfile {
-            start_path: "/other-bucket/".into(),
+            start_paths: paths(&["/other-bucket/", "other-bucket"]),
             ..reopened[0].clone()
         };
         store.update(edited, None).unwrap();
-        assert_eq!(store.list().unwrap()[0].start_path, "other-bucket");
-        assert_eq!(store.set_start_path(&p.id, "").unwrap().start_path, "");
+        assert_eq!(store.list().unwrap()[0].start_paths, ["other-bucket"]);
+        assert!(store
+            .set_start_paths(&p.id, &[])
+            .unwrap()
+            .start_paths
+            .is_empty());
         assert!(!file().contains("start_path"));
-        assert!(store.set_start_path("missing", "b").is_err());
+        assert!(store.set_start_paths("missing", &paths(&["b"])).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_profiles_file_with_the_single_start_path_of_m9_loads_as_a_list_of_one() {
+        let dir = temp_dir("startpath-old");
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = r#"[{"id":"1","label":"lab","endpoint":"http://h:1","access_key":"AK","start_path":"team-bucket/project-a/"},
+            {"id":"2","label":"none","endpoint":"http://h:1","access_key":"AK","start_path":""},
+            {"id":"3","label":"new","endpoint":"http://h:1","access_key":"AK","start_paths":["a","b/c/"]}]"#;
+        std::fs::write(dir.join("profiles.json"), old).unwrap();
+        let secrets = MemorySecrets::default();
+        let store = ProfileStore::new(dir.clone(), &secrets);
+        let listed = store.list().unwrap();
+        assert_eq!(listed[0].start_paths, ["team-bucket/project-a/"]);
+        assert!(listed[1].start_paths.is_empty());
+        assert_eq!(listed[2].start_paths, ["a", "b/c/"]);
+        // The next write is in the new form, and reads back the same.
+        store.set_start_paths("2", &["logs".to_string()]).unwrap();
+        let file = std::fs::read_to_string(dir.join("profiles.json")).unwrap();
+        assert!(file.contains("\"start_paths\"") && !file.contains("\"start_path\""));
+        assert_eq!(
+            store.list().unwrap()[0].start_paths,
+            ["team-bucket/project-a/"]
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

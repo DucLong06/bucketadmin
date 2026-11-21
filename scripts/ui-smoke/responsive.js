@@ -76,6 +76,11 @@
     await waitFor(() => button(T("app.connections")), "the app", 30000);
     // The canned update (toast and badge) is the whole flow's business, not this one's.
     document.head.appendChild(document.createElement("style")).textContent = '.MuiSnackbar-root, .MuiChip-root[title*="v9.9.9"] { display: none !important; }';
+    // First run: no connection yet. The Connections screen is one card with one button.
+    await click(T("app.connections"));
+    await waitFor(() => button(T("conn.add")) && hasText(T("conn.none")) && all("form").length === 0, "the first-run card");
+    look("first run, Connections");
+    await shot("connection-empty");
     await addConnection("lab", KEY(1));
     await addConnection("many", KEY(3));
     await shot("-");

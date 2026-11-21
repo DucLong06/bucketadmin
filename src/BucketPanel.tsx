@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type MouseEvent, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, List, ListItemButton, ListItemText, Paper, Stack, Typography } from "@mui/material";
 import type { BrowseBucket } from "./api";
 import { t } from "./i18n";
@@ -11,7 +11,7 @@ export const FILTER_FROM = 2;
 /** The list never grows past this: about 38 % of the window, never under two rows, and otherwise as much
  *  as leaves the whole card, with its controls, in view: the height of the pane (App measures it; it ends
  *  where the task panel begins) less what else the sidebar holds (Browse says how much; less in a low window). */
-export const LIST_MAX_HEIGHT = "clamp(80px, calc(var(--ba-pane-h, calc(100vh - 121px)) - var(--ba-side-rest, 379px)), 38vh)";
+export const LIST_MAX_HEIGHT = "clamp(80px, calc(var(--ba-pane-h, calc(100vh - 121px)) - var(--ba-side-rest, 395px)), 38vh)";
 
 /** Above this many rows the list only mounts the rows in view (and a few around them). */
 export const WINDOW_ABOVE = 100;
@@ -51,13 +51,13 @@ type Props = {
   onCreate: () => void;
   /** A bucket row was right-clicked. */
   onBucketMenu?: (bucket: string, e: MouseEvent) => void;
-  /** Go to the path picker: any path the key may use is typed (or picked) there. */
-  onPickPath: () => void;
+  /** The path field: any path the key may use is typed there, with what S3 lists suggested under it. */
+  pathEntry: ReactNode;
 };
 
 /** The sidebar's bucket card: the key's buckets in a list of bounded height with a filter, and the
- *  way to the path picker. Only the list scrolls; the controls stay put. */
-export default function BucketPanel({ title, buckets, bucketsError, current, active, onOpen, onCreate, onBucketMenu, onPickPath }: Props) {
+ *  path field. Only the list scrolls; the controls stay put. */
+export default function BucketPanel({ title, buckets, bucketsError, current, active, onOpen, onCreate, onBucketMenu, pathEntry }: Props) {
 
   // The filter belongs to this tab and is not saved.
   const [filter, setFilter] = useState("");
@@ -169,15 +169,13 @@ export default function BucketPanel({ title, buckets, bucketsError, current, act
           </Typography>
         )
       )}
-      {/* One compact footer: in a 700 px window the whole card, both buttons included, stays above the fold. */}
-      <Stack spacing={1} sx={{ px: 2, pb: 2 }}>
+      {/* One compact footer: in a 700 px window the whole card, button and path field included, stays above the fold. */}
+      <Stack spacing={1.5} sx={{ px: 2, pb: 2 }}>
         <Button size="small" variant="outlined" fullWidth onClick={onCreate}>
           {t("browse.createBucket")}
         </Button>
-        {/* For a key that may not list buckets this is the way in, so it is the filled button. */}
-        <Button size="small" variant={bucketsError ? "contained" : "outlined"} fullWidth onClick={onPickPath} title={t("browse.openPathHelp")}>
-          {t("browse.openPath")}
-        </Button>
+        {/* For a key that may not list buckets this field is the way in. */}
+        {pathEntry}
       </Stack>
     </Paper>
   );

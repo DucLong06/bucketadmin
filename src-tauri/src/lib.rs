@@ -109,27 +109,27 @@ fn add_profile(
     endpoint: String,
     access_key: String,
     secret_key: String,
-    start_path: Option<String>,
+    start_paths: Option<Vec<String>>,
 ) -> Cmd<'_, ClusterProfile> {
     // Checked first: a path that is refused must not leave a connection behind.
-    let start_path = clusters::normalize_start_path(&start_path.unwrap_or_default())?;
+    let start_paths = clusters::normalize_start_paths(&start_paths.unwrap_or_default())?;
     let added = state
         .profiles
         .add(&label, &endpoint, &access_key, &secret_key)?;
-    if start_path.is_empty() {
+    if start_paths.is_empty() {
         return Ok(added);
     }
-    state.profiles.set_start_path(&added.id, &start_path)
+    state.profiles.set_start_paths(&added.id, &start_paths)
 }
 
-/// Where the connection lands when it is opened: `bucket` or `bucket/prefix/`; empty for none.
+/// The paths this connection's key works in (`bucket` or `bucket/prefix/` each); it lands at the first.
 #[tauri::command(async)]
-fn profile_set_start_path(
+fn profile_set_start_paths(
     state: St<'_>,
     id: String,
-    start_path: String,
+    start_paths: Vec<String>,
 ) -> Cmd<'_, ClusterProfile> {
-    state.profiles.set_start_path(&id, &start_path)
+    state.profiles.set_start_paths(&id, &start_paths)
 }
 
 #[tauri::command(async)]
@@ -807,7 +807,7 @@ pub fn run() {
             tabs_get,
             tabs_set,
             profile_set_proxy,
-            profile_set_start_path,
+            profile_set_start_paths,
             network_get,
             network_set,
             get_ui_scale,

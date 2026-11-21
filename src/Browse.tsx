@@ -34,7 +34,7 @@ import BucketPanel from "./BucketPanel";
 import { CreateBucketDialog, CreateFolderDialog } from "./BrowseDialogs";
 import { accessLevel, type Access } from "./caps";
 import MyInfo from "./MyInfo";
-import { PathPicker, PathPickerDialog } from "./PathPicker";
+import { PathPicker } from "./PathPicker";
 import PinnedPanel from "./PinnedPanel";
 import { isPinned, type Pin, type PinOps } from "./pins";
 import ObjectDrawer, { canUndelete, download, finalDeleteWarning, undeleteHint, type Versioning } from "./ObjectDrawer";
@@ -159,7 +159,9 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   const [prefix, setPrefix] = useState("");
   // The path picker. For a key that may not list buckets it is the page itself (typed here);
   // otherwise it is a dialog.
-  const [picking, setPicking] = useState(false);
+  // What is typed into the sidebar's path field, and the field itself.
+  const [sidePath, setSidePath] = useState("");
+  const sideField = useRef<HTMLInputElement | null>(null);
   // The sidebar's Recent card shows every place, not only the newest few (this tab, until it is closed).
   const [recentAll, setRecentAll] = useState(false);
   const [recentFilter, setRecentFilter] = useState("");
@@ -342,7 +344,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
     const goTo = first.current;
     first.current = null;
     // With nowhere to go yet, the connection's own key lands at its start path.
-    const home = target === "" ? splitPath(profiles.find((p) => p.id === clusterId)?.start_path ?? "") : null;
+    const home = target === "" ? splitPath(profiles.find((p) => p.id === clusterId)?.start_paths?.[0] ?? "") : null;
     if (goTo?.bucket && goTo.clusterId === clusterId) load(goTo.bucket, goTo.prefix, null, target);
     else if (home && !home.error) load(home.bucket, home.prefix, null, target);
     else onPlace({ clusterId, uid: target, bucket: "", prefix: "" });
@@ -498,8 +500,10 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
   }
   // No bucket list to choose from: the chips and the probe of the picker are the way in.
   const pickerIsThePage = !!session?.buckets_error && !bucket;
-  const pickPath = () => (pickerIsThePage ? inlinePath.current?.focus() : setPicking(true));
+  const pickPath = () => (pickerIsThePage ? inlinePath : sideField).current?.focus();
   const typed = splitPath(typedPath);
+  const sideTyped = splitPath(sidePath);
+  const startPaths = session?.uid === "" ? (profiles.find((p) => p.id === clusterId)?.start_paths ?? []) : [];
   const label = profiles.find((p) => p.id === clusterId)?.label ?? "";
   // The sidebar's recent places: this connection's first, then the others; the newest few until "show all".
   const recentGroups = groupRecents(recents, clusterId);
@@ -541,8 +545,8 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
             p: "4px",
             m: "-4px",
             // What the sidebar holds besides the bucket list (see LIST_MAX_HEIGHT in BucketPanel).
-            "--ba-side-rest": canBrowseAs ? "435px" : "379px",
-            [SHORT]: { maxHeight: "calc(var(--ba-pane-h, 100vh) - 12px)", gap: 1, "--ba-side-rest": canBrowseAs ? "316px" : "260px" },
+            "--ba-side-rest": canBrowseAs ? "451px" : "395px",
+            [SHORT]: { maxHeight: "calc(var(--ba-pane-h, 100vh) - 12px)", gap: 1, "--ba-side-rest": canBrowseAs ? "332px" : "276px" },
           }}
         >
           <ClusterSelect profiles={profiles} value={clusterId} onChange={setClusterId} />
@@ -599,11 +603,41 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                 e.preventDefault();
                 setBucketMenu({ bucket: name, x: e.clientX, y: e.clientY });
               }}
-              onPickPath={pickPath}
+              pathEntry={
+                // The picker itself: what S3 lists at the typed path is suggested under the field; Enter opens.
+                <Box
+                  component="form"
+                  onSubmit={(e: FormEvent) => {
+                    e.preventDefault();
+                    if (sideTyped.error) return;
+                    load(sideTyped.bucket, sideTyped.prefix, null);
+                    setSidePath("");
+                  }}
+                >
+                  <PathPicker
+                    dropdown
+                    clusterId={clusterId}
+                    uid={session.uid}
+                    value={sidePath}
+                    onChange={setSidePath}
+                    label={t("browse.openPath")}
+                    optional
+                    inputRef={sideField}
+                    buckets={session.buckets.map((b) => b.name)}
+                    quietBucket={!!session.buckets_error}
+                    action={
+                      <Button type="submit" size="small" disabled={!!sideTyped.error} sx={{ minWidth: 0 }}>
+                        {t("common.open")}
+                      </Button>
+                    }
+                  />
+                </Box>
+              }
             />
           )}
           <PinnedPanel
             pins={pins}
+            startPaths={startPaths}
             profiles={profiles}
             clusterId={clusterId}
             onOpen={goHere}
@@ -712,6 +746,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                     value={typedPath}
                     onChange={setTypedPath}
                     label={t("browse.openPath")}
+                    quietBucket
                     autoFocus={active}
                     inputRef={inlinePath}
                     action={
@@ -1027,15 +1062,6 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
           {notice?.text}
         </Alert>
       </Snackbar>
-      <PathPickerDialog
-        open={picking}
-        title={t("pathPicker.openTitle")}
-        submitLabel={t("common.open")}
-        clusterId={clusterId}
-        uid={session?.uid ?? ""}
-        onSubmit={(toBucket, toPrefix) => load(toBucket, toPrefix, null)}
-        onClose={() => setPicking(false)}
-      />
       <CreateBucketDialog
         clusterId={clusterId}
         uid={session?.uid ?? ""}
