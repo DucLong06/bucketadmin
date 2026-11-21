@@ -28,7 +28,7 @@ test("level follows what RGW let through", () => {
 
 test("a level is named in the current language", () => {
   applyLang("vi");
-  expect(t(LEVEL_LABEL[accessLevel(none)])).toBe("Chỉ duyệt");
+  expect(t(LEVEL_LABEL[accessLevel(none)])).toBe("Chỉ xem");
   expect(t(LEVEL_LABEL[accessLevel(full)])).toBe("Admin đầy đủ");
   applyLang("en");
   expect(t(LEVEL_LABEL[accessLevel(none)])).toBe("Browse only");

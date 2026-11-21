@@ -2,13 +2,13 @@
 
 🇬🇧 [English](README.md)
 
-Trình duyệt S3 dạng desktop cho Linux, làm cho **Ceph RGW**: duyệt bucket bằng key của chính bạn, nhiều tab như trình duyệt,
+Trình duyệt S3 dạng desktop cho Linux, làm cho **Ceph RGW**: mở bucket bằng key của chính bạn, nhiều tab như trình duyệt,
 xem trước file ngay trong app mà không tải cả file, ACL, phiên bản, presigned URL. Viết bằng Tauri 2 + Rust; giao diện có hai
 ngôn ngữ: tiếng Việt và tiếng Anh.
 
 App nói chuyện thẳng với endpoint S3 của RGW. Không cần cài gì lên cụm Ceph, không có server trung gian, không cần quyền admin.
 
-![Duyệt bucket với nhiều tab](docs/images/browse.vi.png)
+![Mở bucket với nhiều tab](docs/images/browse.vi.png)
 
 Ảnh trong tài liệu này chụp từ bài smoke test chạy với một cụm thử nghiệm.
 
@@ -103,7 +103,7 @@ Gỡ: `sudo apt remove bucketadmin`. Dữ liệu của app nằm ở `~/.local/s
 access key và secret key của bạn → **Kiểm tra kết nối** → **Lưu**. Bước kiểm tra chỉ liệt kê bucket qua S3, nên key thường
 không có caps nào cũng dùng được.
 
-**2. Duyệt.** Mục **Duyệt** → chọn một bucket. Bucket được chia sẻ cho bạn (S3 không liệt kê) thì mở theo đường dẫn ở ô
+**2. Browse.** Mục **Browse** → chọn một bucket. Bucket được chia sẻ cho bạn (S3 không liệt kê) thì mở theo đường dẫn ở ô
 **Mở đường dẫn** của cột bên trái.
 
 **3. Làm việc với object.** Bấm vào tên để xem trước; chuột phải vào dòng để mở menu; tick nhiều dòng để xoá một lượt; kéo thả
@@ -116,7 +116,7 @@ file vào cửa sổ để tải lên thư mục đang mở.
 Ở nhiều cụm, user chỉ được cấp một thư mục trong bucket của người khác: bucket policy chỉ cho liệt kê dưới một prefix, và
 thường key không được liệt kê bucket. Với key như vậy:
 
-- **Mở đường dẫn** (cột bên trái của mục Duyệt) nhận `bucket` hoặc `bucket/thư-mục/…` và tới đúng nơi đó. `s3://bucket/thư-mục/`
+- **Mở đường dẫn** (cột bên trái của mục Browse) nhận `bucket` hoặc `bucket/thư-mục/…` và tới đúng nơi đó. `s3://bucket/thư-mục/`
   hay có dấu `/` ở đầu cũng như nhau; đường dẫn của một file (`bucket/thư-mục/report.csv`) thì mở thư mục chứa file. Thư mục
   có tên giống tên file (`v1.2`) thì cần dấu `/` ở cuối.
 - **Đường dẫn bắt đầu** (ô không bắt buộc của kết nối, sửa được cả với kết nối đã lưu): `team-bucket/project-a/` tự mở mỗi khi
@@ -133,7 +133,7 @@ Ghim những nơi bạn dùng hằng ngày: một bucket, hoặc một thư mụ
 - Ghim vị trí đang mở bằng nút ghim ở cuối thanh đường dẫn, hoặc `Ctrl+D`; làm lại lần nữa là bỏ ghim.
 - Chuột phải vào một bucket ở cột bên trái, hoặc một thư mục trong danh sách, để chọn "Ghim bucket" / "Ghim thư mục này"; mỗi
   dòng của Gần đây cũng có nút ghim.
-- Khung **Đã ghim** ở cột bên trái liệt kê trước các vị trí của kết nối đang duyệt, các kết nối khác nằm dưới một vạch ngăn.
+- Khung **Đã ghim** ở cột bên trái liệt kê trước các vị trí của kết nối đang mở, các kết nối khác nằm dưới một vạch ngăn.
   Bấm là mở trong tab hiện tại; `Ctrl`+bấm hoặc nút chuột giữa thì mở tab mới.
 - Chuột phải vào một vị trí đã ghim để mở trong tab mới, đổi tên, bỏ ghim, chuyển lên hoặc chuyển xuống. Tối đa 100 vị trí.
 - Nút **Đã ghim** cạnh Gần đây trên thanh ứng dụng liệt kê 15 vị trí đầu, dùng được ở mọi nơi trong app.
@@ -146,9 +146,9 @@ Khi thêm kết nối có thể nhập thêm một key admin. App chỉ dùng n�
 
 | Việc | Caps cần ở key admin |
 |---|---|
-| Khung "Thông tin của tôi" trong mục Duyệt: thông tin, quota của user sở hữu key của bạn | `users=read` |
+| Khung "Thông tin của tôi" trong mục Browse: thông tin, quota của user sở hữu key của bạn | `users=read` |
 | Usage 30 ngày trong khung đó | `usage=read` |
-| "Duyệt thay user (uid)": duyệt bằng key của một user khác | `users=read` |
+| "Thao tác thay user (uid)": làm việc bằng key của một user khác | `users=read` |
 
 Nếu chính key của bạn có các caps trên thì không cần key admin: khung "Thông tin của tôi" tự hiện.
 Các màn hình quản trị cụm (user, key, caps, quota, onboarding từ CSV) đã được gỡ khỏi app từ bản 0.1.0.
@@ -169,7 +169,7 @@ Các màn hình quản trị cụm (user, key, caps, quota, onboarding từ CSV)
 ## Bảo mật
 
 - Secret key: chỉ trong keychain của hệ điều hành; giao diện không bao giờ nhận được secret.
-- Duyệt bucket: ký bằng key của bạn. Khi "duyệt thay user", app lấy key của user đó bằng key admin và chỉ giữ nó trong bộ nhớ.
+- Mở bucket: ký bằng key của bạn. Khi "thao tác thay user", app lấy key của user đó bằng key admin và chỉ giữ nó trong bộ nhớ.
 - Cửa sổ chính không tải bất kỳ tài nguyên nào từ ngoài app; xem trước ảnh / media / PDF nằm trong một khung riêng chỉ được phép
   tải từ đúng endpoint của cluster.
 - Presigned URL: mặc định 15 phút; audit log ghi việc tạo URL nhưng không ghi URL.
@@ -187,7 +187,7 @@ Chi tiết từng directive của CSP và cách xử lý presigned URL: [docs/SE
 |---|---|
 | "Secret key … không khớp" / "không đúng" (SignatureDoesNotMatch) | Sai secret key, hoặc đồng hồ máy lệch nhiều so với cụm. Kiểm tra lại key và `timedatectl`. |
 | "Access key không tồn tại trên cluster này" | Access key gõ sai, hoặc endpoint trỏ sang cụm khác. |
-| "Không đủ quyền: key của cluster này thiếu caps …" | Chỉ gặp ở khung "Thông tin của tôi" hoặc khi duyệt thay user: key admin (hoặc key của bạn) thiếu cap đó. Thông báo kèm sẵn lệnh `radosgw-admin caps add` để gửi cho quản trị cụm. |
+| "Không đủ quyền: key của cluster này thiếu caps …" | Chỉ gặp ở khung "Thông tin của tôi" hoặc khi thao tác thay user: key admin (hoặc key của bạn) thiếu cap đó. Thông báo kèm sẵn lệnh `radosgw-admin caps add` để gửi cho quản trị cụm. |
 | "Không kết nối được tới RGW", hoặc lỗi HTTP 502 / 504 / 407 | Sai endpoint / port, hoặc request đang đi qua proxy mà proxy không tới được cụm. Với endpoint nội bộ: mục **Kết nối** → Proxy của kết nối đó → **Không dùng proxy**. |
 | "Bucket không tồn tại" / lỗi HTTP 404 khi kiểm tra kết nối | Endpoint không phải là địa chỉ S3 của RGW (sai host, sai port, hoặc trỏ vào dashboard). |
 | Usage trong "Thông tin của tôi" luôn trống | RGW chưa bật ghi usage: quản trị cụm đặt `rgw_enable_usage_log = true` rồi restart RGW. |
