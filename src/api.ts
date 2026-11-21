@@ -25,6 +25,10 @@ export type Profile = {
   proxy?: Proxy | null;
   /** The paths this connection's key works in, "bucket" or "bucket/prefix/" each; a session lands at the first. Absent = none. */
   start_paths?: string[];
+  /** S3 signing region; empty or absent = us-east-1. */
+  region?: string;
+  /** Path-style addressing (bucket in the path); absent = on. */
+  path_style?: boolean;
 };
 /** How requests leave the machine: by the environment's proxy variables, always direct, or through one given proxy. */
 export type Proxy = { mode: "auto" } | { mode: "none" } | { mode: "custom"; url: string };

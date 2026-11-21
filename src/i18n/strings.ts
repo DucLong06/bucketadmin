@@ -106,6 +106,12 @@ export const en = {
   "conn.remove": "Delete connection {label}",
   "conn.saveProxy": "Save proxy",
   "conn.saveProxyFor": "Save the proxy of {label}",
+  "conn.region": "Region",
+  "conn.regionHelp": "Leave empty for Ceph RGW",
+  "conn.pathStyle": "Path-style addressing",
+  "conn.pathStyleHelp": "On for Ceph RGW and most self-hosted S3; off for virtual-host style",
+  "conn.saveAddressing": "Save addressing",
+  "conn.saveAddressingFor": "Save the region and addressing of {label}",
 
   // Proxy picker
   "proxy.label": "Proxy",
@@ -790,6 +796,12 @@ export const vi: Record<keyof typeof en, string> = {
   "conn.remove": "Xoá kết nối {label}",
   "conn.saveProxy": "Lưu proxy",
   "conn.saveProxyFor": "Lưu proxy của {label}",
+  "conn.region": "Region",
+  "conn.regionHelp": "Để trống với Ceph RGW",
+  "conn.pathStyle": "Địa chỉ kiểu path-style",
+  "conn.pathStyleHelp": "Bật với Ceph RGW và hầu hết S3 tự host; tắt khi dùng kiểu virtual-host",
+  "conn.saveAddressing": "Lưu cách định địa chỉ",
+  "conn.saveAddressingFor": "Lưu region và cách định địa chỉ của {label}",
 
   // Proxy picker
   "proxy.label": "Proxy",

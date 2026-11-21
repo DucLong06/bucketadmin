@@ -2,6 +2,7 @@
 //! only in the OS keychain (Secret Service on Linux), never on disk.
 
 use crate::rgw_admin::{parse_endpoint, Credentials};
+use crate::s3::Addressing;
 use crate::settings::Proxy;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -37,6 +38,43 @@ pub struct ClusterProfile {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub start_paths: Vec<String>,
+    /// S3 signing region; empty = "us-east-1", what Ceph RGW takes. Absent before M13.
+    #[serde(default)]
+    pub region: String,
+    /// Path-style addressing (`endpoint/bucket/key`): Ceph RGW and most self-hosted S3. Off =
+    /// virtual-host style (`bucket.endpoint/key`). Absent before M13: on.
+    #[serde(default = "default_true")]
+    pub path_style: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl ClusterProfile {
+    /// How the S3 client of this connection addresses buckets and signs.
+    pub fn addressing(&self) -> Addressing {
+        Addressing {
+            region: self.region.clone(),
+            path_style: self.path_style,
+        }
+    }
+}
+
+/// A region as it is stored: trimmed, empty for the default. Refuses what no region can be
+/// (it goes into the signature and, virtual-host style, nowhere near a host name).
+pub fn normalize_region(region: &str) -> Result<String, String> {
+    let region = region.trim();
+    if region
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        Ok(region.to_string())
+    } else {
+        Err(format!(
+            "invalid region {region:?}: letters, digits, - and _ only"
+        ))
+    }
 }
 
 fn one_or_many<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
@@ -215,6 +253,8 @@ impl<S: SecretStore> ProfileStore<S> {
             plain_user: false,
             proxy: None,
             start_paths: Vec::new(),
+            region: String::new(),
+            path_style: true,
         })?;
         let _guard = self.lock.lock().map_err(|e| e.to_string())?;
         let mut profiles = self.read()?;
@@ -304,6 +344,26 @@ impl<S: SecretStore> ProfileStore<S> {
         })
     }
 
+    /// Sets the region (empty: the default) and path-style addressing of the connection.
+    pub fn set_addressing(
+        &self,
+        id: &str,
+        region: &str,
+        path_style: bool,
+    ) -> Result<ClusterProfile, String> {
+        let region = normalize_region(region)?;
+        self.change(id, |profile| {
+            profile.region = region;
+            profile.path_style = path_style;
+            Ok(())
+        })
+    }
+
+    /// How the connection's S3 client addresses buckets and signs.
+    pub fn addressing(&self, id: &str) -> Result<Addressing, String> {
+        Ok(self.find(id)?.addressing())
+    }
+
     /// The cluster's own proxy choice, if it has one.
     pub fn proxy(&self, id: &str) -> Result<Option<Proxy>, String> {
         Ok(self.find(id)?.proxy)
@@ -379,6 +439,7 @@ fn validated(mut p: ClusterProfile) -> Result<ClusterProfile, String> {
     p.endpoint = p.endpoint.trim().trim_end_matches('/').to_string();
     p.access_key = p.access_key.trim().to_string();
     p.start_paths = normalize_start_paths(&p.start_paths)?;
+    p.region = normalize_region(&p.region)?;
     if p.label.is_empty() {
         return Err("label is required".into());
     }
@@ -484,6 +545,8 @@ pub(crate) mod tests {
             plain_user: false,
             proxy: None,
             start_paths: Vec::new(),
+            region: String::new(),
+            path_style: true,
         };
         assert!(store.update(ghost, Some("SK")).is_err());
         assert!(secrets.0.lock().unwrap().is_empty());
@@ -724,6 +787,50 @@ pub(crate) mod tests {
             store.list().unwrap()[0].start_paths,
             ["team-bucket/project-a/"]
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn region_and_path_style_default_for_old_files_and_round_trip() {
+        let dir = temp_dir("addressing");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A profiles.json of v0.1.3: no region, no path_style.
+        let old = r#"[{"id":"1","label":"lab","endpoint":"http://h:1","access_key":"AK"}]"#;
+        std::fs::write(dir.join("profiles.json"), old).unwrap();
+        let secrets = MemorySecrets::default();
+        let store = ProfileStore::new(dir.clone(), &secrets);
+        let listed = store.list().unwrap();
+        assert_eq!(listed[0].region, "");
+        assert!(listed[0].path_style);
+        assert_eq!(store.addressing("1").unwrap(), Addressing::default());
+
+        // Create, then set (trimmed), update through the whole profile, list.
+        let added = store.add("aws", "https://s3.example", "AK2", "SK").unwrap();
+        assert_eq!((added.region.as_str(), added.path_style), ("", true));
+        let set = store
+            .set_addressing(&added.id, " eu-west-1 ", false)
+            .unwrap();
+        assert_eq!((set.region.as_str(), set.path_style), ("eu-west-1", false));
+        assert_eq!(store.list().unwrap()[1], set);
+        let updated = ClusterProfile {
+            region: "default".into(),
+            path_style: true,
+            ..set
+        };
+        store.update(updated.clone(), None).unwrap();
+        assert_eq!(store.list().unwrap()[1], updated);
+        assert_eq!(
+            store.addressing(&added.id).unwrap(),
+            Addressing {
+                region: "default".into(),
+                path_style: true
+            }
+        );
+        // A region that cannot be one is refused and changes nothing.
+        assert!(store.set_addressing(&added.id, "eu west", true).is_err());
+        assert!(store.set_addressing(&added.id, "a/b", true).is_err());
+        assert_eq!(store.list().unwrap()[1], updated);
+        assert!(store.set_addressing("missing", "", true).is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -122,6 +122,19 @@ fn add_profile(
     state.profiles.set_start_paths(&added.id, &start_paths)
 }
 
+/// The connection's region (empty: the default) and path-style addressing.
+#[tauri::command(async)]
+fn profile_set_addressing(
+    state: St<'_>,
+    id: String,
+    region: String,
+    path_style: bool,
+) -> Cmd<'_, ClusterProfile> {
+    let saved = state.profiles.set_addressing(&id, &region, path_style)?;
+    state.forget_sessions();
+    Ok(saved)
+}
+
 /// The paths this connection's key works in (`bucket` or `bucket/prefix/` each); it lands at the first.
 #[tauri::command(async)]
 fn profile_set_start_paths(
@@ -372,13 +385,25 @@ async fn test_s3(
     access_key: String,
     secret_key: String,
     proxy: Option<Proxy>,
+    region: Option<String>,
+    path_style: Option<bool>,
 ) -> Cmd<'_, Opened> {
     rgw_admin::parse_endpoint(&endpoint).map_err(|e| e.to_string())?;
     let proxy = match proxy {
         Some(own) => own.validated()?,
         None => state.settings.get()?.proxy,
     };
-    let s3 = s3::S3::with_proxy(&endpoint, access_key.trim(), secret_key.trim(), &proxy)?;
+    let addressing = s3::Addressing {
+        region: clusters::normalize_region(&region.unwrap_or_default())?,
+        path_style: path_style.unwrap_or(true),
+    };
+    let s3 = s3::S3::connect(
+        &endpoint,
+        access_key.trim(),
+        secret_key.trim(),
+        &proxy,
+        &addressing,
+    )?;
     browse::open_session(&s3).await
 }
 
@@ -420,7 +445,14 @@ async fn caller_access(state: St<'_>, cluster_id: String) -> Cmd<'_, CallerAcces
     // "Me" is whoever the browse key belongs to; the profile's key then asks about that uid.
     let (endpoint, creds) = state.profiles.browse_credentials(&cluster_id)?;
     let proxy = state.proxy_of(&cluster_id)?;
-    let own = s3::S3::with_proxy(&endpoint, &creds.access_key, &creds.secret_key, &proxy)?;
+    let addressing = state.profiles.addressing(&cluster_id)?;
+    let own = s3::S3::connect(
+        &endpoint,
+        &creds.access_key,
+        &creds.secret_key,
+        &proxy,
+        &addressing,
+    )?;
     let uid = own.whoami().await?;
     state.ops(&cluster_id)?.caller_access(&uid).await
 }
@@ -808,6 +840,7 @@ pub fn run() {
             tabs_set,
             profile_set_proxy,
             profile_set_start_paths,
+            profile_set_addressing,
             network_get,
             network_set,
             get_ui_scale,
