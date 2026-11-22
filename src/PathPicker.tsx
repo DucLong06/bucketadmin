@@ -305,7 +305,9 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
 
 type Props = Omit<ViewProps, "chips" | "probe" | "onFocus" | "onBlur" | "onKeyDown" | "dropdown" | "pick"> & {
   /** Folder rows get a box to tick, and the ticked ones can be pinned at once with this (M14). */
-  onPinMany?: (places: Place[]) => Promise<unknown>;
+  onPinMany?: (places: Place[]) => Promise<PinSummary | void>;
+  /** Told which folder rows are ticked, whenever that changes. */
+  onTicked?: (paths: string[]) => void;
   /** The sidebar's form of the picker: a field with the suggestions in a dropdown under it. */
   dropdown?: boolean;
   /** The buckets the key lists: suggested while a bucket's name is being typed (dropdown only). */
@@ -324,7 +326,7 @@ type Props = Omit<ViewProps, "chips" | "probe" | "onFocus" | "onBlur" | "onKeyDo
 /** The inline picker: chips of the connection's known places, and a live probe of what is typed
  *  (300 ms after the last key; an answer for an older text is dropped). Nothing here ever blocks
  *  or toasts: a path the key may not list can still be the one to open. */
-export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quietBucket, onPinMany, ...view }: Props) {
+export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quietBucket, onPinMany, onTicked, ...view }: Props) {
   const { profiles, pins, recents } = useContext(AccessContext);
   const [awake, setAwake] = useState(!lazy);
   const [answer, setProbe] = useState<Probe | null>(null);
@@ -351,6 +353,7 @@ export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quiet
     // Ticks are for one level: another path, other folders.
     setTicked([]);
   }, [view.value]);
+  useEffect(() => onTicked?.(ticked), [ticked]);
   // Prefixes each bucket's policy grants this key, as far as the key may read the policy.
   const [policy, setPolicy] = useState<Record<string, string[]>>({});
   const startPaths = profiles.find((p) => p.id === clusterId)?.start_paths;
@@ -409,7 +412,8 @@ export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quiet
     ticked,
     onTicked: setTicked,
     onPinSelected: () => {
-      onPinMany(tickedPlaces(ticked, clusterId, uid)).then(() => setTicked([]), () => {});
+      // A refusal (the list is full) leaves the ticks: they show what was asked for.
+      onPinMany(tickedPlaces(ticked, clusterId, uid)).then((done) => done?.stopped || setTicked([]), () => {});
     },
   };
   return (
@@ -437,10 +441,8 @@ type DialogProps = {
   uid?: string;
   /** Set when the path is pinned from no tab's connection: the dialog asks which connection, and says so here. */
   onCluster?: (clusterId: string) => void;
-  /** Every place of the list typed or pasted; `invalid`: how many of its items were no place. */
+  /** Every place of the list typed or pasted, and the folders ticked under it; `invalid`: how many of its items were no place. */
   onSubmit: (places: { bucket: string; prefix: string }[], invalid: number) => Promise<PinSummary>;
-  /** Pins the folders ticked under the field. */
-  onPinMany: (places: Place[]) => Promise<unknown>;
   onClose: () => void;
 };
 
@@ -453,26 +455,44 @@ export function pathList(text: string) {
   };
 }
 
+/** What the pin dialog pins: every place of its list, and the folders ticked under the field in place of the
+ *  line they are under (the one being typed, which was only the way to them). */
+export function dialogPins(text: string, ticked: string[]) {
+  if (ticked.length === 0) return pathList(text);
+  const before = pathList(lastItem(text, true)[0]);
+  return { places: [...before.places, ...pathList(ticked.join("\n")).places], bad: before.bad };
+}
+
 /** The picker as a dialog, for pinning paths: one per line, or a pasted list. */
-export function PathPickerDialog({ open, title, submitLabel, clusterId, uid, onCluster, onSubmit, onPinMany, onClose }: DialogProps) {
+export function PathPickerDialog({ open, title, submitLabel, clusterId, uid, onCluster, onSubmit, onClose }: DialogProps) {
   const { profiles } = useContext(AccessContext);
   const [path, setPath] = useState("");
+  const ticked = useRef<string[]>([]);
+  const field = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (open) setPath("");
   }, [open]);
-  const { places, bad } = pathList(path);
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  // M15: the footer's Pin and the dialog's own do the same, so neither leaves the other's half undone.
+  async function pin() {
+    const { places, bad } = dialogPins(path, ticked.current);
     if (places.length === 0) return;
-    const { stopped } = await onSubmit(places, bad.length);
-    // What was not pinned stays in the field (the summary says why); all done closes the dialog.
-    const left = stopped ? places.slice(places.length - stopped.left).map((place) => joinPath(place.bucket, place.prefix)) : [];
-    if (bad.length || left.length) setPath([...bad, ...left].join("\n"));
-    else onClose();
+    const done = await onSubmit(places, bad.length);
+    // What was not pinned stays in the field (the summary says why), with the keyboard; all done closes the dialog.
+    const left = done.stopped ? places.slice(places.length - done.stopped.left).map((place) => joinPath(place.bucket, place.prefix)) : [];
+    if (bad.length || left.length) {
+      setPath([...bad, ...left].join("\n"));
+      field.current?.focus();
+    } else onClose();
+    return done;
   }
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth aria-labelledby="path-picker-title">
-      <form onSubmit={submit}>
+      <form
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          pin();
+        }}
+      >
         <DialogTitle id="path-picker-title">{title}</DialogTitle>
         <DialogContent>
           {onCluster && (
@@ -493,11 +513,11 @@ export function PathPickerDialog({ open, title, submitLabel, clusterId, uid, onC
               ))}
             </TextField>
           )}
-          <Box sx={{ pt: onCluster ? 2 : 1 }}>{open && <PathPicker key={clusterId} clusterId={clusterId} uid={uid} value={path} onChange={setPath} label={t("browse.openPath")} helperText={t("pins.addHelp")} multiline onPinMany={onPinMany} autoFocus />}</Box>
+          <Box sx={{ pt: onCluster ? 2 : 1 }}>{open && <PathPicker key={clusterId} clusterId={clusterId} uid={uid} value={path} onChange={setPath} label={t("browse.openPath")} helperText={t("pins.addHelp")} multiline onPinMany={pin} onTicked={(paths) => (ticked.current = paths)} inputRef={field} autoFocus />}</Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={onClose}>{t("common.cancel")}</Button>
-          <Button type="submit" variant="contained" disabled={places.length === 0}>
+          <Button type="submit" variant="contained" disabled={pathList(path).places.length === 0}>
             {submitLabel}
           </Button>
         </DialogActions>

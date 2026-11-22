@@ -2,7 +2,7 @@ import { createElement, isValidElement, type ReactElement, type ReactNode } from
 import { renderToString } from "react-dom/server";
 import { beforeEach, expect, test } from "vitest";
 import { applyLang, t } from "./i18n";
-import { accessChips, appendChild, lastItem, pathList, PathPickerView, suggestions, suggestKey, tickedPlaces, type Probe } from "./PathPicker";
+import { accessChips, appendChild, dialogPins, lastItem, pathList, PathPickerView, suggestions, suggestKey, tickedPlaces, type Probe } from "./PathPicker";
 import { pinAll, type Pin } from "./pins";
 
 beforeEach(() => applyLang("en"));
@@ -237,4 +237,15 @@ test("the pin dialog takes a list: the chips and folders are for the line being 
   expect(markup).toContain("<textarea");
   expect(markup).toContain("Not a valid path: my bucket/");
   expect(pathList("a/x/\nmy bucket/\ns3://b/y, a/x/")).toEqual({ places: [{ bucket: "a", prefix: "x/" }, { bucket: "b", prefix: "y/" }], bad: ["my bucket/"] });
+});
+
+test("in the pin dialog the ticked folders stand in for the line they are under, whichever Pin button is pressed", () => {
+  // Nothing ticked: the list as typed.
+  expect(dialogPins("a/x/\nmedia/", [])).toEqual({ places: [{ bucket: "a", prefix: "x/" }, { bucket: "media", prefix: "" }], bad: [] });
+  // Folders ticked under "media/": they are pinned, "media/" itself (only the way to them) is not; the lines above still are.
+  expect(dialogPins("a/x/\nmy bucket/\nmedia/", ["media/raw/", "media/tmp/"])).toEqual({
+    places: [{ bucket: "a", prefix: "x/" }, { bucket: "media", prefix: "raw/" }, { bucket: "media", prefix: "tmp/" }],
+    bad: ["my bucket/"],
+  });
+  expect(dialogPins("media/", ["media/raw/"])).toEqual({ places: [{ bucket: "media", prefix: "raw/" }], bad: [] });
 });

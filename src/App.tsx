@@ -524,7 +524,6 @@ export default function App() {
         clusterId={pinning?.clusterId ?? ""}
         onCluster={pinning?.ask ? (clusterId) => setPinning({ clusterId, ask: true }) : undefined}
         onSubmit={(places, invalid) => pinOps.pinMany(places.map(({ bucket, prefix }) => ({ clusterId: pinning?.clusterId ?? "", uid: "", bucket, prefix })), invalid)}
-        onPinMany={pinOps.pinMany}
         onClose={() => setPinning(null)}
       />
       </AccessContext.Provider>
@@ -533,7 +532,8 @@ export default function App() {
           {pinError ? explain(pinError).message : ""}
         </Alert>
       </Snackbar>
-      <Snackbar open={pinNote !== null} autoHideDuration={8000} onClose={() => setPinNote(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
+      {/* A list that was cut short (the pin list is full) stays until it is closed: there is a reason to read. */}
+      <Snackbar open={pinNote !== null} autoHideDuration={pinNote?.stopped ? null : 8000} onClose={(_, reason) => (reason === "clickaway" && pinNote?.stopped) || setPinNote(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
         <Alert severity={pinNote?.stopped || pinNote?.invalid ? "warning" : "success"} variant="filled" onClose={() => setPinNote(null)}>
           {pinNote && pinSummaryText(pinNote)}
         </Alert>
