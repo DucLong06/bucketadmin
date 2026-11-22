@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { joinPath, splitPath, startPath } from "./paths";
+import { addStartPaths, isPathList, joinPath, splitPath, splitPathList, startPath } from "./paths";
 
 test("a typed path splits into bucket and prefix", () => {
   expect(splitPath("bucket")).toEqual({ bucket: "bucket", prefix: "" });
@@ -46,4 +46,29 @@ test("a start path is sent in its stored form and reads back as the same place",
     expect(split.error).toBeUndefined();
     if (!split.error) expect(joinPath(split.bucket, split.prefix)).toBe(stored);
   }
+});
+
+// ---- M14.1: a pasted list of paths
+
+test("a pasted list splits on newlines, commas, semicolons, tabs and the space between paths; each place once, in order", () => {
+  expect(splitPathList("a/x/\nb/y/, c;d\te")).toEqual(["a/x/", "b/y/", "c", "d", "e"]);
+  // Blank lines, stray separators and padding are nothing.
+  expect(splitPathList("\n\n  a/x/ \r\n\r\n,, ;\n b \n")).toEqual(["a/x/", "b"]);
+  // The s3:// form, a leading slash and a file name all land on the stored form, so repeats go.
+  expect(splitPathList("s3://logs/2026 /logs/2026/\nlogs/2026/app.log, S3://logs/2026/")).toEqual(["logs/2026/"]);
+  // A space splits between `bucket/...` items and before s3://, not inside a folder name.
+  expect(splitPathList("a/x/ b/y/ s3://c/z")).toEqual(["a/x/", "b/y/", "c/z/"]);
+  expect(splitPathList("bucket/my folder/x")).toEqual(["bucket/my folder/x/"]);
+  // A bad item in the middle is kept as typed, in its place; the good ones around it are not lost.
+  expect(splitPathList("a/x/\nmy bucket/\nb/..\nc")).toEqual(["a/x/", "my bucket/", "b/..", "c"]);
+  expect(splitPathList("  \n ")).toEqual([]);
+  expect(isPathList("a/x/\nb")).toBe(true);
+  expect(isPathList("a/x/ b/y/")).toBe(true);
+  expect(isPathList("bucket/my folder/x")).toBe(false);
+  expect(isPathList("a/x/")).toBe(false);
+});
+
+test("every valid item of a list becomes a start path; the others are named, the valid ones never lost", () => {
+  expect(addStartPaths(["logs"], "a/x/\nmy bucket/\nlogs, s3://b/y")).toEqual({ paths: ["logs", "a/x/", "b/y/"], added: 2, bad: ["my bucket/"] });
+  expect(addStartPaths([], "a b/, ..")).toEqual({ paths: [], added: 0, bad: ["a b/", ".."] });
 });

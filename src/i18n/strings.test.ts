@@ -113,7 +113,7 @@ const views = (): ReactElement[] => [
   createElement(App),
   createElement(Connections, { profiles: [profile], onChanged: nothing, scale: 110, onScale: nothing, onBrowse: nothing }),
   createElement(Connections, { profiles: [], onChanged: nothing, scale: 100, onScale: nothing, onBrowse: nothing }),
-  createElement(Browse, { profiles: [profile], start: place, active: true, startTransfer: async () => undefined, onPlace: nothing, remember: nothing, recents: [{ ...place, bucket: "logs", prefix: "2026/" }], onRecent: nothing, pins: [{ place: { ...place, bucket: "logs", prefix: "" }, label: "", added: 0 }], pinOps: { toggle: nothing, rename: nothing, move: nothing }, onOpenTab: nothing, onPinPath: nothing, folded: [], onFold: nothing }),
+  createElement(Browse, { profiles: [profile], start: place, active: true, startTransfer: async () => undefined, onPlace: nothing, remember: nothing, recents: [{ ...place, bucket: "logs", prefix: "2026/" }], onRecent: nothing, pins: [{ place: { ...place, bucket: "logs", prefix: "" }, label: "", added: 0 }], pinOps: { toggle: nothing, rename: nothing, move: nothing, pinMany: async () => ({ pinned: 0, already: 0, invalid: 0 }) }, onOpenTab: nothing, onPinPath: nothing, folded: [], onFold: nothing }),
   createElement(ErrorAlert, { error: "AccessDenied (403): refused [needs users=read]" }),
   createElement(ErrorAlert, { error: "S3 NoSuchBucket (404): gone" }),
   createElement(ErrorAlert, { error: "keychain: cannot read secret key: locked" }),

@@ -21,7 +21,7 @@ import {
 import { invoke, type Profile } from "./api";
 import { explain } from "./errors";
 import { AccessContext, PathPickerDialog } from "./PathPicker";
-import { filterPins, isPinned, movePin, pinTarget, togglePin, type Pin, type PinOps } from "./pins";
+import { filterPins, isPinned, movePin, pinAll, pinSummaryText, pinTarget, togglePin, type Pin, type PinOps, type PinSummary } from "./pins";
 import AuditLog from "./AuditLog";
 import Browse, { NARROW, SHORT } from "./Browse";
 import Connections from "./Connections";
@@ -80,6 +80,8 @@ export default function App() {
   const [pinMenu, setPinMenu] = useState<HTMLElement | null>(null);
   const [pinMenuFilter, setPinMenuFilter] = useState("");
   const [pinError, setPinError] = useState<string | null>(null);
+  // What the last list of paths pinned at once came to (M14).
+  const [pinNote, setPinNote] = useState<PinSummary | null>(null);
   // The connection a path is being pinned on, while the path picker is open for that (ask: the dialog lets it be chosen).
   const [pinning, setPinning] = useState<{ clusterId: string; ask: boolean } | null>(null);
   function savePins(guess: Pin[], command: string, args: Record<string, unknown>) {
@@ -98,6 +100,12 @@ export default function App() {
     },
     rename: (place, label) => savePins(pins.map((pin) => (samePlace(pin.place, place) ? { ...pin, label } : pin)), "pin_rename", { place, label }),
     move: (place, to) => savePins(movePin(pins, place, to), "pin_move", { place, to }),
+    pinMany: async (places, invalid = 0) => {
+      const done = await pinAll(pins, places, (place) => invoke<Pin[]>("pin_add", { place, label: "" }), invalid);
+      setPins(done.pins);
+      setPinNote(done.summary);
+      return done.summary;
+    },
   };
   // Sidebar sections folded to their heading, shared by every tab and saved like the pins.
   const [folded, setFolded] = useState<string[]>([]);
@@ -515,16 +523,19 @@ export default function App() {
         submitLabel={t("pins.addSubmit")}
         clusterId={pinning?.clusterId ?? ""}
         onCluster={pinning?.ask ? (clusterId) => setPinning({ clusterId, ask: true }) : undefined}
-        onSubmit={(bucket, prefix) => {
-          const place = { clusterId: pinning?.clusterId ?? "", uid: "", bucket, prefix };
-          if (!isPinned(pins, place)) pinOps.toggle(place);
-        }}
+        onSubmit={(places, invalid) => pinOps.pinMany(places.map(({ bucket, prefix }) => ({ clusterId: pinning?.clusterId ?? "", uid: "", bucket, prefix })), invalid)}
+        onPinMany={pinOps.pinMany}
         onClose={() => setPinning(null)}
       />
       </AccessContext.Provider>
       <Snackbar open={pinError !== null} autoHideDuration={8000} onClose={() => setPinError(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
         <Alert severity="error" variant="filled" onClose={() => setPinError(null)}>
           {pinError ? explain(pinError).message : ""}
+        </Alert>
+      </Snackbar>
+      <Snackbar open={pinNote !== null} autoHideDuration={8000} onClose={() => setPinNote(null)} anchorOrigin={{ vertical: "bottom", horizontal: "center" }}>
+        <Alert severity={pinNote?.stopped || pinNote?.invalid ? "warning" : "success"} variant="filled" onClose={() => setPinNote(null)}>
+          {pinNote && pinSummaryText(pinNote)}
         </Alert>
       </Snackbar>
       <Snackbar

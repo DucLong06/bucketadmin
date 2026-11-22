@@ -3,13 +3,13 @@
 // what S3 says about the path being typed: its folders, or that it may not be listed there.
 // In the sidebar the same picker is a field with a dropdown: the same places and folders as rows.
 import { createContext, type FormEvent, type KeyboardEvent, type ReactNode, type Ref, useContext, useEffect, useRef, useState } from "react";
-import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, List, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import { Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, List, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { invoke, type Profile } from "./api";
 import { moveHighlight } from "./BucketPanel";
 import { explain } from "./errors";
 import { t, type Key } from "./i18n";
-import { joinPath, splitPath } from "./paths";
-import type { Pin } from "./pins";
+import { joinPath, splitPath, splitPathList } from "./paths";
+import type { Pin, PinSummary } from "./pins";
 import type { Place } from "./tabs";
 import { thinScroll, tokens } from "./theme";
 import { PinIcon } from "./ui";
@@ -50,6 +50,16 @@ export const appendChild = (probe: { bucket: string; prefix: string }, child: st
 export type Suggestion = { path: string; label: string; source: ChipSource | "folder" | "bucket" };
 /** What is typed, as the path it will be read as: no scheme, no leading slash. */
 const typedPath = (value: string) => value.trim().replace(/^s3:\/\//i, "").replace(/^\/+/, "");
+/** A list of paths in the field: what comes before the item being typed (the last one), and that item. */
+export function lastItem(value: string, multiline?: boolean): [string, string] {
+  const at = multiline ? value.search(/[^\n\r\t,;]*$/) : 0;
+  return [value.slice(0, at), value.slice(at)];
+}
+/** The places of the ticked folder rows, on the picker's connection and key. */
+export const tickedPlaces = (ticked: string[], clusterId: string, uid: string): Place[] =>
+  ticked.map(splitPath).flatMap((at) => (at.error ? [] : [{ clusterId, uid, bucket: at.bucket, prefix: at.prefix }]));
+/** The ticked paths after a click on the box of `path`. */
+const toggled = (ticked: string[], path: string) => (ticked.includes(path) ? ticked.filter((p) => p !== path) : [...ticked, path]);
 
 /** The rows of that dropdown. First what continues the typed text: the folders S3 lists there or, while
  *  the bucket's name is still being typed, the listed buckets that start with it. Then the known places
@@ -70,10 +80,13 @@ export function suggestions(value: string, probe: Probe | null, chips: AccessChi
 
 /** What a key pressed in that field does while the rows are shown: the arrows move the highlight; Tab, and
  *  → with the caret at the end of the text, take the highlighted row into the field (the rows stay, now
- *  for the next level). null: the key is not for the rows (Enter opens what is typed; Tab with no rows moves on). */
-export function suggestKey(key: string, rows: Suggestion[], highlight: number, caretAtEnd = true): { highlight: number } | { value: string } | null {
+ *  for the next level); Space right after the arrows ticks the highlighted folder (else it types a space,
+ *  folder names may have one). null: the key is not for the rows (Enter opens what is typed; Tab with no rows moves on). */
+export function suggestKey(key: string, rows: Suggestion[], highlight: number, caretAtEnd = true, navigating = false): { highlight: number } | { value: string } | { toggle: string } | null {
   if (rows.length === 0) return null;
   if (key === "ArrowDown" || key === "ArrowUp") return { highlight: moveHighlight(highlight, key, rows.length) };
+  const row = rows[moveHighlight(highlight, "", rows.length)];
+  if (key === " " && navigating && row.source === "folder") return { toggle: row.path };
   if (key === "Tab" || (key === "ArrowRight" && caretAtEnd)) return { value: rows[moveHighlight(highlight, "", rows.length)].path };
   return null;
 }
@@ -120,22 +133,32 @@ type ViewProps = {
   /** The sidebar's form: no chips; the known places and the folders are rows under the field while it is
    *  `open` (it has the keyboard), `highlight` being the row Tab or → takes. `buckets`: the key's listed buckets. */
   dropdown?: { open: boolean; highlight: number; buckets?: string[] };
+  /** A list of paths, one per line (3 rows, growing to 8): the chips and the folders are for the last one. */
+  multiline?: boolean;
+  /** Folder rows can be ticked (M14): which are, and what ticking changes; `onPinSelected` pins the ticked ones. */
+  pick?: { ticked: string[]; onTicked: (paths: string[]) => void; onPinSelected: () => void };
 };
 
 /** The picker as it looks for a given state; `PathPicker` adds the asking. */
-export function PathPickerView({ value, onChange, label, helperText, ariaLabel, chips, probe, optional, autoFocus, inputRef, action, onFocus, onBlur, onKeyDown, dropdown }: ViewProps) {
-  const split = splitPath(value);
-  const wrong = !!value.trim() && !!split.error;
-  const rows = dropdown?.open ? suggestions(value, probe, chips, dropdown.buckets) : [];
-  // The rows in two groups, numbered through: what continues the typed text, then the known places.
-  const group = (title: string, from: number, to: number) =>
-    to > from && (
+export function PathPickerView({ value, onChange, label, helperText, ariaLabel, chips, probe, optional, autoFocus, inputRef, action, onFocus, onBlur, onKeyDown, dropdown, multiline, pick }: ViewProps) {
+  // In a list, the chips and folders replace the item being typed; the others stay as they are.
+  const [head, current] = lastItem(value, multiline);
+  const take = (path: string) => onChange(head + path);
+  const split = splitPath(current);
+  const bad = multiline ? splitPathList(value).filter((item) => splitPath(item).error) : [];
+  const problem = multiline ? (bad.length ? t("pathPicker.notValid", { list: bad.join(", ") }) : "") : value.trim() && split.error ? t(split.error) : "";
+  const rows = dropdown?.open ? suggestions(current, probe, chips, dropdown.buckets) : [];
+  // Without the dropdown, tickable folders are rows too (the chips have no room for a box).
+  const childRows: Suggestion[] = !dropdown && pick && probe?.status === "ok" ? probe.children.map((name) => ({ path: appendChild(probe, name), label: name, source: "folder" })) : [];
+  // The rows in groups, numbered through: what continues the typed text, then the known places.
+  const group = (title: string, list: Suggestion[], from: number) =>
+    list.length > 0 && (
       <>
         <Typography variant="caption" color="text.secondary" component="p" sx={{ px: 1.5, pt: 0.75 }}>
           {title}
         </Typography>
         <List dense disablePadding role="list" aria-label={title}>
-          {rows.slice(from, to).map((row, n) => (
+          {list.map((row, n) => (
             <ListItemButton
               key={row.path}
               role="listitem"
@@ -143,9 +166,21 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
               className={from + n === dropdown?.highlight ? "Mui-focusVisible" : undefined}
               title={row.path}
               aria-label={t(row.source === "folder" ? "pathPicker.child" : "pathPicker.pick", row.source === "folder" ? { name: row.label } : { path: row.path })}
-              onClick={() => onChange(row.path)}
-              sx={{ minHeight: 40, px: 1.5 }}
+              onClick={() => take(row.path)}
+              sx={{ minHeight: 40, px: 1.5, pl: pick && row.source === "folder" ? 0 : 1.5 }}
             >
+              {pick && row.source === "folder" && (
+                // The box fills its cell, the row's whole height: a click there ticks, it does not go into the folder.
+                <Checkbox
+                  checked={pick.ticked.includes(row.path)}
+                  onChange={() => pick.onTicked(toggled(pick.ticked, row.path))}
+                  onClick={(e) => e.stopPropagation()}
+                  tabIndex={-1}
+                  size="small"
+                  slotProps={{ input: { "aria-label": t("pathPicker.tick", { name: row.label }) } }}
+                  sx={{ alignSelf: "stretch", width: 40, flexShrink: 0, p: 0, borderRadius: 0 }}
+                />
+              )}
               <ListItemIcon sx={{ minWidth: 26, color: row.source === "policy" ? "primary.main" : "text.secondary" }}>
                 <Box component="span" data-source={row.source} sx={{ display: "inline-flex" }}>
                   {row.source === "folder" || row.source === "bucket" ? <FolderIcon /> : SOURCE_ICON[row.source]}
@@ -158,6 +193,22 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
       </>
     );
   const continuing = rows.filter((row) => row.source === "folder" || row.source === "bucket").length;
+  const folders = [...rows, ...childRows].filter((row) => row.source === "folder").map((row) => row.path);
+  const all = folders.length > 0 && folders.every((path) => pick?.ticked.includes(path));
+  // Sticky under the rows while something is ticked.
+  const footer = pick && pick.ticked.length > 0 && (
+    <Stack direction="row" sx={{ position: "sticky", bottom: 0, zIndex: 1, bgcolor: "background.paper", borderTop: 1, borderColor: "divider", px: 1.5, py: 0.5, gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+      <Typography variant="body2" role="status" sx={{ flexGrow: 1 }}>
+        {t("pathPicker.selected", { n: pick.ticked.length })}
+      </Typography>
+      <Button size="small" onClick={() => pick.onTicked(all ? [] : folders)} sx={{ minHeight: 40 }}>
+        {t(all ? "pathPicker.selectNone" : "pathPicker.selectAll")}
+      </Button>
+      <Button size="small" variant="contained" onClick={pick.onPinSelected} sx={{ minHeight: 40 }}>
+        {t("pathPicker.pinSelected")}
+      </Button>
+    </Stack>
+  );
   const caption = (text: string) => (
     <Typography variant="caption" color="text.secondary" component="p" sx={{ mb: 0.5 }}>
       {text}
@@ -178,7 +229,7 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
                   icon={<Box component="span" data-source={chip.source} sx={{ display: "inline-flex", color: chip.source === "policy" ? "primary.main" : "text.secondary" }}>{SOURCE_ICON[chip.source]}</Box>}
                   label={chip.path}
                   aria-label={t("pathPicker.pick", { path: chip.path })}
-                  onClick={() => onChange(chip.path)}
+                  onClick={() => take(chip.path)}
                   sx={chipSx}
                 />
               </Tooltip>
@@ -196,11 +247,14 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
         onBlur={onBlur}
         size="small"
         fullWidth
+        multiline={multiline}
+        minRows={multiline ? 3 : undefined}
+        maxRows={multiline ? 8 : undefined}
         autoFocus={autoFocus}
-        error={wrong}
+        error={!!problem}
         // In the sidebar the help is the field's tooltip: the card keeps its height.
         title={dropdown ? `${t("browse.openPathHelp")}. ${t("pathPicker.keys")}` : undefined}
-        helperText={wrong && split.error ? t(split.error) : dropdown ? undefined : (helperText ?? t("browse.openPathHelp"))}
+        helperText={problem || (dropdown ? undefined : (helperText ?? t("browse.openPathHelp")))}
         inputRef={inputRef}
         slotProps={{
           // On the input, not the TextField (whose root is a div): the handler reads the caret.
@@ -211,17 +265,24 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
       />
       {rows.length > 0 && (
         // A click on a row must not take the keyboard from the field (the rows would close under the pointer).
-        <Paper variant="outlined" onMouseDown={(e) => e.preventDefault()} sx={{ ...thinScroll, maxHeight: 264, borderRadius: "12px", pb: 0.5 }}>
-          {group(t("pathPicker.children"), 0, continuing)}
-          {group(t("pathPicker.chips"), continuing, rows.length)}
+        <Paper variant="outlined" onMouseDown={(e) => e.preventDefault()} sx={{ ...thinScroll, maxHeight: 264, borderRadius: "12px", pb: footer ? 0 : 0.5 }}>
+          {group(t("pathPicker.children"), rows.slice(0, continuing), 0)}
+          {group(t("pathPicker.chips"), rows.slice(continuing), continuing)}
+          {footer}
         </Paper>
       )}
-      {!dropdown && probe?.status === "ok" && probe.children.length > 0 && (
+      {childRows.length > 0 && (
+        <Paper variant="outlined" sx={{ ...thinScroll, maxHeight: 264, borderRadius: "12px", pb: footer ? 0 : 0.5 }}>
+          {group(t("pathPicker.children"), childRows, 0)}
+          {footer}
+        </Paper>
+      )}
+      {!dropdown && !pick && probe?.status === "ok" && probe.children.length > 0 && (
         <Box>
           {caption(t("pathPicker.children"))}
           <Stack direction="row" role="list" aria-label={t("pathPicker.children")} sx={{ flexWrap: "wrap", gap: 0.75 }}>
             {probe.children.map((name) => (
-              <Chip key={name} role="listitem" icon={<FolderIcon />} label={name} aria-label={t("pathPicker.child", { name })} onClick={() => onChange(appendChild(probe, name))} sx={chipSx} />
+              <Chip key={name} role="listitem" icon={<FolderIcon />} label={name} aria-label={t("pathPicker.child", { name })} onClick={() => take(appendChild(probe, name))} sx={chipSx} />
             ))}
           </Stack>
         </Box>
@@ -234,7 +295,9 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
   );
 }
 
-type Props = Omit<ViewProps, "chips" | "probe" | "onFocus" | "onBlur" | "onKeyDown" | "dropdown"> & {
+type Props = Omit<ViewProps, "chips" | "probe" | "onFocus" | "onBlur" | "onKeyDown" | "dropdown" | "pick"> & {
+  /** Folder rows get a box to tick, and the ticked ones can be pinned at once with this (M14). */
+  onPinMany?: (places: Place[]) => Promise<unknown>;
   /** The sidebar's form of the picker: a field with the suggestions in a dropdown under it. */
   dropdown?: boolean;
   /** The buckets the key lists: suggested while a bucket's name is being typed (dropdown only). */
@@ -253,18 +316,23 @@ type Props = Omit<ViewProps, "chips" | "probe" | "onFocus" | "onBlur" | "onKeyDo
 /** The inline picker: chips of the connection's known places, and a live probe of what is typed
  *  (300 ms after the last key; an answer for an older text is dropped). Nothing here ever blocks
  *  or toasts: a path the key may not list can still be the one to open. */
-export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quietBucket, ...view }: Props) {
+export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quietBucket, onPinMany, ...view }: Props) {
   const { profiles, pins, recents } = useContext(AccessContext);
   const [awake, setAwake] = useState(!lazy);
   const [answer, setProbe] = useState<Probe | null>(null);
+  // In a list, what is asked about is the item being typed.
+  const current = lastItem(view.value, view.multiline)[1];
   // Nothing is said about a bucket name half typed by a key that cannot list buckets.
-  const probe = quietBucket && answer?.status !== "ok" && !typedPath(view.value).includes("/") ? null : answer;
+  const probe = quietBucket && answer?.status !== "ok" && !typedPath(current).includes("/") ? null : answer;
   // The dropdown: open while the field has the keyboard, until Esc; typing opens it again.
   const [focused, setFocused] = useState(false);
   const [closed, setClosed] = useState(false);
   const [highlight, showHighlight] = useState(0);
   // The same position for key presses that arrive before the next render.
   const cursor = useRef(0);
+  // The last key moved the highlight: Space ticks the row then, it does not type.
+  const navigating = useRef(false);
+  const [ticked, setTicked] = useState<string[]>([]);
   const setHighlight = (next: number) => {
     cursor.current = next;
     showHighlight(next);
@@ -272,13 +340,15 @@ export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quiet
   useEffect(() => {
     setHighlight(0);
     setClosed(false);
+    // Ticks are for one level: another path, other folders.
+    setTicked([]);
   }, [view.value]);
   // Prefixes each bucket's policy grants this key, as far as the key may read the policy.
   const [policy, setPolicy] = useState<Record<string, string[]>>({});
   const startPaths = profiles.find((p) => p.id === clusterId)?.start_paths;
-  const split = splitPath(view.value);
+  const split = splitPath(current);
   // The bucket being typed counts once its name is finished (a "/" follows, or S3 answered for it).
-  const typedBucket = !split.error && (view.value.trim().replace(/^s3:\/\//i, "").replace(/^\/+/, "").includes("/") || probe?.status === "ok") ? split.bucket : "";
+  const typedBucket = !split.error && (typedPath(current).includes("/") || probe?.status === "ok") ? split.bucket : "";
   const known = accessChips({ startPaths, pins, recents, policy: {} }, clusterId, uid).map((chip) => chip.path.split("/")[0]);
   const scanned = [...new Set([...known.slice(0, MAX_SCANNED), ...(typedBucket ? [typedBucket] : [])])].join("/");
   useEffect(() => setPolicy({}), [clusterId, uid]);
@@ -300,7 +370,7 @@ export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quiet
     if (!awake || !clusterId || split.error) return;
     let stale = false;
     const timer = setTimeout(() => {
-      invoke<Probe>("path_probe", { clusterId, path: view.value, uid }).then(
+      invoke<Probe>("path_probe", { clusterId, path: current, uid }).then(
         (answer) => stale || setProbe(answer),
         () => {},
       );
@@ -309,7 +379,7 @@ export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quiet
       stale = true;
       clearTimeout(timer);
     };
-  }, [awake, clusterId, uid, view.value]);
+  }, [awake, clusterId, uid, current]);
   const chips = clusterId && awake ? accessChips({ startPaths, pins, recents, policy }, clusterId, uid) : [];
   const open = !!dropdown && focused && !closed;
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
@@ -319,12 +389,21 @@ export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quiet
     if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
     // Tab completes what is being typed; in an empty field it moves on (tabbing through the sidebar must not fill it).
     if (e.key === "Tab" && !view.value.trim()) return;
-    const act = suggestKey(e.key, suggestions(view.value, probe, chips, buckets), cursor.current, e.currentTarget.selectionStart === e.currentTarget.value.length);
+    const act = suggestKey(e.key, suggestions(view.value, probe, chips, buckets), cursor.current, e.currentTarget.selectionStart === e.currentTarget.value.length, navigating.current && !!onPinMany);
+    navigating.current = e.key === "ArrowDown" || e.key === "ArrowUp" || (!!act && "toggle" in act);
     if (!act) return;
     e.preventDefault();
     if ("value" in act) view.onChange(act.value);
+    else if ("toggle" in act) setTicked((old) => toggled(old, act.toggle));
     else setHighlight(act.highlight);
   }
+  const pick = onPinMany && {
+    ticked,
+    onTicked: setTicked,
+    onPinSelected: () => {
+      onPinMany(tickedPlaces(ticked, clusterId, uid)).then(() => setTicked([]), () => {});
+    },
+  };
   return (
     <PathPickerView
       {...view}
@@ -337,6 +416,7 @@ export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quiet
       onBlur={() => setFocused(false)}
       onKeyDown={dropdown ? onKeyDown : undefined}
       dropdown={dropdown ? { open, highlight, buckets } : undefined}
+      pick={pick || undefined}
     />
   );
 }
@@ -349,23 +429,38 @@ type DialogProps = {
   uid?: string;
   /** Set when the path is pinned from no tab's connection: the dialog asks which connection, and says so here. */
   onCluster?: (clusterId: string) => void;
-  onSubmit: (bucket: string, prefix: string) => void;
+  /** Every place of the list typed or pasted; `invalid`: how many of its items were no place. */
+  onSubmit: (places: { bucket: string; prefix: string }[], invalid: number) => Promise<PinSummary>;
+  /** Pins the folders ticked under the field. */
+  onPinMany: (places: Place[]) => Promise<unknown>;
   onClose: () => void;
 };
 
-/** The picker as a dialog: for opening a path and for pinning one. */
-export function PathPickerDialog({ open, title, submitLabel, clusterId, uid, onCluster, onSubmit, onClose }: DialogProps) {
+/** The paths of the pin dialog's list: the places in it, and the items that are none. */
+export function pathList(text: string) {
+  const items = splitPathList(text).map((item) => ({ item, at: splitPath(item) }));
+  return {
+    places: items.flatMap(({ at }) => (at.error ? [] : [{ bucket: at.bucket, prefix: at.prefix }])),
+    bad: items.filter(({ at }) => at.error).map(({ item }) => item),
+  };
+}
+
+/** The picker as a dialog, for pinning paths: one per line, or a pasted list. */
+export function PathPickerDialog({ open, title, submitLabel, clusterId, uid, onCluster, onSubmit, onPinMany, onClose }: DialogProps) {
   const { profiles } = useContext(AccessContext);
   const [path, setPath] = useState("");
   useEffect(() => {
     if (open) setPath("");
   }, [open]);
-  const split = splitPath(path);
-  function submit(e: FormEvent) {
+  const { places, bad } = pathList(path);
+  async function submit(e: FormEvent) {
     e.preventDefault();
-    if (split.error) return;
-    onSubmit(split.bucket, split.prefix);
-    onClose();
+    if (places.length === 0) return;
+    const { stopped } = await onSubmit(places, bad.length);
+    // What was not pinned stays in the field (the summary says why); all done closes the dialog.
+    const left = stopped ? places.slice(places.length - stopped.left).map((place) => joinPath(place.bucket, place.prefix)) : [];
+    if (bad.length || left.length) setPath([...bad, ...left].join("\n"));
+    else onClose();
   }
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth aria-labelledby="path-picker-title">
@@ -390,11 +485,11 @@ export function PathPickerDialog({ open, title, submitLabel, clusterId, uid, onC
               ))}
             </TextField>
           )}
-          <Box sx={{ pt: onCluster ? 2 : 1 }}>{open && <PathPicker key={clusterId} clusterId={clusterId} uid={uid} value={path} onChange={setPath} label={t("browse.openPath")} autoFocus />}</Box>
+          <Box sx={{ pt: onCluster ? 2 : 1 }}>{open && <PathPicker key={clusterId} clusterId={clusterId} uid={uid} value={path} onChange={setPath} label={t("browse.openPath")} helperText={t("pins.addHelp")} multiline onPinMany={onPinMany} autoFocus />}</Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={onClose}>{t("common.cancel")}</Button>
-          <Button type="submit" variant="contained" disabled={!!split.error}>
+          <Button type="submit" variant="contained" disabled={places.length === 0}>
             {submitLabel}
           </Button>
         </DialogActions>

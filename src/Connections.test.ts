@@ -1,8 +1,8 @@
-import { createElement } from "react";
+import { createElement, type ReactElement } from "react";
 import { renderToString } from "react-dom/server";
 import { expect, test } from "vitest";
 import type { Profile } from "./api";
-import Connections, { chipsAfter, connected, outcomeAlert, saveBlocker, StartPaths, type ConnectionForm } from "./Connections";
+import Connections, { chipsAfter, connected, outcomeAlert, saveBlocker, StartPaths, takeStartPaths, type ConnectionForm } from "./Connections";
 import { applyLang, t } from "./i18n";
 import { addStartPath, splitPath, startPath } from "./paths";
 import { ClusterSelect, duplicateLabels, filterProfiles, SEARCH_ABOVE } from "./ui";
@@ -148,6 +148,43 @@ test("the start paths are a chip input: Enter adds what is typed in its stored f
   expect(input("")).toContain("Start paths (optional)");
   expect(text(input("my bucket/x"))).toContain(t("paths.bucketSpace"));
   expect(text(input(""))).not.toContain(t("paths.bucketSpace"));
+});
+
+// ---- M14.1: a list pasted or entered into the start paths
+
+/** The element StartPaths renders (it has state, so it is called inside a render). */
+function rendered(props: Parameters<typeof StartPaths>[0]): ReactElement {
+  let tree: ReactElement | undefined;
+  renderToString(createElement(() => ((tree = StartPaths(props)), null)));
+  return tree as ReactElement;
+}
+
+test("a pasted list adds every valid path as a chip; the invalid ones stay in the field and are named", () => {
+  applyLang("en");
+  expect(takeStartPaths(["logs"], "a/x/\nmy bucket/x\nlogs, s3://b/y")).toEqual({ paths: ["logs", "a/x/", "b/y/"], typed: "my bucket/x", note: "2 paths added, 1 not valid: my bucket/x" });
+  expect(takeStartPaths([], "a/x/ b/y/ c/z/")).toEqual({ paths: ["a/x/", "b/y/", "c/z/"], typed: "", note: "3 paths added" });
+  // One path is not a list: Enter keeps its M12 meaning.
+  expect(takeStartPaths([], "team-bucket/my folder/")).toBeNull();
+  applyLang("vi");
+  expect(takeStartPaths([], "a/x/, a b/")?.note).toBe("Đã thêm 1 đường dẫn, 1 không hợp lệ: a b/");
+  // The field's own handlers: a paste of a list is taken (and not pasted as text), Enter on a typed list too.
+  applyLang("en");
+  const seen: { chips?: string[]; typed?: string } = {};
+  const tree = rendered({ value: ["logs"], onChange: (chips) => (seen.chips = chips), typed: "", onTyped: (typed) => (seen.typed = typed) });
+  const field = (tree.props as { renderInput: (params: unknown) => ReactElement<{ slotProps: { htmlInput: { onPaste: (e: unknown) => void } } }> }).renderInput({ slotProps: { inputLabel: {}, htmlInput: {} } });
+  let prevented = false;
+  field.props.slotProps.htmlInput.onPaste({ currentTarget: { selectionStart: 0, selectionEnd: 0 }, clipboardData: { getData: () => "a/x/\nb/y/\nc d/" }, preventDefault: () => (prevented = true) });
+  expect(seen).toEqual({ chips: ["logs", "a/x/", "b/y/"], typed: "c d/" });
+  expect(prevented).toBe(true);
+  // A single path pasted goes into the field as text, as before.
+  prevented = false;
+  field.props.slotProps.htmlInput.onPaste({ currentTarget: { selectionStart: 0, selectionEnd: 0 }, clipboardData: { getData: () => "a/x/" }, preventDefault: () => (prevented = true) });
+  expect(prevented).toBe(false);
+  const enter = { key: "Enter", preventDefault: () => {}, defaultMuiPrevented: false };
+  const typedList = rendered({ value: [], onChange: (chips) => (seen.chips = chips), typed: "p/q/; r/s/", onTyped: (typed) => (seen.typed = typed) });
+  (typedList.props as { onKeyDown: (e: unknown) => void }).onKeyDown(enter);
+  expect(seen).toEqual({ chips: ["p/q/", "r/s/"], typed: "" });
+  expect(enter.defaultMuiPrevented).toBe(true);
 });
 
 const fake = (n: number, label = `site-${String(n).padStart(2, "0")}`): Profile => ({ id: `f${n}`, label, endpoint: `http://s3-${n}.example.invalid:7480`, access_key: `AKIAEXAMPLE0000000${String(n).padStart(2, "0")}` });

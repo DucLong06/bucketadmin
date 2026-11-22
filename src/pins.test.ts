@@ -5,7 +5,7 @@ import type { Profile } from "./api";
 import { applyLang } from "./i18n";
 import PinnedPanel, { PINS_FILTER_ABOVE } from "./PinnedPanel";
 import { ListFilter } from "./ui";
-import { defaultLabel, filterPins, isPinned, movePin, orderPins, pinLabel, pinTarget, togglePin, type Pin } from "./pins";
+import { defaultLabel, filterPins, isPinned, movePin, orderPins, pinAll, pinLabel, pinTarget, togglePin, type Pin } from "./pins";
 import type { Place } from "./tabs";
 
 const at = (clusterId: string, bucket: string, prefix = "", uid = ""): Place => ({ clusterId, uid, bucket, prefix });
@@ -63,7 +63,7 @@ const profiles: Profile[] = [
 ];
 const nothing = () => {};
 const render = (clusterId: string, list = pins, folded = false) =>
-  renderToString(createElement(PinnedPanel, { pins: list, profiles, clusterId, onOpen: nothing, onOpenTab: nothing, ops: { toggle: nothing, rename: nothing, move: nothing }, folded, onFold: nothing }));
+  renderToString(createElement(PinnedPanel, { pins: list, profiles, clusterId, onOpen: nothing, onOpenTab: nothing, ops: { toggle: nothing, rename: nothing, move: nothing, pinMany: async () => ({ pinned: 0, already: 0, invalid: 0 }) }, folded, onFold: nothing }));
 const text = (html: string) => html.replace(/<style[^>]*>.*?<\/style>/gs, " ").replace(/<[^>]*>/g, "|");
 
 test("the Pinned panel lists the current connection's pins first, the others under a divider, each with its full place as tooltip", () => {
@@ -98,7 +98,7 @@ test("the Pinned panel lists the current connection's pins first, the others und
 
 const somePins = (n: number) => Array.from({ length: n }, (_, i) => ({ place: { clusterId: "c1", uid: "", bucket: `team-${i + 1}`, prefix: i % 2 ? "Reports/" : "" }, label: i === 0 ? "Daily Notes" : "", added: i }));
 const card = (n: number) =>
-  renderToString(createElement(PinnedPanel, { pins: somePins(n), profiles: [], clusterId: "c1", onOpen: () => {}, onOpenTab: () => {}, ops: { toggle: () => {}, rename: () => {}, move: () => {} }, folded: false, onFold: () => {} }));
+  renderToString(createElement(PinnedPanel, { pins: somePins(n), profiles: [], clusterId: "c1", onOpen: () => {}, onOpenTab: () => {}, ops: { toggle: () => {}, rename: () => {}, move: () => {}, pinMany: async () => ({ pinned: 0, already: 0, invalid: 0 }) }, folded: false, onFold: () => {} }));
 
 test("the Pinned card has the filter field above 5 pins, matching name and path whatever the case", () => {
   applyLang("en");
@@ -157,4 +157,21 @@ test("Pin a path…: enabled whenever a connection exists; the dialog asks which
   expect(pinTarget("", ["c1", "c2"])).toEqual({ clusterId: "c1", ask: true });
   expect(pinTarget(undefined, ["c1", "c2"])).toEqual({ clusterId: "c1", ask: true });
   expect(pinTarget("gone", ["c1"])).toEqual({ clusterId: "c1", ask: true });
+});
+
+// ---- M14.1: several paths pinned at once
+
+test("pinning a list pins each new place in order, counts the ones pinned already, and stops at the first refusal (the cap)", async () => {
+  const asked: string[] = [];
+  let saved = [pin(at("c1", "logs"))];
+  const add = async (place: Place) => {
+    asked.push(place.bucket);
+    if (saved.length >= 3) throw "at most 100 places can be pinned";
+    return (saved = [...saved, pin(place)]);
+  };
+  const done = await pinAll(saved, [at("c1", "a"), at("c1", "logs"), at("c1", "b"), at("c1", "c"), at("c1", "d")], add, 1);
+  expect(asked).toEqual(["a", "b", "c"]);
+  expect(done.pins.map((p) => p.place.bucket)).toEqual(["logs", "a", "b"]);
+  expect(done.summary).toEqual({ pinned: 2, already: 1, invalid: 1, stopped: { left: 2, error: "at most 100 places can be pinned" } });
+  expect((await pinAll([], [], add)).summary).toEqual({ pinned: 0, already: 0, invalid: 0 });
 });
