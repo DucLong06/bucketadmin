@@ -33,8 +33,9 @@ export NAMES="$(grep -oE 'await shot\("[^"]+"\)' "$FLOW_JS" | sed -E 's/.*"(.*)"
 ENTER_AT="06-csv 28-copy-url"
 # Slots at which the shell presses a real Ctrl+D (a synthetic key event does not prove a shortcut).
 CTRL_D_AT="38-ctrl-d"
-# Slots at which the shell presses a real Tab: the path field of the bucket card takes its highlighted suggestion.
-TAB_AT="38a-path-suggest"
+# Slots at which the shell presses a real Tab: the path field of the bucket card takes its highlighted suggestion,
+# or, with folders ticked, hands the keyboard to the footer's Pin.
+TAB_AT="38a-path-suggest 38c2-tab-to-pin"
 # Debug builds take GitHub's "latest release" answer from here: the flow sees a newer release.
 export BUCKETADMIN_DEV_UPDATE='{"tag_name":"v9.9.9","html_url":"https://github.com/DucLong06/bucketadmin/releases/tag/v9.9.9"}'
 # Files the flow uploads, and where its downloads go. Native file dialogs cannot be driven

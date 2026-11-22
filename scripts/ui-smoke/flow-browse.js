@@ -808,10 +808,14 @@
     // Space right after an arrow unticks the highlighted row (data/), and types nothing.
     for (const key of ["ArrowDown", " "]) picker.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
     await waitFor(() => hasText(T("pathPicker.selected", { n: 2 })) && !boxes()[1].checked, "arrow down, then Space, unticks data/");
-    check(picker.value === BUCKET, "and Space typed no space");
+    check(picker.value === BUCKET && document.activeElement === picker, "and Space typed no space; the keyboard is still in the field");
+    // M15: with folders ticked, Tab (pressed for real by the shell after this picture) goes on to the footer's Pin.
+    await shot("38c2-tab-to-pin");
+    await waitFor(() => document.activeElement === button(T("pathPicker.pinSelected")) && children().length === 4 && picker.value === BUCKET, "a real Tab goes to the footer's Pin: the rows stay and nothing is completed", 15000);
     await click(T("pathPicker.pinSelected"));
     await waitFor(() => hasText(T("pins.batchDone", { pinned: 1, already: 1, invalid: 0 })), "Pin selected: one new pin, one there already", 15000);
     check((await savedPins()).split(" | ").includes(`${BUCKET}/bin/`) && !hasText(T("pathPicker.selected", { n: 2 })), `bin/ is pinned, the ticks are gone: ${await savedPins()}`);
+    await waitFor(() => document.activeElement === picker && children().length === 4, "pinning gave the keyboard back to the field, its rows still open");
     // Back to the three pins the later steps expect.
     picker.blur();
     rightClick(pinnedButtons().find((row) => row.textContent.trim() === `${BUCKET}/bin`));
@@ -819,13 +823,33 @@
     await menusGone();
     await waitFor(() => pinnedRows().length === 3, "bin/ unpinned again");
     await shot("38d-pinned-selected");
+    // ---- M15 folders ticked in the pin dialog: its own Pin pins them too (not the line they are under), and it closes
+    const pinField = () => waitFor(() => last(all(".MuiDialog-root textarea:not([aria-hidden])")), "the pin dialog's field is several lines");
+    await clickSel(sel("pins.addHere"));
+    const pinFirst = await pinField();
+    check(pinFirst.labels[0]?.textContent === T("pins.addLabel"), `the field is named for pinning: ${pinFirst.labels[0]?.textContent}`);
+    setValue(pinFirst, BUCKET);
+    await waitFor(() => children().length === 4 && boxes().every(Boolean), "the bucket's folders are rows with a box in the dialog too", 15000);
+    for (const i of [0, 2]) boxes()[i].click();
+    await waitFor(() => hasText(T("pathPicker.selected", { n: 2 })), "bin/ and media/ ticked in the dialog");
+    check(boxes()[0].tabIndex === 0 && pinFirst.value === BUCKET, "in the dialog the boxes are Tab stops; ticking went into no folder");
+    await shot("38d2-pin-dialog-ticked");
+    await click(T("pins.addSubmit"));
+    await dialogsGone();
+    await waitFor(() => pinnedRows().length === 4, "the dialog's own Pin pinned one new place and closed", 15000);
+    check((await savedPins()).split(" | ").includes(`${BUCKET}/bin/`), `it is the ticked bin/ (media/ was there already; the line they are under is not pinned twice): ${await savedPins()}`);
+    rightClick(pinnedButtons().find((row) => row.textContent.trim() === `${BUCKET}/bin`));
+    await click(T("browse.unpin"));
+    await menusGone();
+    await waitFor(() => pinnedRows().length === 3, "bin/ unpinned once more");
     // ---- M14.1 the pin dialog takes a list: an invalid line stays, the summary says what happened
     await clickSel(sel("pins.addHere"));
-    const pinList = await waitFor(() => last(all(".MuiDialog-root textarea:not([aria-hidden])")), "the pin dialog's field is several lines");
+    const pinList = await pinField();
     setValue(pinList, `${BUCKET}/media/\nmy bucket/x`);
-    await waitFor(() => hasText(T("pathPicker.notValid", { list: "my bucket/x" })), "the invalid line is named under the field");
+    await waitFor(() => hasText(`${T("pathPicker.notValid", { list: "my bucket/x" })} — ${T("paths.bucketSpace")}`), "the invalid line is named under the field, with its reason");
     await click(T("pins.addSubmit"));
     await waitFor(() => hasText(T("pins.batchDone", { pinned: 0, already: 1, invalid: 1 })) && pinList.value === "my bucket/x", "Pin: already pinned 1, not valid 1; the invalid line stays in the field", 15000);
+    check(document.activeElement === pinList, "and the keyboard is back in the field, on the line to put right");
     await shot("38e-pin-list");
     await click(T("common.cancel"));
     await dialogsGone();
@@ -843,7 +867,7 @@
     startField.dispatchEvent(paste);
     const formChips = () => [...first(all("form")).querySelectorAll(".MuiChip-label")].map((c) => c.textContent);
     await waitFor(() => formChips().join(" | ") === [`${BUCKET}/notes/`, `${BUCKET}/media/`, `${BUCKET}/data/`].join(" | "), `a pasted list of 3 paths (and one that is not) makes 3 chips: ${formChips().join(" | ")}`);
-    check(startField.value === "my bucket/x" && hasText(T("conn.startPathsBad", { n: 3, bad: 1, list: "my bucket/x" })), "the invalid one stays in the field and is named");
+    check(startField.value === "my bucket/x" && hasText(`${T("conn.startPathsBad", { n: 3, bad: 1, list: "my bucket/x" })} — ${T("paths.bucketSpace")}`), "the invalid one stays in the field and is named, with its reason");
     startField.scrollIntoView({ block: "center" });
     await shot("38f-start-paths-pasted");
     // Not saved: the clear button takes the chips and the text away again.
