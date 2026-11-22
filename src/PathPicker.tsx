@@ -8,7 +8,7 @@ import { invoke, type Profile } from "./api";
 import { moveHighlight } from "./BucketPanel";
 import { explain } from "./errors";
 import { t, type Key } from "./i18n";
-import { joinPath, splitPath, splitPathList } from "./paths";
+import { badReason, joinPath, splitPath, splitPathList } from "./paths";
 import type { Pin, PinSummary } from "./pins";
 import type { Place } from "./tabs";
 import { thinScroll, tokens } from "./theme";
@@ -146,7 +146,9 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
   const take = (path: string) => onChange(head + path);
   const split = splitPath(current);
   const bad = multiline ? splitPathList(value).filter((item) => splitPath(item).error) : [];
-  const problem = multiline ? (bad.length ? t("pathPicker.notValid", { list: bad.join(", ") }) : "") : value.trim() && split.error ? t(split.error) : "";
+  const why = badReason(bad);
+  // One bad line also gets its reason, as a single path always did (M15).
+  const problem = multiline ? (bad.length ? t("pathPicker.notValid", { list: bad.join(", ") }) + (why ? ` — ${t(why)}` : "") : "") : value.trim() && split.error ? t(split.error) : "";
   const rows = dropdown?.open ? suggestions(current, probe, chips, dropdown.buckets) : [];
   // Without the dropdown, tickable folders are rows too (the chips have no room for a box).
   const childRows: Suggestion[] = !dropdown && pick && probe?.status === "ok" ? probe.children.map((name) => ({ path: appendChild(probe, name), label: name, source: "folder" })) : [];

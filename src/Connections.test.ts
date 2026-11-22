@@ -161,12 +161,14 @@ function rendered(props: Parameters<typeof StartPaths>[0]): ReactElement {
 
 test("a pasted list adds every valid path as a chip; the invalid ones stay in the field and are named", () => {
   applyLang("en");
-  expect(takeStartPaths(["logs"], "a/x/\nmy bucket/x\nlogs, s3://b/y")).toEqual({ paths: ["logs", "a/x/", "b/y/"], typed: "my bucket/x", note: "2 paths added, 1 not valid: my bucket/x" });
+  expect(takeStartPaths(["logs"], "a/x/\nmy bucket/x\nlogs, s3://b/y")).toEqual({ paths: ["logs", "a/x/", "b/y/"], typed: "my bucket/x", note: "2 paths added, 1 not valid: my bucket/x — A bucket name has no spaces in it." });
+  // Several bad items are named; one also gets its reason (M15), as it does when typed alone.
+  expect(takeStartPaths([], "a/x/\nmy bucket/x\nb/../c")?.note).toBe("1 path added, 2 not valid: my bucket/x, b/../c");
   expect(takeStartPaths([], "a/x/ b/y/ c/z/")).toEqual({ paths: ["a/x/", "b/y/", "c/z/"], typed: "", note: "3 paths added" });
   // One path is not a list: Enter keeps its M12 meaning.
   expect(takeStartPaths([], "team-bucket/my folder/")).toBeNull();
   applyLang("vi");
-  expect(takeStartPaths([], "a/x/, a b/")?.note).toBe("Đã thêm 1 đường dẫn, 1 không hợp lệ: a b/");
+  expect(takeStartPaths([], "a/x/, a b/")?.note).toBe("Đã thêm 1 đường dẫn, 1 không hợp lệ: a b/ — Tên bucket không có khoảng trắng.");
   // The field's own handlers: a paste of a list is taken (and not pasted as text), Enter on a typed list too.
   applyLang("en");
   const seen: { chips?: string[]; typed?: string } = {};

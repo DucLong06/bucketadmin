@@ -235,7 +235,10 @@ test("the pin dialog takes a list: the chips and folders are for the line being 
   expect(typed).toEqual(["a/x/\nlogs/2026/"]);
   const markup = renderToString(createElement(PathPickerView, { value: "a/x/\nmy bucket/\nb", onChange: () => {}, label: "Open path", chips: [], probe: null, multiline: true }));
   expect(markup).toContain("<textarea");
-  expect(markup).toContain("Not a valid path: my bucket/");
+  // One bad line is named with its reason (M15: the list form had lost it); several are named.
+  expect(markup).toContain("Not a valid path: my bucket/ — A bucket name has no spaces in it.");
+  const two = renderToString(createElement(PathPickerView, { value: "my bucket/\nb/../c", onChange: () => {}, label: "Open path", chips: [], probe: null, multiline: true }));
+  expect(two).toContain("Not a valid path: my bucket/, b/../c<");
   expect(pathList("a/x/\nmy bucket/\ns3://b/y, a/x/")).toEqual({ places: [{ bucket: "a", prefix: "x/" }, { bucket: "b", prefix: "y/" }], bad: ["my bucket/"] });
 });
 

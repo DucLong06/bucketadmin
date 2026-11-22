@@ -53,6 +53,9 @@ export function splitPathList(text: string): string[] {
   return [...new Set(stored)];
 }
 
+/** Why the one item of a list that cannot be a path is none (the key of the sentence); several are only named. */
+export const badReason = (bad: string[]): Key | undefined => (bad.length === 1 ? splitPath(bad[0]).error : undefined);
+
 /** Whether a text is a list of paths rather than one path (Enter and paste take each of them then). */
 export const isPathList = (text: string) => /[\n\r\t,;]/.test(text) || splitPathList(text).length > 1;
 

@@ -4,7 +4,7 @@ import { invoke, isInternal, maskKey, type EndpointKind, type Opened, type Profi
 import { endpointError } from "./endpoint";
 import { t, type Key } from "./i18n";
 import { AccessContext, accessChips } from "./PathPicker";
-import { addStartPath, addStartPaths, isPathList, startPath } from "./paths";
+import { addStartPath, addStartPaths, badReason, isPathList, startPath } from "./paths";
 import { tokens } from "./theme";
 import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
 import { ConfirmDialog, duplicateLabels, ErrorAlert, filterProfiles, FoldHeading, LangToggle, SEARCH_ABOVE, ThemeSwitch } from "./ui";
@@ -194,7 +194,8 @@ export function takeStartPaths(chips: string[], text: string): { paths: string[]
   if (!isPathList(text)) return null;
   const { paths, added, bad } = addStartPaths(chips, text);
   const list = bad.join(", ");
-  return { paths, typed: list, note: bad.length ? t("conn.startPathsBad", { n: added, bad: bad.length, list }) : t("conn.startPathsAdded", { n: added }) };
+  const why = badReason(bad);
+  return { paths, typed: list, note: bad.length ? t("conn.startPathsBad", { n: added, bad: bad.length, list }) + (why ? ` — ${t(why)}` : "") : t("conn.startPathsAdded", { n: added }) };
 }
 
 /** The start paths of a connection as chips: Enter adds what is typed, × removes a chip. A text that
