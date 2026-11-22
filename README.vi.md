@@ -34,6 +34,10 @@ App nói chuyện thẳng với endpoint S3 của RGW. Không cần cài gì lê
   phần bucket policy cấp) và, khi bạn gõ, các thư mục mà S3 liệt kê đúng tại đường dẫn đó, bấm một lần để đi sâu hơn. Khi key
   không được liệt kê ở đó, một gợi ý màu hổ phách báo như vậy; đường dẫn vẫn mở được. App không bao giờ liệt kê phía trên
   phần bạn đã gõ.
+- **Thêm nhiều đường dẫn một lần**: dán cả danh sách đường dẫn (mỗi dòng một đường dẫn, hoặc cách nhau bằng dấu phẩy, chấm
+  phẩy, tab hay dấu cách) vào đường dẫn bắt đầu của kết nối hoặc vào "Ghim một đường dẫn…", mọi đường dẫn hợp lệ đều được
+  thêm; đường dẫn không hợp lệ ở lại trong ô và được nêu tên. Trong danh sách thư mục gợi ý, đánh dấu nhiều dòng rồi bấm
+  **Ghim mục đã chọn** (`Space` sau khi dùng phím mũi tên sẽ đánh dấu thư mục đang chọn; **Chọn tất cả** đánh dấu cả cấp).
 - **Giao diện tối & sáng**: giao diện tối màu than ấm và giao diện sáng màu giấy ấm, cùng một màu nhấn hổ phách, chọn ở trình
   đơn trên thanh app hoặc ở Cài đặt chung và được nhớ lại (không chớp trắng lúc mở; không có chế độ "theo hệ thống").
 - **Chạy tốt với hàng trăm bucket và nhiều kết nối**: danh sách bucket chỉ dựng các dòng đang thấy (500 bucket tốn như 30);
@@ -83,6 +87,8 @@ App nói chuyện thẳng với endpoint S3 của RGW. Không cần cài gì lê
 
 ![Vị trí đã ghim ở cột bên trái](docs/images/pinned.vi.png)
 
+![Đánh dấu nhiều thư mục gợi ý để ghim một lần](docs/images/paths-batch.vi.png)
+
 ![Key chỉ được cấp một thư mục, mở bằng đường dẫn](docs/images/scoped-path.vi.png)
 
 ![Danh sách bucket dài vẫn nằm gọn trong khung](docs/images/buckets-many.vi.png)
@@ -98,8 +104,8 @@ App nói chuyện thẳng với endpoint S3 của RGW. Không cần cài gì lê
 Yêu cầu: Ubuntu 22.04 trở lên (amd64), có dịch vụ keyring (GNOME Keyring hoặc tương đương — mặc định có sẵn trên Ubuntu desktop).
 
 ```bash
-wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.4/bucketadmin_0.1.4_amd64.deb
-sudo apt install ./bucketadmin_0.1.4_amd64.deb
+wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.5/bucketadmin_0.1.5_amd64.deb
+sudo apt install ./bucketadmin_0.1.5_amd64.deb
 ```
 
 Các định dạng khác và các bản cũ: trang [Releases](https://github.com/DucLong06/bucketadmin/releases).
@@ -225,8 +231,8 @@ npm ci
 npm run tauri dev                      # chạy app ở chế độ phát triển
 npm test && npm run build              # test và build frontend
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-scripts/build-deb.sh 0.1.4~dev1        # đóng gói deb
-scripts/render-gate.sh bucketadmin_0.1.4~dev1_amd64.deb   # kiểm tra gói vừa build có hiện giao diện thật
+scripts/build-deb.sh 0.1.5~dev1        # đóng gói deb
+scripts/render-gate.sh bucketadmin_0.1.5~dev1_amd64.deb   # kiểm tra gói vừa build có hiện giao diện thật
 python3 scripts/gen-icons.py           # render lại bộ icon từ src-tauri/icons/icon.svg (cần google-chrome, Pillow)
 ```
 
