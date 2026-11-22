@@ -195,9 +195,9 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
   const continuing = rows.filter((row) => row.source === "folder" || row.source === "bucket").length;
   const folders = [...rows, ...childRows].filter((row) => row.source === "folder").map((row) => row.path);
   const all = folders.length > 0 && folders.every((path) => pick?.ticked.includes(path));
-  // Sticky under the rows while something is ticked.
+  // Sticky under the rows while something is ticked, and scrolled into sight: in the sidebar the rows run past its bottom.
   const footer = pick && pick.ticked.length > 0 && (
-    <Stack direction="row" sx={{ position: "sticky", bottom: 0, zIndex: 1, bgcolor: "background.paper", borderTop: 1, borderColor: "divider", px: 1.5, py: 0.5, gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+    <Stack direction="row" ref={(el: HTMLDivElement | null) => el?.scrollIntoView?.({ block: "nearest" })} sx={{ position: "sticky", bottom: 0, zIndex: 1, bgcolor: "background.paper", borderTop: 1, borderColor: "divider", px: 1.5, py: 0.5, gap: 1, alignItems: "center", flexWrap: "wrap" }}>
       <Typography variant="body2" role="status" sx={{ flexGrow: 1 }}>
         {t("pathPicker.selected", { n: pick.ticked.length })}
       </Typography>

@@ -789,6 +789,62 @@
     picker.form.requestSubmit();
     await waitFor(() => objectLink("media/icon.png"), "the picked path opens", 20000);
 
+    // ---- M14.2 several suggested folders ticked, then pinned at once (bin/ is new, media/ is pinned already)
+    picker.focus();
+    setValue(picker, BUCKET);
+    await waitFor(() => children().length === 4, "the folders, to tick", 15000);
+    const boxes = () => children().map((row) => row.querySelector('input[type="checkbox"]'));
+    const folderNames = children().map((c) => c.textContent.trim());
+    check(folderNames.join() === "bin,data,media,notes" && boxes().every(Boolean), `each folder row has a box: ${folderNames.join()}`);
+    for (const i of [0, 1, 2]) boxes()[i].click();
+    await waitFor(() => hasText(T("pathPicker.selected", { n: 3 })) && button(T("pathPicker.pinSelected")) && button(T("pathPicker.selectAll")), "three ticked: the footer counts them");
+    check(picker.value === BUCKET && document.activeElement === picker, "ticking neither went into a folder nor took the keyboard from the field");
+    check(fits(), "the footer does not scroll the page sideways");
+    await shot("38c-paths-batch");
+    // Space right after an arrow unticks the highlighted row (data/), and types nothing.
+    for (const key of ["ArrowDown", " "]) picker.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    await waitFor(() => hasText(T("pathPicker.selected", { n: 2 })) && !boxes()[1].checked, "arrow down, then Space, unticks data/");
+    check(picker.value === BUCKET, "and Space typed no space");
+    await click(T("pathPicker.pinSelected"));
+    await waitFor(() => hasText(T("pins.batchDone", { pinned: 1, already: 1, invalid: 0 })), "Pin selected: one new pin, one there already", 15000);
+    check((await savedPins()).split(" | ").includes(`${BUCKET}/bin/`) && !hasText(T("pathPicker.selected", { n: 2 })), `bin/ is pinned, the ticks are gone: ${await savedPins()}`);
+    // Back to the three pins the later steps expect.
+    picker.blur();
+    rightClick(pinnedButtons().find((row) => row.textContent.trim() === `${BUCKET}/bin`));
+    await click(T("browse.unpin"));
+    await menusGone();
+    await waitFor(() => pinnedRows().length === 3, "bin/ unpinned again");
+    await shot("38d-pinned-selected");
+    // ---- M14.1 the pin dialog takes a list: an invalid line stays, the summary says what happened
+    await clickSel(sel("pins.addHere"));
+    const pinList = await waitFor(() => last(all(".MuiDialog-root textarea:not([aria-hidden])")), "the pin dialog's field is several lines");
+    setValue(pinList, `${BUCKET}/media/\nmy bucket/x`);
+    await waitFor(() => hasText(T("pathPicker.notValid", { list: "my bucket/x" })), "the invalid line is named under the field");
+    await click(T("pins.addSubmit"));
+    await waitFor(() => hasText(T("pins.batchDone", { pinned: 0, already: 1, invalid: 1 })) && pinList.value === "my bucket/x", "Pin: already pinned 1, not valid 1; the invalid line stays in the field", 15000);
+    await shot("38e-pin-list");
+    await click(T("common.cancel"));
+    await dialogsGone();
+    check(pinnedRows().length === 3, "the dialog changed no pin");
+
+    // ---- M14.1 a list pasted into the form's start paths: each valid path a chip, the invalid one stays and is named
+    await click(T("app.connections"));
+    await openAdvanced();
+    const startField = await field(T("conn.startPath"), first);
+    startField.focus();
+    const pasted = new DataTransfer();
+    pasted.setData("text/plain", `s3://${BUCKET}/notes/\n${BUCKET}/media/, ${BUCKET}/data/\nmy bucket/x`);
+    const paste = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, "clipboardData", { value: pasted });
+    startField.dispatchEvent(paste);
+    const formChips = () => [...first(all("form")).querySelectorAll(".MuiChip-label")].map((c) => c.textContent);
+    await waitFor(() => formChips().join(" | ") === [`${BUCKET}/notes/`, `${BUCKET}/media/`, `${BUCKET}/data/`].join(" | "), `a pasted list of 3 paths (and one that is not) makes 3 chips: ${formChips().join(" | ")}`);
+    check(startField.value === "my bucket/x" && hasText(T("conn.startPathsBad", { n: 3, bad: 1, list: "my bucket/x" })), "the invalid one stays in the field and is named");
+    startField.scrollIntoView({ block: "center" });
+    await shot("38f-start-paths-pasted");
+    // Not saved: the clear button takes the chips and the text away again.
+    first(all("form")).querySelector(".MuiAutocomplete-clearIndicator").click();
+    await waitFor(() => formChips().length === 0 && startField.value === "", "the pasted chips cleared again");
     // ---- M9.1 a key that was granted one folder: start path, the refused root, Open path
     await addConnection("du-an", SCOPED, "my bucket/notes");
     await waitFor(() => hasText(T("paths.bucketSpace")), "a start path that cannot be one is refused while typing");
