@@ -71,6 +71,23 @@ pub fn same_origin(a: &str, b: &str) -> bool {
     matches!((origin(a), origin(b)), (Some(x), Some(y)) if x == y)
 }
 
+impl S3 {
+    /// The endpoint with `bucket.` before its host: where virtual-host style URLs point.
+    fn bucket_host(&self, bucket: &str) -> String {
+        match reqwest::Url::parse(&self.endpoint) {
+            Ok(mut url) => {
+                let host = format!("{bucket}.{}", url.host_str().unwrap_or_default());
+                match url.set_host(Some(&host)) {
+                    // set_host stops at a ':' (it would leave "evil.test" of "evil.test:x"): only the whole name counts.
+                    Ok(()) if url.host_str() == Some(host.as_str()) => url.to_string(),
+                    _ => self.endpoint.clone(),
+                }
+            }
+            Err(_) => self.endpoint.clone(),
+        }
+    }
+}
+
 fn suffixed(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(suffix);
@@ -342,7 +359,9 @@ impl S3 {
         let request = get.presigned(config).await.map_err(s3_error)?;
         let url = request.uri().to_string();
         // Cannot differ by construction; checked anyway because whoever gets this URL gets the object.
-        if !same_origin(&url, &self.endpoint) {
+        // Virtual-host style names the bucket in the host, but the SDK keeps a bucket name that is no host name in the path.
+        let at_bucket = !self.path_style && same_origin(&url, &self.bucket_host(bucket));
+        if !same_origin(&url, &self.endpoint) && !at_bucket {
             return Err("presigned URL does not point at the cluster endpoint".into());
         }
         Ok(url)
@@ -352,6 +371,8 @@ impl S3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::s3::Addressing;
+    use crate::settings::Proxy;
 
     #[test]
     fn content_types_by_extension() {
@@ -394,6 +415,40 @@ mod tests {
             endpoint
         ));
         assert!(!same_origin("not a url", endpoint));
+    }
+
+    #[tokio::test]
+    async fn presigned_urls_follow_the_addressing() {
+        let endpoint = "http://rgw.example:7480";
+        let path = S3::with_proxy(endpoint, "AK", "SK", &Proxy::None).unwrap();
+        let url = path.presign_get("b", "k", None, 60, None).await.unwrap();
+        assert!(url.starts_with("http://rgw.example:7480/b/k?"), "{url}");
+        assert!(url.contains("us-east-1"), "{url}");
+        let virtual_host = Addressing {
+            region: "eu-west-1".into(),
+            path_style: false,
+        };
+        let host = S3::connect(endpoint, "AK", "SK", &Proxy::None, &virtual_host).unwrap();
+        let url = host
+            .presign_get("bucket-a", "k", None, 60, None)
+            .await
+            .unwrap();
+        assert!(
+            url.starts_with("http://bucket-a.rgw.example:7480/k?"),
+            "{url}"
+        );
+        assert!(url.contains("eu-west-1"), "{url}");
+        // A bucket name cannot move the accepted host off the endpoint.
+        for odd in ["evil.test:x", "evil.test/", "evil.test#", "UPPER"] {
+            assert_eq!(host.bucket_host(odd), endpoint, "{odd}");
+        }
+        assert_eq!(
+            host.bucket_host("bucket-a"),
+            "http://bucket-a.rgw.example:7480/"
+        );
+        // A bucket name that is no host name stays in the path.
+        let url = host.presign_get("b", "k", None, 60, None).await.unwrap();
+        assert!(url.starts_with("http://rgw.example:7480/b/k?"), "{url}");
     }
 
     #[test]

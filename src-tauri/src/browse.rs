@@ -80,9 +80,16 @@ pub async fn connect<S: SecretStore, H: HttpClient>(
     uid: &str,
     proxy: &Proxy,
 ) -> Result<S3, String> {
+    let addressing = profiles.addressing(cluster_id)?;
     if uid.is_empty() {
         let (endpoint, mine) = profiles.browse_credentials(cluster_id)?;
-        return S3::with_proxy(&endpoint, &mine.access_key, &mine.secret_key, proxy);
+        return S3::connect(
+            &endpoint,
+            &mine.access_key,
+            &mine.secret_key,
+            proxy,
+            &addressing,
+        );
     }
     let (endpoint, admin_creds) = profiles.credentials(cluster_id)?;
     let admin = RgwAdmin::new(&endpoint, admin_creds, http).map_err(|e| e.to_string())?;
@@ -93,7 +100,13 @@ pub async fn connect<S: SecretStore, H: HttpClient>(
         .keys
         .first()
         .ok_or_else(|| format!("user {uid} has no S3 key to browse with"))?;
-    S3::with_proxy(&endpoint, &key.access_key, &key.secret_key, proxy)
+    S3::connect(
+        &endpoint,
+        &key.access_key,
+        &key.secret_key,
+        proxy,
+        &addressing,
+    )
 }
 
 /// What a command acts on, and as whom (`uid` empty: with the caller's own saved key).

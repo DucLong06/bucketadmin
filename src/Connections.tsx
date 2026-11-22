@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useContext, useEffect, useState } from "react";
-import { Alert, Autocomplete, Box, Button, Chip, IconButton, Menu, MenuItem, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
+import { Alert, Autocomplete, Box, Button, Chip, FormControlLabel, FormHelperText, IconButton, Menu, MenuItem, Paper, Stack, Switch, TextField, Tooltip, Typography } from "@mui/material";
 import { invoke, isInternal, maskKey, type EndpointKind, type Opened, type Profile, type Proxy } from "./api";
 import { endpointError } from "./endpoint";
 import { t, type Key } from "./i18n";
@@ -113,6 +113,60 @@ function ProfileProxy({ profile, onChanged, fail }: { profile: Profile; onChange
     </Stack>
   );
 }
+/** How the S3 client addresses buckets and signs: what AWS and some S3 services need, Ceph RGW does not. */
+export type Addressing = { region: string; pathStyle: boolean };
+/** What an empty region signs with (a name, not text to translate). */
+const SDK_REGION = "us-east-1";
+export const DEFAULT_ADDRESSING: Addressing = { region: "", pathStyle: true };
+const addressingOf = (p: Profile): Addressing => ({ region: p.region ?? "", pathStyle: p.path_style ?? true });
+
+/** The Region field and the Path-style switch. */
+function AddressingFields({ value, onChange, name }: { value: Addressing; onChange: (next: Addressing) => void; name?: string }) {
+  return (
+    <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ alignItems: "flex-start", flexGrow: 1 }}>
+      <TextField
+        label={t("conn.region")}
+        placeholder={SDK_REGION}
+        value={value.region}
+        onChange={(e) => onChange({ ...value, region: e.target.value })}
+        size="small"
+        helperText={t("conn.regionHelp")}
+        sx={{ minWidth: 220 }}
+        slotProps={{ inputLabel: { shrink: true }, htmlInput: { spellCheck: false, autoComplete: "off", "aria-label": name ? `${t("conn.region")} ${name}` : undefined, style: { fontFamily: tokens.mono } } }}
+      />
+      <Box>
+        <FormControlLabel
+          sx={{ minHeight: 40, mr: 0 }}
+          control={<Switch checked={value.pathStyle} onChange={(_, pathStyle) => onChange({ ...value, pathStyle })} slotProps={{ input: { "aria-label": name ? `${t("conn.pathStyle")} ${name}` : undefined } }} />}
+          label={t("conn.pathStyle")}
+        />
+        <FormHelperText sx={{ mx: 1.75, mt: 0 }}>{t("conn.pathStyleHelp")}</FormHelperText>
+      </Box>
+    </Stack>
+  );
+}
+
+/** One saved connection's region and path style: saved with a button. */
+function ProfileAddressing({ profile, onChanged, fail }: { profile: Profile; onChanged: () => void; fail: (e: unknown) => void }) {
+  const saved = addressingOf(profile);
+  const [draft, setDraft] = useState(saved);
+  useEffect(() => setDraft(saved), [saved.region, saved.pathStyle]);
+  const same = draft.region.trim() === saved.region && draft.pathStyle === saved.pathStyle;
+  return (
+    <Stack direction="row" spacing={1} sx={{ mt: 2, alignItems: "flex-start" }}>
+      <AddressingFields value={draft} onChange={setDraft} name={t("proxy.name.of", { label: profile.label })} />
+      <Button
+        onClick={() => invoke("profile_set_addressing", { id: profile.id, region: draft.region, pathStyle: draft.pathStyle }).then(onChanged).catch(fail)}
+        disabled={same}
+        aria-label={t("conn.saveAddressingFor", { label: profile.label })}
+        sx={{ flexShrink: 0 }}
+      >
+        {t("conn.saveAddressing")}
+      </Button>
+    </Stack>
+  );
+}
+
 /** The chips after the chip input reports `next`: one fewer (a chip's ×, or Backspace), or one more, the
  *  text that was typed or picked, in its stored form. null: that text cannot be a path, nothing changes. */
 export const chipsAfter = (chips: string[], next: string[]): string[] | null => {
@@ -235,6 +289,7 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
   const [menu, setMenu] = useState<{ anchor: HTMLElement; profile: Profile } | null>(null);
   // The new connection's own proxy choice; null = follow the app-wide setting.
   const [formProxy, setFormProxy] = useState<Proxy | null>(null);
+  const [formAddressing, setFormAddressing] = useState(DEFAULT_ADDRESSING);
   // The app-wide choice: as saved, and as being edited.
   const [network, setNetwork] = useState<Proxy>({ mode: "auto" });
   const [networkDraft, setNetworkDraft] = useState<Proxy>({ mode: "auto" });
@@ -309,7 +364,7 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
     setTesting(true);
     setSavedId("");
     try {
-      setFormOutcome(connected(await invoke<Opened>("test_s3", { endpoint: form.endpoint.trim(), ...keys, proxy: formProxy })));
+      setFormOutcome(connected(await invoke<Opened>("test_s3", { endpoint: form.endpoint.trim(), ...keys, proxy: formProxy, region: formAddressing.region, pathStyle: formAddressing.pathStyle })));
     } catch (e) {
       fail(e);
     }
@@ -332,11 +387,13 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
       setForm(emptyForm);
       setStartPaths([]);
       setFormProxy(null);
+      setFormAddressing(DEFAULT_ADDRESSING);
       // The connection exists from here on. If one of these fails, it is still listed and
       // the error says why: remove it and add it again.
       try {
         if (adminGiven) await invoke("browse_key_set", { clusterId: saved.id, accessKey, secretKey });
         if (formProxy) await invoke("profile_set_proxy", { id: saved.id, proxy: formProxy });
+        if (formAddressing.region.trim() || !formAddressing.pathStyle) await invoke("profile_set_addressing", { id: saved.id, region: formAddressing.region, pathStyle: formAddressing.pathStyle });
       } finally {
         onChanged();
       }
@@ -470,6 +527,7 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
                   })}
                 </Box>
                 <ProxyPicker value={formProxy} onChange={setFormProxy} inherit name={t("proxy.name.new")} />
+                <AddressingFields value={formAddressing} onChange={setFormAddressing} />
               </Stack>
             )}
           </Box>
@@ -580,6 +638,7 @@ export default function Connections({ profiles, onChanged, scale, onScale, onBro
               <>
                 <ProfileStartPath profile={p} onChanged={onChanged} fail={fail} />
                 <ProfileProxy profile={p} onChanged={onChanged} fail={fail} />
+                <ProfileAddressing profile={p} onChanged={onChanged} fail={fail} />
               </>
             )}
             {rowOutcome[p.id] && outcomeAlert(rowOutcome[p.id], { mt: 1 })}

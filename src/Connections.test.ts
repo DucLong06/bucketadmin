@@ -74,6 +74,11 @@ test("Required is always open; Advanced (start path, admin key, proxy) is collap
     expect(open).toContain("Start paths (optional)");
     expect(open).toContain("Enter adds a path, e.g. team-bucket/project-a/. The first one opens on connect");
     expect(open).toContain("Admin access key");
+    // M13.3: Region (empty = us-east-1) and the path-style switch, on by default.
+    expect(open).toContain('placeholder="us-east-1"');
+    expect(open).toContain("Leave empty for Ceph RGW");
+    expect(open).toMatch(/<input[^>]*type="checkbox"[^>]*checked=""[^>]*>.*Path-style addressing/s);
+    expect(open).toContain("On for Ceph RGW and most self-hosted S3; off for virtual-host style");
     applyLang("vi");
     expect(render([saved])).toContain(t("conn.startPath"));
   } finally {

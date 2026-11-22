@@ -22,6 +22,23 @@ use std::time::Duration;
 /// Keys per listing request; also the page size of the object table.
 pub const LIST_PAGE: i32 = 1000;
 
+/// How a connection's S3 client addresses buckets and signs: the region (empty = "us-east-1")
+/// and path style (Ceph RGW, which has no bucket subdomains unless DNS is set up for them).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Addressing {
+    pub region: String,
+    pub path_style: bool,
+}
+
+impl Default for Addressing {
+    fn default() -> Self {
+        Self {
+            region: String::new(),
+            path_style: true,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct S3 {
     client: Client,
@@ -30,6 +47,8 @@ pub struct S3 {
     endpoint: String,
     /// How this session's requests leave the machine (the HEAD of the Headers tab too).
     proxy: Proxy,
+    /// Off: buckets are hosts (`bucket.endpoint`), and so are presigned URLs.
+    path_style: bool,
     /// Footer of the Parquet object previewed last, so paging through it does not fetch it again.
     parquet_footer: parquet::FooterCache,
 }
@@ -103,24 +122,44 @@ impl S3 {
             .expect("the environment's proxy setting is read later, not parsed here")
     }
 
-    /// A client for one user's key against a path-style endpoint (RGW has no bucket subdomains
-    /// unless DNS is set up for them).
+    /// A client for one user's key, path style in us-east-1 (what Ceph RGW takes).
     pub fn with_proxy(
         endpoint: &str,
         access_key: &str,
         secret_key: &str,
         proxy: &Proxy,
     ) -> Result<Self, String> {
+        Self::connect(
+            endpoint,
+            access_key,
+            secret_key,
+            proxy,
+            &Addressing::default(),
+        )
+    }
+
+    /// A client for one user's key, addressed and signed as the connection says.
+    pub fn connect(
+        endpoint: &str,
+        access_key: &str,
+        secret_key: &str,
+        proxy: &Proxy,
+        addressing: &Addressing,
+    ) -> Result<Self, String> {
+        let region = match addressing.region.as_str() {
+            "" => "us-east-1".to_string(),
+            region => region.to_string(),
+        };
         let credentials = Credentials::new(access_key, secret_key, None, None, "bucketadmin");
         let timeouts = aws_sdk_s3::config::timeout::TimeoutConfig::builder()
             .connect_timeout(Duration::from_secs(10))
             .build();
         let config = aws_sdk_s3::Config::builder()
             .behavior_version(BehaviorVersion::latest())
-            .region(Region::new("us-east-1"))
+            .region(Region::new(region))
             .endpoint_url(endpoint.trim_end_matches('/'))
             .credentials_provider(credentials)
-            .force_path_style(true)
+            .force_path_style(addressing.path_style)
             .timeout_config(timeouts)
             // Newer SDKs add CRC checksums to every request by default; older Ceph releases
             // reject the trailer form, so only send them where S3 requires one.
@@ -133,6 +172,7 @@ impl S3 {
             access_key: access_key.to_string(),
             endpoint: endpoint.trim_end_matches('/').to_string(),
             proxy: proxy.clone(),
+            path_style: addressing.path_style,
             parquet_footer: Default::default(),
         })
     }

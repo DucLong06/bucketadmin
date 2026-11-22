@@ -174,11 +174,23 @@
     await waitFor(() => hasText(T("conn.ok", { n: 1 })), "connection test over S3, no admin caps needed");
     check(fits(), "Connections does not scroll sideways");
     await shot("01-connection");
+    // M13.3: Region (empty = us-east-1) and Path-style addressing (on) are in the Advanced group, under the proxy.
+    const advancedGroup = document.getElementById("conn-advanced");
+    const regionField = [...advancedGroup.querySelectorAll("input")].find((i) => i.placeholder === "us-east-1");
+    const pathStyle = advancedGroup.querySelector('input[type="checkbox"]');
+    check(regionField && regionField.value === "" && pathStyle && pathStyle.checked && hasText(T("conn.regionHelp")) && hasText(T("conn.pathStyleHelp")), "Advanced: Region empty and Path-style addressing on by default (the test above passed with them)");
+    pathStyle.closest("label").scrollIntoView({ block: "center" });
+    await shot("01b-connection-advanced");
     await click(T("common.save"));
     await waitFor(() => hasText(T("conn.saved", { label: "lab" })) && rowSays("lab", maskedMine), "connection saved; its row shows the host and the masked key");
     // The row's own settings are behind Edit; Test and Delete are in its menu.
     await clickSel(sel("conn.editFor", { label: "lab" }));
     await waitFor(() => proxyOf(T("proxy.name.of", { label: "lab" }))?.value === "none", "saved with its own proxy choice");
+    // M13.3: Edit also has the connection's Region and Path-style, with their own Save (off until something changes).
+    const savedRegion = all("input").find((i) => i.getAttribute("aria-label") === `${T("conn.region")} ${T("proxy.name.of", { label: "lab" })}`);
+    check(savedRegion && savedRegion.value === "" && all("button").find((b) => b.textContent.trim() === T("conn.saveAddressing"))?.disabled, "Edit: the saved connection's Region is empty and Save addressing waits for a change");
+    savedRegion?.scrollIntoView({ block: "center" });
+    await shot("01c-connection-edit");
     await clickSel(sel("conn.editFor", { label: "lab" }));
     await clickSel(sel("conn.more", { label: "lab" }));
     await clickSel(sel("conn.testFor", { label: "lab" }));

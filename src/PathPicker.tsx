@@ -188,7 +188,8 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
       )}
       <TextField
         label={label}
-        placeholder={t("browse.openPathSample")}
+        // The sidebar's field is narrow (a 1100 px window at 150 %): a sample that fits; the tooltip has the whole one.
+        placeholder={t(dropdown ? "browse.openPathShort" : "browse.openPathSample")}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onFocus={onFocus}
@@ -346,12 +347,15 @@ type DialogProps = {
   submitLabel: string;
   clusterId: string;
   uid?: string;
+  /** Set when the path is pinned from no tab's connection: the dialog asks which connection, and says so here. */
+  onCluster?: (clusterId: string) => void;
   onSubmit: (bucket: string, prefix: string) => void;
   onClose: () => void;
 };
 
 /** The picker as a dialog: for opening a path and for pinning one. */
-export function PathPickerDialog({ open, title, submitLabel, clusterId, uid, onSubmit, onClose }: DialogProps) {
+export function PathPickerDialog({ open, title, submitLabel, clusterId, uid, onCluster, onSubmit, onClose }: DialogProps) {
+  const { profiles } = useContext(AccessContext);
   const [path, setPath] = useState("");
   useEffect(() => {
     if (open) setPath("");
@@ -368,7 +372,25 @@ export function PathPickerDialog({ open, title, submitLabel, clusterId, uid, onS
       <form onSubmit={submit}>
         <DialogTitle id="path-picker-title">{title}</DialogTitle>
         <DialogContent>
-          <Box sx={{ pt: 1 }}>{open && <PathPicker clusterId={clusterId} uid={uid} value={path} onChange={setPath} label={t("browse.openPath")} autoFocus />}</Box>
+          {onCluster && (
+            <TextField
+              select
+              label={t("common.connection")}
+              value={clusterId}
+              onChange={(e) => onCluster(e.target.value)}
+              size="small"
+              fullWidth
+              sx={{ mt: 1 }}
+              slotProps={{ select: { native: true }, inputLabel: { shrink: true } }}
+            >
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </TextField>
+          )}
+          <Box sx={{ pt: onCluster ? 2 : 1 }}>{open && <PathPicker key={clusterId} clusterId={clusterId} uid={uid} value={path} onChange={setPath} label={t("browse.openPath")} autoFocus />}</Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={onClose}>{t("common.cancel")}</Button>

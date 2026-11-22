@@ -106,6 +106,12 @@ export const en = {
   "conn.remove": "Delete connection {label}",
   "conn.saveProxy": "Save proxy",
   "conn.saveProxyFor": "Save the proxy of {label}",
+  "conn.region": "Region",
+  "conn.regionHelp": "Leave empty for Ceph RGW",
+  "conn.pathStyle": "Path-style addressing",
+  "conn.pathStyleHelp": "On for Ceph RGW and most self-hosted S3; off for virtual-host style",
+  "conn.saveAddressing": "Save addressing",
+  "conn.saveAddressingFor": "Save the region and addressing of {label}",
 
   // Proxy picker
   "proxy.label": "Proxy",
@@ -230,6 +236,7 @@ export const en = {
   "browse.createBucket": "Create bucket",
   "browse.openPath": "Open path",
   "browse.openPathSample": "bucket/folder/",
+  "browse.openPathShort": "bucket/…",
   "browse.openPathHelp": "Bucket or bucket/folder/ — use this when you may only list one folder",
   "browse.bucketsDenied": "This key may not list buckets — open a path directly below or use a pinned place",
   "browse.deniedHint": "If you are only allowed one folder, open its path directly:",
@@ -637,6 +644,7 @@ export const en = {
   "pins.add": "Pin a path…",
   "pins.addTitle": "Pin a path",
   "pins.addSubmit": "Pin",
+  "pins.needConnection": "Add a connection first",
   "pins.addHere": "Pin a path on this connection",
 
   // Theme (M10.2): dark or light, an explicit choice
@@ -788,6 +796,12 @@ export const vi: Record<keyof typeof en, string> = {
   "conn.remove": "Xoá kết nối {label}",
   "conn.saveProxy": "Lưu proxy",
   "conn.saveProxyFor": "Lưu proxy của {label}",
+  "conn.region": "Region",
+  "conn.regionHelp": "Để trống với Ceph RGW",
+  "conn.pathStyle": "Địa chỉ kiểu path-style",
+  "conn.pathStyleHelp": "Bật với Ceph RGW và hầu hết S3 tự host; tắt khi dùng kiểu virtual-host",
+  "conn.saveAddressing": "Lưu cách định địa chỉ",
+  "conn.saveAddressingFor": "Lưu region và cách định địa chỉ của {label}",
 
   // Proxy picker
   "proxy.label": "Proxy",
@@ -911,6 +925,7 @@ export const vi: Record<keyof typeof en, string> = {
   "browse.createBucket": "Tạo bucket",
   "browse.openPath": "Mở đường dẫn",
   "browse.openPathSample": "bucket/thư-mục/",
+  "browse.openPathShort": "bucket/…",
   "browse.openPathHelp": "Bucket hoặc bucket/thư-mục/ — dùng khi bạn chỉ được liệt kê một thư mục",
   "browse.bucketsDenied": "Key này không được liệt kê bucket — hãy mở thẳng một đường dẫn ở bên dưới hoặc dùng một vị trí đã ghim",
   "browse.deniedHint": "Nếu bạn chỉ được cấp một thư mục, hãy mở thẳng đường dẫn của nó:",
@@ -1303,6 +1318,7 @@ export const vi: Record<keyof typeof en, string> = {
   "pins.add": "Ghim một đường dẫn…",
   "pins.addTitle": "Ghim một đường dẫn",
   "pins.addSubmit": "Ghim",
+  "pins.needConnection": "Hãy thêm một kết nối trước",
   "pins.addHere": "Ghim một đường dẫn trên kết nối này",
 
   // Theme (M10.2): dark or light, an explicit choice

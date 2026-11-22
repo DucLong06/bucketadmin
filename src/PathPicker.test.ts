@@ -129,3 +129,13 @@ test("Tab and → complete the highlighted row and the next level is asked about
   ((field?.props.slotProps as { htmlInput: { onKeyDown: (e: unknown) => void } }).htmlInput.onKeyDown)({ key: "Tab" });
   expect(keys).toEqual(["Tab"]);
 });
+
+test("the sidebar's field has a sample short enough for its narrowest width; the whole example stays in its tooltip, and in the wide forms", () => {
+  const side = drop("", null);
+  expect(side).toContain('placeholder="bucket/…"');
+  expect(side).toContain(t("browse.openPathHelp"));
+  expect(html(null)).toContain(`placeholder="${t("browse.openPathSample")}"`);
+  applyLang("vi");
+  expect(drop("", null)).toContain(`placeholder="${t("browse.openPathShort")}"`);
+  expect(t("browse.openPathShort").length).toBeLessThanOrEqual(8);
+});

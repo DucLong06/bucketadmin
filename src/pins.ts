@@ -42,3 +42,11 @@ export function orderPins(pins: Pin[], clusterId: string) {
   const indexed = pins.map((pin, index) => ({ pin, index }));
   return { here: indexed.filter(({ pin }) => pin.place.clusterId === clusterId), elsewhere: indexed.filter(({ pin }) => pin.place.clusterId !== clusterId) };
 }
+
+/** What "Pin a path…" does. No connection at all: nothing (the item is disabled and says why). The tab on
+ *  screen is on a saved connection: the path is pinned there. Else (a tab with no connection, or nothing
+ *  loaded into it yet): the dialog asks which connection, starting from the first. */
+export function pinTarget(tabCluster: string | undefined, connections: string[]): { clusterId: string; ask: boolean } | null {
+  if (connections.length === 0) return null;
+  return tabCluster && connections.includes(tabCluster) ? { clusterId: tabCluster, ask: false } : { clusterId: connections[0], ask: true };
+}

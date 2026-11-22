@@ -15,12 +15,13 @@ import {
   Tab,
   Tabs,
   ThemeProvider,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { invoke, type Profile } from "./api";
 import { explain } from "./errors";
 import { AccessContext, PathPickerDialog } from "./PathPicker";
-import { filterPins, isPinned, movePin, togglePin, type Pin, type PinOps } from "./pins";
+import { filterPins, isPinned, movePin, pinTarget, togglePin, type Pin, type PinOps } from "./pins";
 import AuditLog from "./AuditLog";
 import Browse, { NARROW, SHORT } from "./Browse";
 import Connections from "./Connections";
@@ -79,8 +80,8 @@ export default function App() {
   const [pinMenu, setPinMenu] = useState<HTMLElement | null>(null);
   const [pinMenuFilter, setPinMenuFilter] = useState("");
   const [pinError, setPinError] = useState<string | null>(null);
-  // The connection a path is being pinned on, while the path picker is open for that.
-  const [pinning, setPinning] = useState<string | null>(null);
+  // The connection a path is being pinned on, while the path picker is open for that (ask: the dialog lets it be chosen).
+  const [pinning, setPinning] = useState<{ clusterId: string; ask: boolean } | null>(null);
   function savePins(guess: Pin[], command: string, args: Record<string, unknown>) {
     setPins(guess);
     invoke<Pin[]>(command, args).then(setPins, (e) => {
@@ -179,6 +180,7 @@ export default function App() {
     setPage("browse");
   }
   const activeCluster = () => tabs.find((tab) => tab.id === active)?.at.clusterId ?? profiles?.[0]?.id ?? "";
+  const pinFrom = pinTarget(tabs.find((tab) => tab.id === active)?.at.clusterId, (profiles ?? []).map((p) => p.id));
   const openEmptyTab = () => openTab(nowhere(activeCluster()));
   function close(id: string) {
     const next = closeTab(tabs, active, id, newTab(nowhere(activeCluster())));
@@ -415,16 +417,24 @@ export default function App() {
                     {t("app.pinned.none")}
                   </MenuItem>
                 )}
-                <MenuItem
-                  disabled={!activeCluster()}
-                  onClick={() => {
-                    setPinMenu(null);
-                    setPinning(activeCluster());
-                  }}
-                  sx={{ color: "primary.main" }}
-                >
-                  {t("pins.add")}
-                </MenuItem>
+                {pinFrom ? (
+                  <MenuItem
+                    onClick={() => {
+                      setPinMenu(null);
+                      setPinning(pinFrom);
+                    }}
+                    sx={{ color: "primary.main" }}
+                  >
+                    {t("pins.add")}
+                  </MenuItem>
+                ) : (
+                  // A disabled item takes no pointer: the span carries the tooltip.
+                  <Tooltip title={t("pins.needConnection")}>
+                    <span>
+                      <MenuItem disabled>{t("pins.add")}</MenuItem>
+                    </span>
+                  </Tooltip>
+                )}
                 {pinMenuRows.slice(0, PINS_IN_MENU).map((pin) => (
                   <MenuItem key={JSON.stringify(pin.place)} title={placeLabel(pin.place, profiles ?? [])} onClick={() => goTo(pin.place)}>
                     {pin.label ? `${pin.label} · ${placeLabel(pin.place, profiles ?? [])}` : placeLabel(pin.place, profiles ?? [])}
@@ -478,7 +488,7 @@ export default function App() {
                           pins={knownPins}
                           pinOps={pinOps}
                           onOpenTab={openTab}
-                          onPinPath={setPinning}
+                          onPinPath={(clusterId) => setPinning({ clusterId, ask: false })}
                           folded={folded}
                           onFold={fold}
                         />
@@ -503,9 +513,10 @@ export default function App() {
         open={pinning !== null}
         title={t("pins.addTitle")}
         submitLabel={t("pins.addSubmit")}
-        clusterId={pinning ?? ""}
+        clusterId={pinning?.clusterId ?? ""}
+        onCluster={pinning?.ask ? (clusterId) => setPinning({ clusterId, ask: true }) : undefined}
         onSubmit={(bucket, prefix) => {
-          const place = { clusterId: pinning ?? "", uid: "", bucket, prefix };
+          const place = { clusterId: pinning?.clusterId ?? "", uid: "", bucket, prefix };
           if (!isPinned(pins, place)) pinOps.toggle(place);
         }}
         onClose={() => setPinning(null)}

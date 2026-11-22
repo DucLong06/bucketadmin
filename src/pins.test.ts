@@ -5,7 +5,7 @@ import type { Profile } from "./api";
 import { applyLang } from "./i18n";
 import PinnedPanel, { PINS_FILTER_ABOVE } from "./PinnedPanel";
 import { ListFilter } from "./ui";
-import { defaultLabel, filterPins, isPinned, movePin, orderPins, pinLabel, togglePin, type Pin } from "./pins";
+import { defaultLabel, filterPins, isPinned, movePin, orderPins, pinLabel, pinTarget, togglePin, type Pin } from "./pins";
 import type { Place } from "./tabs";
 
 const at = (clusterId: string, bucket: string, prefix = "", uid = ""): Place => ({ clusterId, uid, bucket, prefix });
@@ -143,4 +143,18 @@ test("ListFilter: Esc clears what is typed (and is kept from the menu around it)
   expect(renderToString(field("logs"))).toContain("3 of 12");
   expect(renderToString(field(""))).not.toContain("3 of 12");
   expect(renderToString(field("logs"))).toContain('aria-label="Filter…"');
+});
+
+test("Pin a path…: enabled whenever a connection exists; the dialog asks which one when the tab has none", () => {
+  // No connection saved (or the list not loaded yet): the item is disabled.
+  expect(pinTarget("", [])).toBeNull();
+  expect(pinTarget(undefined, [])).toBeNull();
+  expect(pinTarget("gone", [])).toBeNull();
+  // The tab on screen is on a connection: that one, no question.
+  expect(pinTarget("c2", ["c1", "c2"])).toEqual({ clusterId: "c2", ask: false });
+  // The app opened with no connection in its tab (it was started before the first one was added), no tab
+  // at all, or a tab whose connection was removed: the dialog asks, the first connection chosen.
+  expect(pinTarget("", ["c1", "c2"])).toEqual({ clusterId: "c1", ask: true });
+  expect(pinTarget(undefined, ["c1", "c2"])).toEqual({ clusterId: "c1", ask: true });
+  expect(pinTarget("gone", ["c1"])).toEqual({ clusterId: "c1", ask: true });
 });
