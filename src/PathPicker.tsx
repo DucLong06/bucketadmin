@@ -361,7 +361,10 @@ export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quiet
     // Ticks are for one level: another path, other folders.
     setTicked([]);
   }, [view.value]);
-  useEffect(() => onTicked?.(ticked), [ticked]);
+  // In braces: an effect that returns what the callback returns hands React a "cleanup" that is no function (the smoke's blank page).
+  useEffect(() => {
+    onTicked?.(ticked);
+  }, [ticked]);
   // Prefixes each bucket's policy grants this key, as far as the key may read the policy.
   const [policy, setPolicy] = useState<Record<string, string[]>>({});
   const startPaths = profiles.find((p) => p.id === clusterId)?.start_paths;
