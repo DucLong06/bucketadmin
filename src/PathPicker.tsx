@@ -532,7 +532,7 @@ export function PathPickerDialog({ open, title, submitLabel, clusterId, uid, onC
               ))}
             </TextField>
           )}
-          <Box sx={{ pt: onCluster ? 2 : 1 }}>{open && <PathPicker key={clusterId} clusterId={clusterId} uid={uid} value={path} onChange={setPath} label={t("browse.openPath")} helperText={t("pins.addHelp")} multiline onPinMany={pin} onTicked={(paths) => (ticked.current = paths)} inputRef={field} autoFocus />}</Box>
+          <Box sx={{ pt: onCluster ? 2 : 1 }}>{open && <PathPicker key={clusterId} clusterId={clusterId} uid={uid} value={path} onChange={setPath} label={t("pins.addLabel")} helperText={t("pins.addHelp")} multiline onPinMany={pin} onTicked={(paths) => (ticked.current = paths)} inputRef={field} autoFocus />}</Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={onClose}>{t("common.cancel")}</Button>

@@ -269,3 +269,11 @@ test("in the pin dialog the ticked folders stand in for the line they are under,
   });
   expect(dialogPins("media/", ["media/raw/"])).toEqual({ places: [{ bucket: "media", prefix: "raw/" }], bad: [] });
 });
+
+test("the pin dialog's field is named for what it does (it said Open path), in both languages", () => {
+  applyLang("en");
+  expect(t("pins.addLabel")).toBe("Paths to pin");
+  applyLang("vi");
+  expect(t("pins.addLabel")).toBe("Đường dẫn cần ghim");
+  expect(t("conn.startPathHelp")).toContain("dán cả danh sách");
+});

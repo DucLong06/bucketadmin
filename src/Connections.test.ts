@@ -72,7 +72,8 @@ test("Required is always open; Advanced (start path, admin key, proxy) is collap
     const open = render([saved]);
     expect(open).toMatch(/<button[^>]*aria-expanded="true"[^>]*aria-controls="conn-advanced"/);
     expect(open).toContain("Start paths (optional)");
-    expect(open).toContain("Enter adds a path, e.g. team-bucket/project-a/. The first one opens on connect");
+    // M15: the help also says a list can be pasted (nothing on screen told of M14.1).
+    expect(open).toContain("Enter adds a path, e.g. team-bucket/project-a/; paste a list to add several at once. The first one opens on connect");
     expect(open).toContain("Admin access key");
     // M13.3: Region (empty = us-east-1) and the path-style switch, on by default.
     expect(open).toContain('placeholder="us-east-1"');
