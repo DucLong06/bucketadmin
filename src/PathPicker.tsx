@@ -196,14 +196,22 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
   const folders = [...rows, ...childRows].filter((row) => row.source === "folder").map((row) => row.path);
   const all = folders.length > 0 && folders.every((path) => pick?.ticked.includes(path));
   // Sticky under the rows while something is ticked, and scrolled into sight: in the sidebar the rows run past its bottom.
+  // One line even there (M15: on two it hid a row and a half): the box that rules the row boxes, the count, the button.
   const footer = pick && pick.ticked.length > 0 && (
-    <Stack direction="row" ref={(el: HTMLDivElement | null) => el?.scrollIntoView?.({ block: "nearest" })} sx={{ position: "sticky", bottom: 0, zIndex: 1, bgcolor: "background.paper", borderTop: 1, borderColor: "divider", px: 1.5, py: 0.5, gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+    <Stack direction="row" ref={(el: HTMLDivElement | null) => el?.scrollIntoView?.({ block: "nearest" })} sx={{ position: "sticky", bottom: 0, zIndex: 1, bgcolor: "background.paper", borderTop: 1, borderColor: "divider", pr: 1.5, py: 0.5, columnGap: 1, alignItems: "center", flexWrap: "wrap" }}>
+      <Checkbox
+        checked={all}
+        indeterminate={!all}
+        onChange={() => pick.onTicked(all ? [] : folders)}
+        tabIndex={-1}
+        size="small"
+        title={t(all ? "pathPicker.selectNone" : "pathPicker.selectAll")}
+        slotProps={{ input: { "aria-label": t(all ? "pathPicker.selectNone" : "pathPicker.selectAll") } }}
+        sx={{ width: 40, height: 40, flexShrink: 0, p: 0, borderRadius: 0 }}
+      />
       <Typography variant="body2" role="status" sx={{ flexGrow: 1 }}>
         {t("pathPicker.selected", { n: pick.ticked.length })}
       </Typography>
-      <Button size="small" onClick={() => pick.onTicked(all ? [] : folders)} sx={{ minHeight: 40 }}>
-        {t(all ? "pathPicker.selectNone" : "pathPicker.selectAll")}
-      </Button>
       <Button size="small" variant="contained" onClick={pick.onPinSelected} sx={{ minHeight: 40 }}>
         {t("pathPicker.pinSelected")}
       </Button>

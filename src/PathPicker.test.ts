@@ -176,22 +176,27 @@ test("nothing ticked: no footer, and a row still goes into its folder with one c
   applyLang("en");
   const log: { typed?: string[] } = {};
   const tree = PathPickerView(ticking([], log));
-  expect(buttonOf(tree, "Pin selected")).toBeUndefined();
+  expect(buttonOf(tree, "Pin")).toBeUndefined();
   (elements(tree).find((e) => e.props["aria-label"] === "Go into the folder raw")?.props.onClick as () => void)();
   (elements(tree).find((e) => e.props["aria-label"] === "Use the path media/scoped/")?.props.onClick as () => void)();
   expect(log.typed).toEqual(["media/raw/", "media/scoped/"]);
 });
 
-test("with rows ticked the footer says how many, Select all ticks the level (then clears it), Pin selected pins each", async () => {
+test("with rows ticked the footer says how many, its box ticks the level (then clears it), Pin pins each", async () => {
   applyLang("en");
   const log: { ticked?: string[]; pinned?: number } = {};
   const some = PathPickerView(ticking(["media/raw/", "media/tmp/"], log));
   expect(renderToString(createElement(PathPickerView, ticking(["media/raw/", "media/tmp/"], log)))).toContain("2 selected");
-  (buttonOf(some, "Select all")?.props.onClick as () => void)();
+  // M15: the footer is one line in the narrow sidebar: a box for the whole level (half-ticked while some are), not a button.
+  const allBox = (tree: ReactNode, label: string) => elements(tree).find((e) => (e.props.slotProps as { input?: Record<string, string> } | undefined)?.input?.["aria-label"] === label);
+  expect(allBox(some, "Select all")?.props).toMatchObject({ checked: false, indeterminate: true, title: "Select all" });
+  (allBox(some, "Select all")?.props.onChange as () => void)();
   expect(log.ticked).toEqual(["media/raw/", "media/tmp/", "media/old/"]);
-  (buttonOf(PathPickerView(ticking(["media/raw/", "media/tmp/", "media/old/"], log)), "Clear")?.props.onClick as () => void)();
+  const every = PathPickerView(ticking(["media/raw/", "media/tmp/", "media/old/"], log));
+  expect(allBox(every, "Clear the selection")?.props).toMatchObject({ checked: true, indeterminate: false });
+  (allBox(every, "Clear the selection")?.props.onChange as () => void)();
   expect(log.ticked).toEqual([]);
-  (buttonOf(some, "Pin selected")?.props.onClick as () => void)();
+  (buttonOf(some, "Pin")?.props.onClick as () => void)();
   expect(log.pinned).toBe(1);
   // What Pin selected hands the app: one place per ticked row, on the picker's key; pin_add is asked for each.
   const places = tickedPlaces(["media/raw/", "media/tmp/"], "c1", "");
@@ -203,11 +208,12 @@ test("with rows ticked the footer says how many, Select all ticks the level (the
   // The pin dialog has the same rows (instead of chips) and the same footer.
   const dialog = PathPickerView(ticking(["media/old/"], log, false));
   expect(boxOf(dialog, "old")).toBeDefined();
-  expect(buttonOf(dialog, "Pin selected")).toBeDefined();
+  expect(buttonOf(dialog, "Pin")).toBeDefined();
   applyLang("vi");
   const vi = renderToString(createElement(PathPickerView, ticking(["media/raw/"], log)));
   expect(vi).toContain("Đã chọn 1");
-  expect(vi).toContain("Ghim mục đã chọn");
+  expect(vi).toMatch(/<button[^>]*>Ghim</);
+  expect(vi).toContain("Chọn tất cả");
 });
 
 test("Space right after the arrows ticks the highlighted folder; otherwise it is a space, and Enter keeps its meaning", () => {

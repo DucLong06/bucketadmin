@@ -37,7 +37,7 @@ App nói chuyện thẳng với endpoint S3 của RGW. Không cần cài gì lê
 - **Thêm nhiều đường dẫn một lần**: dán cả danh sách đường dẫn (mỗi dòng một đường dẫn, hoặc cách nhau bằng dấu phẩy, chấm
   phẩy, tab hay dấu cách) vào đường dẫn bắt đầu của kết nối hoặc vào "Ghim một đường dẫn…", mọi đường dẫn hợp lệ đều được
   thêm; đường dẫn không hợp lệ ở lại trong ô và được nêu tên. Trong danh sách thư mục gợi ý, đánh dấu nhiều dòng rồi bấm
-  **Ghim mục đã chọn** (`Space` sau khi dùng phím mũi tên sẽ đánh dấu thư mục đang chọn; **Chọn tất cả** đánh dấu cả cấp).
+  **Ghim** cạnh "Đã chọn N" (`Space` sau khi dùng phím mũi tên sẽ đánh dấu thư mục đang chọn; ô cạnh số đã chọn đánh dấu cả cấp).
 - **Giao diện tối & sáng**: giao diện tối màu than ấm và giao diện sáng màu giấy ấm, cùng một màu nhấn hổ phách, chọn ở trình
   đơn trên thanh app hoặc ở Cài đặt chung và được nhớ lại (không chớp trắng lúc mở; không có chế độ "theo hệ thống").
 - **Chạy tốt với hàng trăm bucket và nhiều kết nối**: danh sách bucket chỉ dựng các dòng đang thấy (500 bucket tốn như 30);

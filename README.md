@@ -37,8 +37,8 @@ The pictures in this document come from the smoke test, run against a test clust
   says so; the path can still be opened. Nothing is ever listed above what you typed.
 - **Add many paths at once**: paste a list of paths (one per line, or separated by commas, semicolons, tabs or spaces) into
   a connection's start paths or into "Pin a path…", and every valid one is added; the ones that are not valid stay in the
-  field and are named. In the folder suggestions, tick several rows and press **Pin selected** (`Space` after the arrows
-  ticks the highlighted folder; **Select all** ticks the whole level).
+  field and are named. In the folder suggestions, tick several rows and press **Pin** beside "N selected" (`Space` after
+  the arrows ticks the highlighted folder; the box beside the count ticks the whole level).
 - **Dark & light themes**: a warm-charcoal dark theme and a warm-paper light theme with the same amber accent, chosen in the
   app-bar menu or in General settings and remembered (no flash at start; no "follow the system" mode).
 - **Scales to hundreds of buckets and many connections**: the bucket list mounts only the rows in view (500 buckets cost what

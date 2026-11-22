@@ -797,7 +797,11 @@
     const folderNames = children().map((c) => c.textContent.trim());
     check(folderNames.join() === "bin,data,media,notes" && boxes().every(Boolean), `each folder row has a box: ${folderNames.join()}`);
     for (const i of [0, 1, 2]) boxes()[i].click();
-    await waitFor(() => hasText(T("pathPicker.selected", { n: 3 })) && button(T("pathPicker.pinSelected")) && button(T("pathPicker.selectAll")), "three ticked: the footer counts them");
+    await waitFor(() => hasText(T("pathPicker.selected", { n: 3 })) && button(T("pathPicker.pinSelected")) && all(sel("pathPicker.selectAll")).length === 1, "three ticked: the footer counts them");
+    // M15: the footer is one line (on two it hid the fourth row), so its button sits beside the count, not under it.
+    const footerPin = button(T("pathPicker.pinSelected")).getBoundingClientRect();
+    const footerBox = first(all(sel("pathPicker.selectAll"))).getBoundingClientRect();
+    check(Math.abs(footerPin.top + footerPin.height / 2 - (footerBox.top + footerBox.height / 2)) < 12, `the footer is one line: box at ${Math.round(footerBox.top)}, button at ${Math.round(footerPin.top)}`);
     check(picker.value === BUCKET && document.activeElement === picker, "ticking neither went into a folder nor took the keyboard from the field");
     check(fits(), "the footer does not scroll the page sideways");
     await shot("38c-paths-batch");
