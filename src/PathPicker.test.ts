@@ -223,6 +223,23 @@ test("Space right after the arrows ticks the highlighted folder; otherwise it is
   // The highlighted row is a known place, not a folder: nothing to tick.
   expect(suggestKey(" ", rows, 3, true, true)).toBeNull();
   expect(suggestKey("Enter", rows, 1, true, true)).toBeNull();
+  // M15: with folders ticked, Tab goes on to the footer's Pin (the keyboard could tick, but not pin); → still completes the row.
+  expect(suggestKey("Tab", rows, 1, true, true, 2)).toEqual({ pin: true });
+  expect(suggestKey("Tab", rows, 1, true, true, 0)).toEqual({ value: "media/tmp/" });
+  expect(suggestKey("ArrowRight", rows, 1, true, true, 2)).toEqual({ value: "media/tmp/" });
+  // Under the sidebar's field the keyboard stays in the field, so the boxes are not Tab stops; in the dialog they are.
+  const log = {};
+  const tabStop = (dropdown: boolean) => boxOf(PathPickerView(ticking(["media/raw/"], log, dropdown)), "raw")?.props.tabIndex;
+  expect([tabStop(true), tabStop(false)]).toEqual([-1, 0]);
+  // The footer's Pin takes the picker's ref (to be given the keyboard) and tells when the keyboard leaves it.
+  const pinRef = { current: null };
+  let left = 0;
+  const footer = buttonOf(PathPickerView({ ...ticking(["media/raw/"], log), pick: { ticked: ["media/raw/"], onTicked: () => {}, onPinSelected: () => {}, pinRef, onPinBlur: () => left++ } }), "Pin");
+  expect(footer?.props.ref).toBe(pinRef);
+  (footer?.props.onBlur as () => void)();
+  expect(left).toBe(1);
+  applyLang("vi");
+  expect(t("pathPicker.keys")).toContain("Space đánh dấu thư mục");
 });
 
 test("the pin dialog takes a list: the chips and folders are for the line being typed; bad lines are named", () => {

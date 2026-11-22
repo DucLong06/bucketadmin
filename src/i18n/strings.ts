@@ -631,7 +631,7 @@ export const en = {
 
   // Path picker (PathPicker.tsx): typed paths, what the key can reach (M10.1)
   "pathPicker.chips": "Your paths",
-  "pathPicker.keys": "Tab or → takes the highlighted row, Enter opens",
+  "pathPicker.keys": "Tab or → takes the highlighted row, Enter opens. After ↑ or ↓, Space ticks the folder; Tab then goes to Pin",
   "pins.fromConnection": "From the connection",
   "pathPicker.source.start": "Start path of this connection",
   "pathPicker.source.pin": "Pinned place",
@@ -1316,7 +1316,7 @@ export const vi: Record<keyof typeof en, string> = {
 
   // Path picker (PathPicker.tsx): typed paths, what the key can reach (M10.1)
   "pathPicker.chips": "Đường dẫn của bạn",
-  "pathPicker.keys": "Tab hoặc → lấy dòng đang chọn, Enter để mở",
+  "pathPicker.keys": "Tab hoặc → lấy dòng đang chọn, Enter để mở. Sau ↑ hoặc ↓, Space đánh dấu thư mục; khi đó Tab chuyển tới nút Ghim",
   "pins.fromConnection": "Từ kết nối",
   "pathPicker.source.start": "Đường dẫn bắt đầu của kết nối này",
   "pathPicker.source.pin": "Vị trí đã ghim",

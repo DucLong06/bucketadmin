@@ -2,7 +2,7 @@
 // (start paths, pins, recent places, what a bucket policy grants) as chips, and under the field
 // what S3 says about the path being typed: its folders, or that it may not be listed there.
 // In the sidebar the same picker is a field with a dropdown: the same places and folders as rows.
-import { createContext, type FormEvent, type KeyboardEvent, type ReactNode, type Ref, useContext, useEffect, useRef, useState } from "react";
+import { createContext, type FocusEvent, type FormEvent, type KeyboardEvent, type ReactNode, type Ref, useContext, useEffect, useRef, useState } from "react";
 import { Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle, List, ListItemButton, ListItemIcon, ListItemText, Paper, Stack, TextField, Tooltip, Typography } from "@mui/material";
 import { invoke, type Profile } from "./api";
 import { moveHighlight } from "./BucketPanel";
@@ -81,9 +81,11 @@ export function suggestions(value: string, probe: Probe | null, chips: AccessChi
 /** What a key pressed in that field does while the rows are shown: the arrows move the highlight; Tab, and
  *  → with the caret at the end of the text, take the highlighted row into the field (the rows stay, now
  *  for the next level); Space right after the arrows ticks the highlighted folder (else it types a space,
- *  folder names may have one). null: the key is not for the rows (Enter opens what is typed; Tab with no rows moves on). */
-export function suggestKey(key: string, rows: Suggestion[], highlight: number, caretAtEnd = true, navigating = false): { highlight: number } | { value: string } | { toggle: string } | null {
+ *  folder names may have one), and while `ticked` folders are, Tab goes to the footer's Pin instead (M15: the
+ *  keyboard could tick but not pin). null: the key is not for the rows (Enter opens what is typed; Tab with no rows moves on). */
+export function suggestKey(key: string, rows: Suggestion[], highlight: number, caretAtEnd = true, navigating = false, ticked = 0): { highlight: number } | { value: string } | { toggle: string } | { pin: true } | null {
   if (rows.length === 0) return null;
+  if (key === "Tab" && ticked > 0) return { pin: true };
   if (key === "ArrowDown" || key === "ArrowUp") return { highlight: moveHighlight(highlight, key, rows.length) };
   const row = rows[moveHighlight(highlight, "", rows.length)];
   if (key === " " && navigating && row.source === "folder") return { toggle: row.path };
@@ -128,7 +130,7 @@ type ViewProps = {
   /** A button inside the field, at its end. */
   action?: ReactNode;
   onFocus?: () => void;
-  onBlur?: () => void;
+  onBlur?: (e: FocusEvent) => void;
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void;
   /** The sidebar's form: no chips; the known places and the folders are rows under the field while it is
    *  `open` (it has the keyboard), `highlight` being the row Tab or → takes. `buckets`: the key's listed buckets. */
@@ -136,7 +138,7 @@ type ViewProps = {
   /** A list of paths, one per line (3 rows, growing to 8): the chips and the folders are for the last one. */
   multiline?: boolean;
   /** Folder rows can be ticked (M14): which are, and what ticking changes; `onPinSelected` pins the ticked ones. */
-  pick?: { ticked: string[]; onTicked: (paths: string[]) => void; onPinSelected: () => void };
+  pick?: { ticked: string[]; onTicked: (paths: string[]) => void; onPinSelected: () => void; pinRef?: Ref<HTMLButtonElement>; onPinBlur?: () => void };
 };
 
 /** The picker as it looks for a given state; `PathPicker` adds the asking. */
@@ -177,7 +179,8 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
                   checked={pick.ticked.includes(row.path)}
                   onChange={() => pick.onTicked(toggled(pick.ticked, row.path))}
                   onClick={(e) => e.stopPropagation()}
-                  tabIndex={-1}
+                  // Under the sidebar's field the keyboard stays in the field (Space ticks); in the dialog Tab reaches the box.
+                  tabIndex={dropdown ? -1 : 0}
                   size="small"
                   slotProps={{ input: { "aria-label": t("pathPicker.tick", { name: row.label }) } }}
                   sx={{ alignSelf: "stretch", width: 40, flexShrink: 0, p: 0, borderRadius: 0 }}
@@ -205,7 +208,7 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
         checked={all}
         indeterminate={!all}
         onChange={() => pick.onTicked(all ? [] : folders)}
-        tabIndex={-1}
+        tabIndex={dropdown ? -1 : 0}
         size="small"
         title={t(all ? "pathPicker.selectNone" : "pathPicker.selectAll")}
         slotProps={{ input: { "aria-label": t(all ? "pathPicker.selectNone" : "pathPicker.selectAll") } }}
@@ -214,7 +217,7 @@ export function PathPickerView({ value, onChange, label, helperText, ariaLabel, 
       <Typography variant="body2" role="status" sx={{ flexGrow: 1 }}>
         {t("pathPicker.selected", { n: pick.ticked.length })}
       </Typography>
-      <Button size="small" variant="contained" onClick={pick.onPinSelected} sx={{ minHeight: 40 }}>
+      <Button size="small" variant="contained" onClick={pick.onPinSelected} ref={pick.pinRef} onBlur={pick.onPinBlur} sx={{ minHeight: 40 }}>
         {t("pathPicker.pinSelected")}
       </Button>
     </Stack>
@@ -345,6 +348,9 @@ export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quiet
   // The last key moved the highlight: Space ticks the row then, it does not type.
   const navigating = useRef(false);
   const [ticked, setTicked] = useState<string[]>([]);
+  // Tab takes the keyboard from the field to the footer's Pin, and pinning gives it back.
+  const pinButton = useRef<HTMLButtonElement | null>(null);
+  const field = useRef<HTMLInputElement | null>(null);
   const setHighlight = (next: number) => {
     cursor.current = next;
     showHighlight(next);
@@ -402,11 +408,14 @@ export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quiet
     if (e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
     // Tab completes what is being typed; in an empty field it moves on (tabbing through the sidebar must not fill it).
     if (e.key === "Tab" && !view.value.trim()) return;
-    const act = suggestKey(e.key, suggestions(view.value, probe, chips, buckets), cursor.current, e.currentTarget.selectionStart === e.currentTarget.value.length, navigating.current && !!onPinMany);
+    const act = suggestKey(e.key, suggestions(view.value, probe, chips, buckets), cursor.current, e.currentTarget.selectionStart === e.currentTarget.value.length, navigating.current && !!onPinMany, ticked.length);
     navigating.current = e.key === "ArrowDown" || e.key === "ArrowUp" || (!!act && "toggle" in act);
     if (!act) return;
     e.preventDefault();
-    if ("value" in act) view.onChange(act.value);
+    if ("pin" in act) {
+      field.current = e.currentTarget;
+      pinButton.current?.focus();
+    } else if ("value" in act) view.onChange(act.value);
     else if ("toggle" in act) setTicked((old) => toggled(old, act.toggle));
     else setHighlight(act.highlight);
   }
@@ -414,9 +423,16 @@ export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quiet
     ticked,
     onTicked: setTicked,
     onPinSelected: () => {
-      // A refusal (the list is full) leaves the ticks: they show what was asked for.
-      onPinMany(tickedPlaces(ticked, clusterId, uid)).then((done) => done?.stopped || setTicked([]), () => {});
+      const back = document.activeElement === pinButton.current ? field.current : null;
+      onPinMany(tickedPlaces(ticked, clusterId, uid)).then((done) => {
+        // A refusal (the list is full) leaves the ticks: they show what was asked for.
+        if (!done?.stopped) setTicked([]);
+        back?.focus();
+      }, () => {});
     },
+    pinRef: pinButton,
+    // The keyboard left the picker by way of the button: the rows close as they do when it leaves the field.
+    onPinBlur: () => setFocused(false),
   };
   return (
     <PathPickerView
@@ -427,7 +443,8 @@ export function PathPicker({ clusterId, uid = "", lazy, dropdown, buckets, quiet
         setAwake(true);
         setFocused(true);
       }}
-      onBlur={() => setFocused(false)}
+      // Not while the keyboard only goes on to the footer's Pin.
+      onBlur={(e) => (e.relatedTarget && e.relatedTarget === pinButton.current) || setFocused(false)}
       onKeyDown={dropdown ? onKeyDown : undefined}
       dropdown={dropdown ? { open, highlight, buckets } : undefined}
       pick={pick || undefined}

@@ -19,7 +19,7 @@ test("a key that may not list buckets gets a notice instead of the empty-list te
   expect(denied).not.toContain(t("browse.noBuckets"));
   expect(denied).toContain(t("browse.openPath"));
   // M12.5: the way in is the path field itself, in the card; what it is for, and its keys, are its tooltip.
-  expect(panel({ bucketsError: "AccessDenied" })).toContain('title="Bucket or bucket/folder/ — use this when you may only list one folder. Tab or → takes the highlighted row, Enter opens"');
+  expect(panel({ bucketsError: "AccessDenied" })).toContain('title="Bucket or bucket/folder/ — use this when you may only list one folder. Tab or → takes the highlighted row, Enter opens. After ↑ or ↓, Space ticks the folder; Tab then goes to Pin"');
   expect(panel({})).toMatch(/<label[^>]*>Open path<\/label>/);
   expect(panel({})).not.toMatch(/<button[^>]*>Open path/);
   // Not an error: the notice is an info alert.
