@@ -1,5 +1,7 @@
 // Pinned places: bookmarks to a bucket or to a prefix deep inside one, kept in settings.json
 // (backend `pin_*` commands) in the user's own order.
+import { explain } from "./errors";
+import { t } from "./i18n";
 import { placePath, samePlace, type Place } from "./tabs";
 
 /** `label` is the user's own name for the place ("" = show its path); `added` is unix seconds. */
@@ -9,7 +11,36 @@ export type PinOps = {
   toggle: (place: Place) => void;
   rename: (place: Place, label: string) => void;
   move: (place: Place, to: number) => void;
+  /** Pins each place (M14); `invalid`: items of the same list that were no place, for the summary. */
+  pinMany: (places: Place[], invalid?: number) => Promise<PinSummary>;
 };
+
+/** What pinning a list did. `stopped`: how many were left when a pin was refused, and why (the 100-pin cap). */
+export type PinSummary = { pinned: number; already: number; invalid: number; stopped?: { left: number; error: string } };
+
+/** The summary line: "Pinned 4, already pinned 1, not valid 0", and what stopped the rest. */
+export const pinSummaryText = ({ pinned, already, invalid, stopped }: PinSummary) =>
+  [t("pins.batchDone", { pinned, already, invalid }), stopped && t("pins.batchStopped", { n: stopped.left, reason: explain(stopped.error).message })].filter(Boolean).join(" · ");
+
+/** Pins `places` one by one with `add` (the backend's `pin_add`, which answers with the saved list), in order.
+ *  A place pinned already is counted, not pinned again; the first refusal stops the rest. */
+export async function pinAll(pins: Pin[], places: Place[], add: (place: Place) => Promise<Pin[]>, invalid = 0): Promise<{ pins: Pin[]; summary: PinSummary }> {
+  const summary: PinSummary = { pinned: 0, already: 0, invalid };
+  for (const [i, place] of places.entries()) {
+    if (isPinned(pins, place)) {
+      summary.already++;
+      continue;
+    }
+    try {
+      pins = await add(place);
+      summary.pinned++;
+    } catch (e) {
+      summary.stopped = { left: places.length - i, error: String(e) };
+      break;
+    }
+  }
+  return { pins, summary };
+}
 
 export const isPinned = (pins: Pin[], place: Place) => pins.some((pin) => samePlace(pin.place, place));
 

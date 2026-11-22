@@ -35,6 +35,10 @@ The pictures in this document come from the smoke test, run against a test clust
   "Your paths" (start paths, pins, recent places, and, when the key may read it, what a bucket policy grants) and, as
   you type, the folders S3 lists at exactly that path, one click to go deeper. When the key may not list there, an amber hint
   says so; the path can still be opened. Nothing is ever listed above what you typed.
+- **Add many paths at once**: paste a list of paths (one per line, or separated by commas, semicolons, tabs or spaces) into
+  a connection's start paths or into "Pin a path…", and every valid one is added; the ones that are not valid stay in the
+  field and are named. In the folder suggestions, tick several rows and press **Pin** beside "N selected" (`Space` after
+  the arrows ticks the highlighted folder; the box beside the count ticks the whole level).
 - **Dark & light themes**: a warm-charcoal dark theme and a warm-paper light theme with the same amber accent, chosen in the
   app-bar menu or in General settings and remembered (no flash at start; no "follow the system" mode).
 - **Scales to hundreds of buckets and many connections**: the bucket list mounts only the rows in view (500 buckets cost what
@@ -90,6 +94,8 @@ The pictures in this document come from the smoke test, run against a test clust
 
 ![Pinned places in the left column](docs/images/pinned.png)
 
+![Several suggested folders ticked, ready to pin](docs/images/paths-batch.png)
+
 ![A key that was granted one folder, opened by its path](docs/images/scoped-path.png)
 
 ![A long bucket list stays inside its card](docs/images/buckets-many.png)
@@ -106,8 +112,8 @@ Requirements: Ubuntu 22.04 or later (amd64) with a keyring service (GNOME Keyrin
 Ubuntu desktop).
 
 ```bash
-wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.4/bucketadmin_0.1.4_amd64.deb
-sudo apt install ./bucketadmin_0.1.4_amd64.deb
+wget https://github.com/DucLong06/bucketadmin/releases/download/v0.1.5/bucketadmin_0.1.5_amd64.deb
+sudo apt install ./bucketadmin_0.1.5_amd64.deb
 ```
 
 Other formats and older versions: the [Releases](https://github.com/DucLong06/bucketadmin/releases) page.
@@ -234,8 +240,8 @@ npm ci
 npm run tauri dev                      # run the app in development mode
 npm test && npm run build              # test and build the frontend
 cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-scripts/build-deb.sh 0.1.4~dev1        # build the deb
-scripts/render-gate.sh bucketadmin_0.1.4~dev1_amd64.deb   # check that the package just built shows the real interface
+scripts/build-deb.sh 0.1.5~dev1        # build the deb
+scripts/render-gate.sh bucketadmin_0.1.5~dev1_amd64.deb   # check that the package just built shows the real interface
 python3 scripts/gen-icons.py           # render the icon set again from src-tauri/icons/icon.svg (needs google-chrome, Pillow)
 ```
 

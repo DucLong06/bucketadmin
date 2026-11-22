@@ -36,3 +36,37 @@ export function addStartPath(paths: string[], typed: string): { paths: string[];
   if (next.error) return next;
   return { paths: !next.path || paths.includes(next.path) ? paths : [...paths, next.path] };
 }
+
+// shortcut: a space splits only next to a "/" or before "s3://", so "bucket/my folder/x" stays one path but
+// "bucket/a/file.txt bucket/b/" does not split; one path per line always works. Upgrade if lists of file paths are pasted.
+const LIST_SEPARATOR = /[\n\r\t,;]+|(?<=\/)\s+|\s+(?=\/|s3:\/\/)/i;
+
+/** The items of a pasted list of paths, in order and each place once: newlines, commas, semicolons and
+ *  tabs separate them, and so does a space between `bucket/...` items. An item that is a place comes in its
+ *  stored form; one that cannot be a place is kept as typed, for the caller to name. */
+export function splitPathList(text: string): string[] {
+  const items = text.split(LIST_SEPARATOR).map((item) => item.trim()).filter(Boolean);
+  const stored = items.map((item) => {
+    const at = startPath(item);
+    return at.error ? item : at.path;
+  });
+  return [...new Set(stored)];
+}
+
+/** Why the one item of a list that cannot be a path is none (the key of the sentence); several are only named. */
+export const badReason = (bad: string[]): Key | undefined => (bad.length === 1 ? splitPath(bad[0]).error : undefined);
+
+/** Whether a text is a list of paths rather than one path (Enter and paste take each of them then). */
+export const isPathList = (text: string) => /[\n\r\t,;]/.test(text) || splitPathList(text).length > 1;
+
+/** The start paths after every item of a pasted list is added to them; `bad`: the items that cannot be one. */
+export function addStartPaths(paths: string[], text: string): { paths: string[]; added: number; bad: string[] } {
+  let next = paths;
+  const bad: string[] = [];
+  for (const item of splitPathList(text)) {
+    const added = addStartPath(next, item);
+    if (added.error) bad.push(item);
+    else next = added.paths;
+  }
+  return { paths: next, added: next.length - paths.length, bad };
+}

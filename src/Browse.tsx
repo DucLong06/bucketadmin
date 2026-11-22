@@ -629,6 +629,7 @@ export default function Browse({ profiles, start, active, startTransfer, onPlace
                     inputRef={sideField}
                     buckets={session.buckets.map((b) => b.name)}
                     quietBucket={!!session.buckets_error}
+                    onPinMany={pinOps.pinMany}
                     action={
                       <Button type="submit" size="small" disabled={!!sideTyped.error} sx={{ minWidth: 0 }}>
                         {t("common.open")}

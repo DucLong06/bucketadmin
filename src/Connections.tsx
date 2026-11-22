@@ -1,10 +1,10 @@
-import { type FormEvent, type ReactNode, useContext, useEffect, useState } from "react";
+import { type ClipboardEvent, type FormEvent, type ReactNode, useContext, useEffect, useState } from "react";
 import { Alert, Autocomplete, Box, Button, Chip, FormControlLabel, FormHelperText, IconButton, Menu, MenuItem, Paper, Stack, Switch, TextField, Tooltip, Typography } from "@mui/material";
 import { invoke, isInternal, maskKey, type EndpointKind, type Opened, type Profile, type Proxy } from "./api";
 import { endpointError } from "./endpoint";
 import { t, type Key } from "./i18n";
 import { AccessContext, accessChips } from "./PathPicker";
-import { addStartPath, startPath } from "./paths";
+import { addStartPath, addStartPaths, badReason, isPathList, startPath } from "./paths";
 import { tokens } from "./theme";
 import { ProxyPicker, proxyReady, sameProxy } from "./ProxyPicker";
 import { ConfirmDialog, duplicateLabels, ErrorAlert, filterProfiles, FoldHeading, LangToggle, SEARCH_ABOVE, ThemeSwitch } from "./ui";
@@ -188,10 +188,29 @@ type StartPathsProps = {
   options?: string[];
 };
 
+/** What a list pasted or entered into the start paths does: the paths after it, what stays in the field (the
+ *  items that cannot be a path), and the line said under the field. null: the text is one path, not a list. */
+export function takeStartPaths(chips: string[], text: string): { paths: string[]; typed: string; note: string } | null {
+  if (!isPathList(text)) return null;
+  const { paths, added, bad } = addStartPaths(chips, text);
+  const list = bad.join(", ");
+  const why = badReason(bad);
+  return { paths, typed: list, note: bad.length ? t("conn.startPathsBad", { n: added, bad: bad.length, list }) + (why ? ` — ${t(why)}` : "") : t("conn.startPathsAdded", { n: added }) };
+}
+
 /** The start paths of a connection as chips: Enter adds what is typed, × removes a chip. A text that
- *  cannot be a path is said under the field and stays text. */
+ *  cannot be a path is said under the field and stays text. A pasted list adds each of its paths. */
 export function StartPaths({ value, onChange, typed, onTyped, ariaLabel, options = [] }: StartPathsProps) {
+  const [note, setNote] = useState("");
   const wrong = startPath(typed).error;
+  function takeList(text: string) {
+    const taken = takeStartPaths(value, text);
+    if (!taken) return false;
+    onChange(taken.paths);
+    onTyped(taken.typed);
+    setNote(taken.note);
+    return true;
+  }
   return (
     <Autocomplete
       multiple
@@ -202,9 +221,18 @@ export function StartPaths({ value, onChange, typed, onTyped, ariaLabel, options
       filterSelectedOptions
       value={value}
       inputValue={typed}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter" || !takeList(typed)) return;
+        e.preventDefault();
+        // MUI's own Enter would add the whole text as one chip.
+        (e as { defaultMuiPrevented?: boolean }).defaultMuiPrevented = true;
+      }}
       // After Enter the field empties itself (reason "createOption", which MUI's type leaves out): not while what
       // it holds was refused. Typing and the clear button always go through.
-      onInputChange={(_, text, reason) => (reason !== "input" && reason !== "clear" && wrong) || onTyped(text)}
+      onInputChange={(_, text, reason) => {
+        if (reason === "input") setNote("");
+        return (reason !== "input" && reason !== "clear" && wrong) || onTyped(text);
+      }}
       onChange={(_, next) => {
         const chips = chipsAfter(value, next);
         if (chips) onChange(chips);
@@ -216,8 +244,22 @@ export function StartPaths({ value, onChange, typed, onTyped, ariaLabel, options
           label={t("conn.startPath")}
           placeholder={value.length ? undefined : t("browse.openPathSample")}
           error={!!wrong}
-          helperText={wrong ? t(wrong) : t("conn.startPathHelp")}
-          slotProps={{ ...params.slotProps, inputLabel: { ...params.slotProps.inputLabel, shrink: true }, htmlInput: { ...params.slotProps.htmlInput, "aria-label": ariaLabel, spellCheck: false, style: { fontFamily: tokens.mono } } }}
+          helperText={note || (wrong ? t(wrong) : t("conn.startPathHelp"))}
+          slotProps={{
+            ...params.slotProps,
+            inputLabel: { ...params.slotProps.inputLabel, shrink: true },
+            htmlInput: {
+              ...params.slotProps.htmlInput,
+              "aria-label": ariaLabel,
+              spellCheck: false,
+              style: { fontFamily: tokens.mono },
+              onPaste: (e: ClipboardEvent<HTMLInputElement>) => {
+                const input = e.currentTarget;
+                const text = typed.slice(0, input.selectionStart ?? typed.length) + e.clipboardData.getData("text") + typed.slice(input.selectionEnd ?? typed.length);
+                if (takeList(text)) e.preventDefault();
+              },
+            },
+          }}
         />
       )}
     />
