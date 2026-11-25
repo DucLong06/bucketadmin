@@ -25,11 +25,11 @@ import { filterPins, isPinned, movePin, pinAll, pinSummaryText, pinTarget, toggl
 import AuditLog from "./AuditLog";
 import Browse, { NARROW, SHORT } from "./Browse";
 import Connections from "./Connections";
-import { t, useLang } from "./i18n";
+import { setLang, t, useLang } from "./i18n";
 import { closeTab, cycleTab, groupRecents, placeLabel, placePath, restoreTabs, samePlace, saveTabs, tabShortcut, tabTitle, type BrowseTab, type Place, type SavedTabs } from "./tabs";
 import { eyebrow, setMode, themes, tokens, useMode } from "./theme";
 import { TaskPanel, useTransfers } from "./transfers";
-import { ErrorAlert, ListFilter, PinToggle } from "./ui";
+import { ErrorAlert, LangToggle, ListFilter, PinToggle } from "./ui";
 import { zoomShortcut } from "./zoom";
 
 /** A release newer than this build (backend `update_check`). */
@@ -44,7 +44,7 @@ const nowhere = (clusterId: string): Place => ({ clusterId, uid: "", bucket: "",
 
 export default function App() {
   // Every string below (and in every child) is looked up again when the language changes.
-  useLang();
+  const lang = useLang();
   const mode = useMode();
   // The app-bar menu: theme, audit log.
   const [appMenu, setAppMenu] = useState<HTMLElement | null>(null);
@@ -289,6 +289,10 @@ export default function App() {
               title={t("app.update.title", { current: update.current, url: update.url })}
             />
           )}
+          {/* The language is switched from every screen, not only from Connections. A narrow window keeps it in the menu only. */}
+          <Box sx={{ display: "flex", "@media (max-width:1023px)": { display: "none" } }}>
+            <LangToggle />
+          </Box>
           <Button size="small" variant="outlined" aria-haspopup="menu" onClick={(e) => setAppMenu(e.currentTarget)}>
             {t("app.menu")}
           </Button>
@@ -300,6 +304,16 @@ export default function App() {
               <MenuItem key={choice} role="menuitemradio" aria-checked={mode === choice} selected={mode === choice} onClick={() => setMode(choice)} sx={{ minHeight: 40, gap: 1.25 }}>
                 <Box component="span" aria-hidden sx={{ width: 10, height: 10, borderRadius: "50%", border: 2, borderColor: mode === choice ? "primary.main" : "divider", bgcolor: mode === choice ? "primary.main" : "transparent" }} />
                 {t(`theme.${choice}`)}
+              </MenuItem>
+            ))}
+            <Divider component="li" sx={{ my: 0.5 }} />
+            <Typography component="li" role="presentation" sx={{ ...eyebrow, color: "text.secondary", px: 2, pt: 0.5, pb: 0.75 }}>
+              {t("settings.language")}
+            </Typography>
+            {(["vi", "en"] as const).map((choice) => (
+              <MenuItem key={choice} role="menuitemradio" aria-checked={lang === choice} selected={lang === choice} onClick={() => setLang(choice)} sx={{ minHeight: 40, gap: 1.25 }}>
+                <Box component="span" aria-hidden sx={{ width: 10, height: 10, borderRadius: "50%", border: 2, borderColor: lang === choice ? "primary.main" : "divider", bgcolor: lang === choice ? "primary.main" : "transparent" }} />
+                {t(`lang.${choice}`)}
               </MenuItem>
             ))}
             <Divider component="li" sx={{ my: 0.5 }} />
